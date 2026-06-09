@@ -14,12 +14,20 @@ L.U.C.A.S means Lot Upload, Comping & Assignment System.
 
 Install dependencies with `install_dependencies.bat`. The script creates `.venv` and installs `requirements.txt`.
 
+Python must be a normal Python 3.11+ install with Tkinter available. The Windows installer from python.org is the expected path; bundled app-specific Python runtimes may not include usable Tkinter support.
+
 Copy `.env.example` to `.env` for local configuration:
 
 - `GOOGLE_API_KEY`: required for Photo OCR and Card Ladder screenshot OCR fallback.
 - `LUCAS_PIPELINE_DIR`: optional preconfigured sheet root. Users can also set this in-app with `Folders`.
 
 The selected sheet root is saved in `lucas_settings.json`, which is local-only and ignored by git.
+
+The launcher order is:
+
+1. Use `.venv\Scripts\pythonw.exe` or `.venv\Scripts\python.exe` when present.
+2. Fall back to `pythonw.exe` on PATH.
+3. Show a message if Python is missing.
 
 ## Sheet Folders
 

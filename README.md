@@ -13,6 +13,17 @@ L.U.C.A.S is a desktop workflow app for intake, receiving, working-sheet trackin
 5. Add `GOOGLE_API_KEY` in `.env` if you use Photo OCR or Card Ladder screenshot OCR fallback.
 6. Launch with `Run Card Pipeline.vbs` for the no-console app, or `Run Card Pipeline.bat` if you want to see console output.
 
+## Local Configuration
+
+`.env` is intentionally local and should not be committed. A typical setup looks like:
+
+```env
+GOOGLE_API_KEY=your_google_ai_studio_key
+LUCAS_PIPELINE_DIR=G:\My Drive\CARD_PIPELINE
+```
+
+`GOOGLE_API_KEY` can be created or copied from Google AI Studio's API key page. `LUCAS_PIPELINE_DIR` is optional because the same folder can be selected with the in-app `Folders` button.
+
 ## Data Folder
 
 On first run, click `Folders` in the top-right header and choose the folder where L.U.C.A.S should store sheet data. The app creates and uses:
@@ -58,3 +69,9 @@ Use the `Review` tab for receiving and source matching. Reviewed cards are check
 ## Included Photo Tool
 
 The photo OCR helper used by L.U.C.A.S is bundled in `photo_tool`. It uses the same project `.env`, so there is no separate photo-tool setup or private machine path required.
+
+## Troubleshooting
+
+If the app does not open, run `Run Card Pipeline.bat` instead of the `.vbs` launcher so Windows keeps the console visible. The most common cause is Python not being installed or not being on PATH. Reinstall Python from python.org, make sure `Add python.exe to PATH` is checked, then run `install_dependencies.bat` again.
+
+The app launcher uses `.venv` first. If `.venv` is missing, `install_dependencies.bat` recreates it and installs the packages from `requirements.txt`.

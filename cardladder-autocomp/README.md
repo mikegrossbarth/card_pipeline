@@ -14,6 +14,8 @@ Most users should run comps from the L.U.C.A.S `Comp` tab. The app starts the lo
 
 Card Ladder requires an active account session. If Chrome is not logged in, the extension can load but the run will not complete.
 
+The main L.U.C.A.S app uses the project `.env` for OCR fallback. The Card Ladder extension itself does not need the Google API key, but screenshot OCR fallback in the app does.
+
 ## Optional CLI Utilities
 
 The scripts in `src` are kept for manual queue/result workflows. They require explicit workbook paths:
