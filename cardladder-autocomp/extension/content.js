@@ -1,4 +1,49 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-01-cert-modal-tight-v3";
+const CARDLADDER_CONTENT_VERSION = "2026-06-05-stale-page-guard-v1";
+const COMP_SOURCE_LABELS = [
+  "eBay",
+  "Goldin",
+  "Goldin-Marketplace",
+  "PWCC-Premier",
+  "PWCC-Monthly",
+  "PWCC-Vault",
+  "Heritage",
+  "MySlabs",
+  "Pristine",
+  "Pristine Auction",
+  "Alt",
+  "Lelands",
+  "MemoryLane",
+  "REA",
+  "SCP",
+  "MileHigh",
+  "LoveOfTheGame",
+  "90sAuctions",
+  "Iconic",
+  "Juliens",
+  "Collectable-Buyout",
+  "HugginsAndScott",
+  "Beckett",
+  "Sirius",
+  "SacoRiver",
+  "Rally",
+  "Worthpoint",
+  "CleanSweep",
+  "ZeroCool",
+  "Wheatland",
+  "GregBussineau",
+  "GoodwinAuctionCompany",
+  "TheCollectorConnection",
+  "RRAuction",
+  "CollectAuctions",
+  "Private",
+  "Fanatics",
+  "Card Ladder",
+];
+const COMP_SOURCE_PATTERN_TEXT = COMP_SOURCE_LABELS
+  .map(sourceLabelToPattern)
+  .sort((a, b) => b.length - a.length)
+  .join("|");
+const COMP_SOURCE_PATTERN = new RegExp(`\\b(${COMP_SOURCE_PATTERN_TEXT})\\b`, "i");
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "CARDLADDER_CAPTURE_CURRENT") {
@@ -19,6 +64,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "CARDLADDER_GET_GRADER_COORDS") {
     sendResponse(getGraderClickCoordinates(message.grader || "BGS"));
+    return true;
+  }
+  if (message.type === "CARDLADDER_SELECT_GRADER") {
+    selectGraderForAutomation(message.grader || "PSA")
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error.message, version: CARDLADDER_CONTENT_VERSION }));
+    return true;
+  }
+  if (message.type === "CARDLADDER_EXTRACT_DOM_RESULT") {
+    sendResponse(extractDomResult(message.row || {}));
+    return true;
+  }
+  if (message.type === "CARDLADDER_CHECK_INVALID_CERT_TOAST") {
+    const reason = invalidCertToastReason()
+      || invalidCertReasonFromText(document.body.innerText || "");
+    sendResponse({
+      ok: !reason,
+      invalid: Boolean(reason),
+      status: reason ? "invalid_cert" : "ok",
+      error: reason,
+      pageUrl: location.href,
+      capturedAt: new Date().toISOString(),
+    });
     return true;
   }
   if (message.type === "CARDLADDER_PREPARE_CERT_MODAL") {
@@ -76,9 +144,32 @@ async function prepareCertModal() {
 }
 
 async function submitPreparedCertModal(row) {
+  clearInvalidCertAlerts();
+  const beforeUrl = location.href;
+  const beforeSignature = pageResultSignature();
   await fillCert(row.certNumber);
   await submitSearch();
-  await waitForResultsPage();
+  const resultState = await waitForResultsPage(row, beforeUrl, beforeSignature);
+  if (["invalid_cert", "no_results"].includes(resultState.status)) {
+    return {
+      ...row,
+      value: null,
+      status: resultState.status,
+      error: resultState.reason,
+      pageUrl: location.href,
+      capturedAt: new Date().toISOString(),
+    };
+  }
+  if (["stale_result", "unknown"].includes(resultState.status)) {
+    return {
+      ...row,
+      value: null,
+      status: "error",
+      error: resultState.reason || "Card Ladder did not load a new matching result after submit.",
+      pageUrl: location.href,
+      capturedAt: new Date().toISOString(),
+    };
+  }
   return {
     ...row,
     value: null,
@@ -88,18 +179,162 @@ async function submitPreparedCertModal(row) {
   };
 }
 
-async function waitForResultsPage() {
-  for (let i = 0; i < 30; i += 1) {
+async function waitForResultsPage(row = {}, beforeUrl = "", beforeSignature = "") {
+  const startedAt = Date.now();
+  for (let i = 0; i < 45; i += 1) {
     const text = document.body.innerText || "";
-    if ((/Grade:\s*.+Grader:\s*.+Profile:/i.test(text) || /CL\s*Value/i.test(text)) && /\$\s*\d/i.test(text)) {
-      await sleep(2500);
-      window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(700);
-      return;
+    if (pageUrlMatchesCert(row.certNumber, beforeUrl)) {
+      await sleep(300);
+      const lateInvalidCertReason = invalidCertToastReason() || invalidCertReasonFromText(document.body.innerText || "");
+      if (lateInvalidCertReason) return { status: "invalid_cert", reason: lateInvalidCertReason };
+      return { status: "results" };
     }
-    await sleep(500);
+    const invalidCertReason = invalidCertToastReason() || invalidCertReasonFromText(text);
+    if (invalidCertReason) {
+      return { status: "invalid_cert", reason: invalidCertReason };
+    }
+    const noResultsReason = noResultsReasonFromText(text);
+    if (noResultsReason) {
+      return { status: "no_results", reason: noResultsReason };
+    }
+    if (Date.now() - startedAt >= 1800 && !certSearchModalVisible() && (/Grade:\s*.+Grader:\s*.+Profile:/i.test(text) || /CL\s*Value/i.test(text)) && /\$\s*\d/i.test(text)) {
+      await sleep(300);
+      const lateInvalidCertReason = invalidCertToastReason() || invalidCertReasonFromText(document.body.innerText || "");
+      if (lateInvalidCertReason) return { status: "invalid_cert", reason: lateInvalidCertReason };
+      if (!resultPageChanged(beforeUrl, beforeSignature) && !profileMatchesRequestedRow(row, document.body.innerText || "")) {
+        return { status: "stale_result", reason: "Card Ladder stayed on the previous result page after submit." };
+      }
+      return { status: "results" };
+    }
+    await sleep(300);
   }
-  await sleep(2500);
+  await sleep(500);
+  return { status: "unknown" };
+}
+
+function resultPageChanged(beforeUrl = "", beforeSignature = "") {
+  if (beforeUrl && location.href !== beforeUrl) return true;
+  const afterSignature = pageResultSignature();
+  return Boolean(afterSignature && beforeSignature && afterSignature !== beforeSignature);
+}
+
+function pageResultSignature() {
+  const text = document.body.innerText || "";
+  const profile = extractProfileFromText(text);
+  const value = readCardLadderValue();
+  const resultCount = extractResultCount(text);
+  return [profile.title, profile.grader, profile.grade, value ?? "", resultCount ?? ""]
+    .join("|")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function profileMatchesRequestedRow(row = {}, text = "") {
+  const requested = String(row.cardTitle || "").trim();
+  if (!requested) return false;
+  const profile = extractProfileFromText(text).title;
+  if (!profile) return false;
+  const requestedTokens = meaningfulTitleTokens(requested);
+  const profileTokens = meaningfulTitleTokens(profile);
+  if (requestedTokens.length < 2 || profileTokens.length < 2) return false;
+  const profileSet = new Set(profileTokens);
+  const matches = requestedTokens.filter((token) => profileSet.has(token)).length;
+  return matches >= Math.min(4, Math.ceil(requestedTokens.length * 0.45));
+}
+
+function meaningfulTitleTokens(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b(?:psa|bgs|sgc|cgc|gem|mint|mt|grade|grader|pop|rookie|rc|prizm|refractor)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 2)
+    .slice(0, 20);
+}
+
+function pageUrlMatchesCert(certNumber, beforeUrl = "") {
+  const cert = String(certNumber || "").replace(/\D/g, "");
+  if (!cert) return false;
+  const url = location.href || "";
+  if (beforeUrl && url === beforeUrl) return false;
+  return new RegExp(`(?:psa|bgs|sgc|cgc|beckett)[^0-9]{0,12}${escapeRegExp(cert)}|${escapeRegExp(cert)}`, "i").test(decodeURIComponent(url));
+}
+
+function invalidCertReasonFromText(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  const patterns = [
+    /\bno\s+information\s+with\s+this\s+cert\b/i,
+    /\bno\s+information\s+for\s+this\s+cert\b/i,
+    /\binvalid\s+cert(?:ification)?\s*(?:number|#)?\b/i,
+    /\bcert(?:ification)?\s*(?:number|#)?\s+not\s+found\b/i,
+  ];
+  const matched = patterns.find((pattern) => pattern.test(normalized));
+  return matched ? "Card Ladder showed no information with this cert." : "";
+}
+
+function clearInvalidCertAlerts() {
+  const candidates = invalidCertToastCandidates();
+  for (const item of candidates.slice(0, 4)) {
+    item.el.remove();
+  }
+}
+
+function invalidCertToastReason() {
+  const toast = invalidCertToastCandidates()[0];
+  return toast ? "Card Ladder showed no information with this cert." : "";
+}
+
+function invalidCertToastCandidates() {
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  return [...document.querySelectorAll("body *")]
+    .filter((el) => isVisible(el))
+    .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
+    .filter((item) => invalidCertReasonFromText(item.text))
+    .filter((item) => item.text.length <= 260 && item.rect.width <= 620 && item.rect.height <= 220)
+    .filter((item) => {
+      const nearBottomRight = item.rect.right >= viewportWidth - 460 && item.rect.bottom >= viewportHeight - 280;
+      const alertLike = /alert|toast|snackbar|notification/i.test(`${item.el.className || ""} ${item.el.getAttribute("role") || ""} ${item.el.getAttribute("aria-live") || ""}`);
+      return nearBottomRight || alertLike;
+    })
+    .sort((a, b) => {
+      const aScore = (viewportWidth - a.rect.right) + (viewportHeight - a.rect.bottom) + a.text.length;
+      const bScore = (viewportWidth - b.rect.right) + (viewportHeight - b.rect.bottom) + b.text.length;
+      return aScore - bScore;
+    });
+}
+
+function certSearchModalVisible() {
+  if (certSearchModal()) return true;
+  const title = [...document.querySelectorAll("body *")]
+    .filter((el) => isVisible(el))
+    .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
+    .filter((item) => /^SEARCH SALES BY CERT #$/i.test(item.text) || /SEARCH SALES BY CERT #/i.test(item.text))
+    .sort((a, b) => a.text.length - b.text.length || a.rect.top - b.rect.top)[0];
+  if (!title) return false;
+  const centerBand = title.rect.left >= window.innerWidth * 0.18 && title.rect.right <= window.innerWidth * 0.85 && title.rect.top < window.innerHeight * 0.35;
+  if (!centerBand) return false;
+  const pageText = String(document.body.innerText || "").replace(/\s+/g, " ");
+  return /Cert #/i.test(pageText) && /Grader/i.test(pageText) && /Submit/i.test(pageText);
+}
+
+function noResultsReasonFromText(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  const patterns = [
+    /\b0\s+results?\b/i,
+    /\bthere\s+are\s+no\s+results\s+for\s+your\s+query\b/i,
+    /\btry\s+searching\s+for\s+something\s+else\b/i,
+    /\bno\s+(?:sales\s+)?results?\s+found\b/i,
+    /\bno\s+matching\s+(?:sales\s+)?results?\b/i,
+    /\bno\s+sales\s+history\b/i,
+    /\bwe\s+could(?:n['’]?t| not)\s+find\b/i,
+    /\bno\s+matches?\b/i,
+  ];
+  const matched = patterns.find((pattern) => pattern.test(normalized));
+  return matched ? "Card Ladder showed no matching results." : "";
 }
 
 async function clickLoginIfNeeded() {
@@ -253,6 +488,28 @@ async function chooseGrader(grader) {
   throw new Error(`Could not select grader ${normalized}. ${graderSelectionDebug(modal, optionLabel)}`);
 }
 
+async function selectGraderForAutomation(grader) {
+  const normalized = String(grader || "").toUpperCase();
+  const optionLabel = cardLadderGraderLabel(normalized);
+  const modal = certSearchModal();
+  if (!modal) {
+    return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Open the SEARCH SALES BY CERT # modal first." };
+  }
+  const control = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
+  if (control && selectedControlText(control).toUpperCase() === optionLabel) {
+    return { ok: true, version: CARDLADDER_CONTENT_VERSION, grader: normalized, selectedLabel: optionLabel, skipped: "already selected" };
+  }
+  await chooseGrader(normalized);
+  const afterControl = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
+  return {
+    ok: true,
+    version: CARDLADDER_CONTENT_VERSION,
+    grader: normalized,
+    selectedLabel: optionLabel,
+    selectedText: selectedControlText(afterControl),
+  };
+}
+
 async function testGraderSelection(grader) {
   const normalized = String(grader || "BGS").toUpperCase();
   const optionLabel = cardLadderGraderLabel(normalized);
@@ -358,7 +615,6 @@ function findGraderControlInModal(modal) {
 }
 
 async function clickGraderDropdown(modal, control) {
-  control.scrollIntoView({ block: "center", inline: "center" });
   await sleep(150);
   if (typeof control.focus === "function") control.focus();
   const rect = graderFieldRect(modal, control);
@@ -474,15 +730,12 @@ function graderSelectionDebug(modal, optionLabel) {
 }
 
 async function fillCert(certNumber) {
+  const cert = String(certNumber || "").trim();
   const modal = certSearchModal();
   if (modal) {
     const certInput = findFieldControlInModal(modal, /cert/i, "input");
     if (!certInput) throw new Error("Could not find cert input in cert search modal.");
-    certInput.focus();
-    setNativeValue(certInput, "");
-    setNativeValue(certInput, certNumber);
-    certInput.dispatchEvent(new Event("change", { bubbles: true }));
-    await sleep(300);
+    await setCertInputValue(certInput, cert);
     return;
   }
 
@@ -492,11 +745,36 @@ async function fillCert(certNumber) {
   ) || inputs[inputs.length - 1];
 
   if (!certInput) throw new Error("Could not find cert input.");
+  await setCertInputValue(certInput, cert);
+}
+
+async function setCertInputValue(certInput, certNumber) {
   certInput.focus();
+  certInput.click?.();
+  certInput.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", ctrlKey: true, bubbles: true }));
+  certInput.dispatchEvent(new KeyboardEvent("keyup", { key: "a", code: "KeyA", ctrlKey: true, bubbles: true }));
   setNativeValue(certInput, "");
-  setNativeValue(certInput, certNumber);
+  certInput.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward", data: null }));
   certInput.dispatchEvent(new Event("change", { bubbles: true }));
-  await sleep(300);
+  await sleep(150);
+
+  setNativeValue(certInput, certNumber);
+  certInput.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: certNumber }));
+  certInput.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(550);
+
+  const currentValue = String(certInput.value || "").trim();
+  if (currentValue !== certNumber) {
+    setNativeValue(certInput, certNumber);
+    certInput.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: certNumber }));
+    certInput.dispatchEvent(new Event("change", { bubbles: true }));
+    await sleep(550);
+  }
+
+  const verifiedValue = String(certInput.value || "").trim();
+  if (verifiedValue !== certNumber) {
+    throw new Error(`Cert input did not accept ${certNumber}; currently ${verifiedValue || "blank"}.`);
+  }
 }
 
 async function submitSearch() {
@@ -505,8 +783,9 @@ async function submitSearch() {
     const submit = [...modal.querySelectorAll("button, [role='button']")]
       .find((el) => /^submit$/i.test(visibleText(el)));
     if (!submit) throw new Error("Could not find Submit button in cert search modal.");
+    await sleep(300);
     clickLikeHuman(submit);
-    await sleep(3000);
+    await sleep(900);
     return;
   }
 
@@ -516,7 +795,7 @@ async function submitSearch() {
   } else {
     document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   }
-  await sleep(2500);
+  await sleep(900);
 }
 
 function readCardLadderValue() {
@@ -559,6 +838,239 @@ function readCardLadderValue() {
     .filter((value) => Number.isFinite(value) && value > 0);
 
   return moneyValues.length === 1 ? moneyValues[0] : null;
+}
+
+function extractDomResult(row = {}) {
+  const text = document.body.innerText || "";
+  const invalidCertReason = invalidCertToastReason()
+    || invalidCertReasonFromText(text);
+  if (invalidCertReason) {
+    return {
+      ...row,
+      ok: false,
+      value: null,
+      status: "invalid_cert",
+      error: invalidCertReason,
+      ocr: { ok: false, value: null, comps: [], evidence: invalidCertReason, debugImage: "" },
+      pageUrl: location.href,
+      capturedAt: new Date().toISOString(),
+    };
+  }
+  const value = readCardLadderValue();
+  const profile = extractProfileFromText(text);
+  const comps = extractCompsFromText(text);
+  const resultCount = extractResultCount(text);
+  return {
+    ...row,
+    ok: value != null && comps.length > 0,
+    value,
+    status: value != null && comps.length > 0 ? "ok" : "dom_incomplete",
+    ocr: {
+      ok: value != null,
+      value,
+      labelSeen: value != null,
+      profileTitle: profile.title,
+      profileGrader: profile.grader,
+      profileGrade: profile.grade,
+      resultCount,
+      comps,
+      evidence: "Extracted from Card Ladder page text.",
+      debugImage: "",
+    },
+    pageUrl: location.href,
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+function extractResultCount(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ");
+  const match = normalized.match(/\b(\d{1,4})\s+results?\b/i);
+  if (!match) return null;
+  const count = Number(match[1]);
+  return Number.isFinite(count) ? count : null;
+}
+
+function extractProfileFromText(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ");
+  const match = normalized.match(new RegExp(`Grade:\\s*([^,|]+).*?Grader:\\s*([A-Z]+).*?Profile:\\s*(.*?)(?=\\s+(?:CL\\s*Value|Card\\s*Ladder\\s*Value|${COMP_SOURCE_PATTERN_TEXT}|close\\s+\\$|help[_\\s-]*outline|Date\\s+Sold|$))`, "i"));
+  if (!match) return { title: "", grader: "", grade: "" };
+  return {
+    grade: String(match[1] || "").trim(),
+    grader: String(match[2] || "").trim().toUpperCase(),
+    title: cleanProfileTitle(String(match[3] || "")),
+  };
+}
+
+function cleanProfileTitle(value) {
+  let title = String(value || "").replace(/\s+/g, " ").trim();
+  const tailPatterns = [
+    /\s+\bclose\s+\$?\d[\d,]*(?:\.\d{1,2})?.*$/i,
+    /\s+\bhelp[_\s-]*outline\b.*$/i,
+    /\s+\b(?:date\s+sold|type|price)\b.*$/i,
+    /\s+\$\d[\d,]*(?:\.\d{1,2})?\s+\b(?:help[_\s-]*outline|ebay|fanatics|pwcc|goldin|alt|myslabs|heritage|pristine|auction)\b.*$/i,
+  ];
+  for (const pattern of tailPatterns) {
+    title = title.replace(pattern, "");
+  }
+  return title.replace(/\s*\(pop\s*[^)]*\)\s*$/i, "").replace(/\s+/g, " ").trim();
+}
+
+function extractCompsFromText(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const comps = [];
+  for (let i = 0; i < lines.length && comps.length < 20; i += 1) {
+    const sourceMatch = sourceLineMatch(lines[i]);
+    if (!sourceMatch) continue;
+    const chunk = lines.slice(i, i + 8).join(" ");
+    const comp = parseCompChunk(chunk, sourceMatch);
+    if (!comp) continue;
+    comps.push(comp);
+  }
+  return dedupeComps(comps).slice(0, 5);
+}
+
+function sourceLineMatch(line) {
+  const text = String(line || "").trim();
+  if (!text || /\b(?:CL|Card\s*Ladder)\s*Value\b/i.test(text)) return null;
+  const match = text.match(new RegExp(`^(${COMP_SOURCE_PATTERN_TEXT})(?:\\s+\\([^)]{1,80}\\)|\\s*(?:-|–|—)\\s*.{1,100}|\\s+[A-Z0-9_'&. ]{2,100})?$`, "i"));
+  return match;
+}
+
+function parseCompChunk(chunk, sourceLineMatchResult = null) {
+  chunk = String(chunk || "").replace(/\s+/g, " ").trim();
+  const sourceMatch = sourceLineMatchResult || chunk.match(COMP_SOURCE_PATTERN);
+  if (!sourceMatch) return null;
+  const sourceText = sourceMatch[1] || sourceMatch[0];
+  const sourceIndex = chunk.toLowerCase().indexOf(String(sourceText).toLowerCase());
+  if (sourceIndex > 0) chunk = chunk.slice(sourceIndex);
+  chunk = chunk.replace(/^.*?\b(?:CL|Card\s*Ladder)\s*Value\b.*?(?=\b(?:Date\s+Sold|Type|Price)\b|\$|$)/i, " ");
+  const dateMatch = chunk.match(compDatePattern());
+  const priceMatches = [...chunk.matchAll(/\$\s*[\d,]+(?:\.\d{1,2})?/g)];
+  if (!dateMatch || !priceMatches.length) return null;
+  const price = priceMatches[priceMatches.length - 1][0].replace(/\s+/g, "");
+  const saleType = (chunk.match(/\b(Auction|Best Offer|Buy It Now|Fixed Price|BIN)\b/i) || [""])[0];
+  let title = chunk
+    .replace(sourceText, " ")
+    .replace(dateMatch[0], " ")
+    .replace(price, " ")
+    .replace(/\b(Auction|Best Offer|Buy It Now|Fixed Price|BIN)\b/ig, " ")
+    .replace(/\b(?:CL|Card\s*Ladder)\s*Value\b.*$/i, " ")
+    .replace(/\b(?:Date Sold|Type|Price)\b/ig, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  title = title.split(new RegExp(`\\s(?:${COMP_SOURCE_PATTERN_TEXT})\\s`, "i"))[0]?.trim() || title;
+  return {
+    source: sourceText.replace(/\s+/g, " ").toUpperCase(),
+    title: cleanCompTitle(title),
+    date_sold: dateMatch[0],
+    sale_type: saleType,
+    price,
+  };
+}
+
+function compDatePattern() {
+  return /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i;
+}
+
+function sourceLabelToPattern(label) {
+  return String(label || "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/-/g, " ")
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\s+/g, "[\\s-]*");
+}
+
+function dedupeComps(comps) {
+  const ordered = [];
+  for (const raw of comps) {
+    if (!raw) continue;
+    const comp = {
+      ...raw,
+      source: cleanCompSource(raw.source),
+      title: cleanCompTitle(raw.title),
+    };
+    if (isJunkCompTitle(comp.title)) continue;
+
+    const price = String(comp.price || "").replace(/[$,\s]/g, "");
+    const saleType = String(comp.sale_type || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const titleKey = compactCompTitle(comp.title).slice(0, 80);
+    const source = cleanCompSource(comp.source).toLowerCase();
+    const existingIndex = ordered.findIndex((existing) => {
+      const existingPrice = String(existing.price || "").replace(/[$,\s]/g, "");
+      if (existingPrice !== price) return false;
+      const existingSaleType = String(existing.sale_type || "").replace(/\s+/g, " ").trim().toLowerCase();
+      const existingTitleKey = compactCompTitle(existing.title).slice(0, 80);
+      const sameSource = cleanCompSource(existing.source).toLowerCase() === source;
+      const similarTitle = Boolean(titleKey && existingTitleKey && (titleKey.includes(existingTitleKey) || existingTitleKey.includes(titleKey)));
+      const sameDate = normalizeDateText(existing.date_sold) === normalizeDateText(comp.date_sold);
+      return (sameDate && (sameSource || similarTitle)) || (sameSaleTypeOrBlank(existingSaleType, saleType) && sameSource && similarTitle);
+    });
+
+    if (existingIndex === -1) {
+      ordered.push(comp);
+      continue;
+    }
+    const existing = ordered[existingIndex];
+    const existingDate = parseCompDate(existing.date_sold);
+    const compDate = parseCompDate(comp.date_sold);
+    if (existingDate && compDate && compDate < existingDate) {
+      ordered[existingIndex] = comp;
+    } else if (!existingDate || existingDate?.getTime() === compDate?.getTime()) {
+      if (compQuality(comp) > compQuality(existing)) ordered[existingIndex] = comp;
+    }
+  }
+  return ordered;
+}
+
+function cleanCompSource(value) {
+  return String(value || "").replace(/\s*\(confirmed paid\)\s*/ig, " ").replace(/\s+/g, " ").trim();
+}
+
+function cleanCompTitle(value) {
+  let title = String(value || "").replace(/\s+/g, " ").trim();
+  title = title.replace(/\b(?:close|help[_\s-]*outline|Date Sold|Type|Price)\b/ig, " ");
+  title = title.replace(/^\s*[-|:]+\s*/, "").replace(/\s*[-|:]+\s*$/, "");
+  return title.replace(/\s+/g, " ").trim();
+}
+
+function compactCompTitle(value) {
+  return cleanCompTitle(value)
+    .toLowerCase()
+    .replace(/\b(psa|bgs|sgc|cgc|gem|mint|mt|pop|rookie|rc)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isJunkCompTitle(value) {
+  const title = cleanCompTitle(value);
+  if (!title) return true;
+  if (title.replace(/[^A-Za-z0-9]/g, "").length < 8) return true;
+  return !/[A-Za-z]{3,}/.test(title);
+}
+
+function compQuality(comp) {
+  const title = cleanCompTitle(comp.title);
+  let score = Math.min(title.length, 160);
+  if (/\b\d{4}\b/.test(title)) score += 20;
+  if (/#\s*[A-Za-z0-9-]+|\b[A-Za-z]{1,5}\d{1,4}\b/.test(title)) score += 10;
+  if (isJunkCompTitle(title)) score -= 200;
+  return score;
+}
+
+function sameSaleTypeOrBlank(a, b) {
+  return !a || !b || a === b;
+}
+
+function normalizeDateText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function parseCompDate(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) ? null : new Date(parsed);
 }
 
 function collectNearbyText(node) {

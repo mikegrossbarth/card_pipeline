@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import queue
 import base64
+import json
 import os
+import shutil
 import sys
 import threading
 import tkinter as tk
@@ -21,6 +23,11 @@ from bridge_server import (  # noqa: E402
     COMP_STRATEGY_STALE_NEWEST,
     BridgeServer,
     BridgeState,
+    comp_confidence,
+    comp_price,
+    format_comps,
+    parse_formatted_comps,
+    row_has_comp_data,
 )
 from workbook_io import WorkbookRow  # noqa: E402
 
@@ -30,10 +37,12 @@ from intake_io import (  # noqa: E402
     default_output_path,
     format_money,
     infer_grader,
+    mark_received_in_workbooks,
     normalize_grader,
     read_photo_export,
     read_simple_spreadsheet,
     scan_to_cert,
+    summarize_workbook,
     working_sheet_path,
     write_working_sheet,
     workbook_sheet_names,
@@ -67,6 +76,11 @@ except Exception:
 WORKING_SHEETS_DIR = Path(r"G:\My Drive\CARD_PIPELINE\WORKING SHEETS")
 CARD_PIPELINE_DIR = Path(r"G:\My Drive\CARD_PIPELINE")
 INCOMING_SHEETS_DIR = Path(r"G:\My Drive\CARD_PIPELINE\INCOMING SHEETS")
+RECEIVED_SHEETS_DIR = Path(r"G:\My Drive\CARD_PIPELINE\RECEIVED SHEETS")
+SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
+LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
+APP_TITLE = "L.U.C.A.S"
+APP_SUBTITLE = "Lot Upload, Comping & Assignment System"
 
 PAYOUT_RATES = {"Arena Club": 0.82, "Courtyard": 0.78, "ALT": 0.76}
 COMP_STRATEGY_DISPLAY = {
@@ -75,6 +89,8 @@ COMP_STRATEGY_DISPLAY = {
     "Lowest of last 5": COMP_STRATEGY_LOW,
     "Date weighted": COMP_STRATEGY_STALE_NEWEST,
 }
+COMP_SCOPE_EMPTY = "Empty Comps Only"
+COMP_SCOPE_ALL = "Recomp All"
 
 DISPLAY_COLUMNS = (
     "excel_row",
@@ -86,10 +102,40 @@ DISPLAY_COLUMNS = (
     "purchase_price",
     "card_ladder_value",
     "card_ladder_comps_average",
+    "card_ladder_comp_confidence",
     "best_company",
     "estimated_payout",
     "status",
 )
+
+INTAKE_COLUMNS = (
+    "excel_row",
+    "source",
+    "cert_number",
+    "grader",
+    "card_title",
+    "purchase_price",
+    "card_ladder_value",
+    "card_ladder_comps_average",
+    "card_ladder_comp_confidence",
+    "status",
+)
+
+COMP_COLUMNS = (
+    "excel_row",
+    "source",
+    "cert_number",
+    "grader",
+    "card_title",
+    "purchase_price",
+    "card_ladder_value",
+    "card_ladder_comps_average",
+    "card_ladder_comp_confidence",
+    "status",
+    "sheet_source",
+)
+
+REVIEW_COLUMNS = DISPLAY_COLUMNS
 
 ADD_REVIEW_ROW_IID = "__add_review_row__"
 
@@ -107,11 +153,12 @@ HEADINGS = {
     "source": "Source",
     "sheet_source": "Sheet Source",
     "cert_number": "Cert #",
-    "grader": "Co.",
+    "grader": "Company",
     "card_title": "Card",
     "purchase_price": "Purchase",
     "card_ladder_value": "Card Ladder",
     "card_ladder_comps_average": "Comps",
+    "card_ladder_comp_confidence": "Comp Confidence",
     "best_company": "Best Company",
     "estimated_payout": "Est. Payout",
     "status": "Status",
@@ -122,11 +169,12 @@ COLUMN_WIDTHS = {
     "source": 130,
     "sheet_source": 150,
     "cert_number": 110,
-    "grader": 54,
+    "grader": 86,
     "card_title": 390,
     "purchase_price": 90,
     "card_ladder_value": 100,
     "card_ladder_comps_average": 100,
+    "card_ladder_comp_confidence": 140,
     "best_company": 130,
     "estimated_payout": 100,
     "status": 160,
@@ -136,9 +184,10 @@ COLUMN_WIDTHS = {
 class CardPipelineApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Card Pipeline")
+        self.title(f"{APP_TITLE} - {APP_SUBTITLE}")
         self.geometry("1420x820")
         self.minsize(1120, 680)
+        self.logo_image: tk.PhotoImage | None = None
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -150,19 +199,27 @@ class CardPipelineApp(tk.Tk):
         self.review_sources: dict[int, str] = {}
         self.review_sheet_sources: dict[int, str] = {}
         self.incoming_cert_index: dict[str, dict[str, object]] = {}
+        self.comp_output_saved = True
         self.state = BridgeState()
-        self.state.on_update = lambda: self.events.put("refresh")
+        self.state.on_update = lambda: self.events.put("comp_refresh")
         self.bridge = BridgeServer(self.state)
         self.bridge.start()
+        self.bridge_status_text = (
+            f"Card Ladder bridge running at http://127.0.0.1:{self.bridge.port}"
+            if self.bridge.started
+            else f"Card Ladder bridge failed to start: {self.bridge.error}"
+        )
 
         self.input_mode = tk.StringVar(value="Barcode Scanner")
         self.review_mode = tk.StringVar(value="Automatic Review")
         self.review_input_mode = tk.StringVar(value="Barcode Scanner")
         self.comp_strategy_label = tk.StringVar(value="Average last 5")
+        self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
         self.working_sheet_title = tk.StringVar()
         self.selected_working_sheet = tk.StringVar()
         self.summary_var = tk.StringVar(value="Choose an intake mode to begin.")
-        self.status_var = tk.StringVar(value="Bridge starting...")
+        self.status_var = tk.StringVar(value="Card Ladder bridge starting...")
+        self.bridge_status_var = tk.StringVar(value=self.bridge_status_text)
 
         self.scan_cert = tk.StringVar()
         self.scan_grader = tk.StringVar(value="PSA")
@@ -181,65 +238,216 @@ class CardPipelineApp(tk.Tk):
         self.photo_worker: threading.Thread | None = None
         self.photo_client = None
         self.review_scan_cert = tk.StringVar()
-        self.review_scan_grader = tk.StringVar(value="PSA")
         self.review_scan_entry: ttk.Entry | None = None
         self.review_scanning_active = False
         self.review_status = tk.StringVar(value="Review station is off.")
         self.review_photo_paths: list[Path] = []
         self.review_photo_status = tk.StringVar(value="No review photos selected.")
         self.review_photo_worker: threading.Thread | None = None
+        self.received_sheet_paths: dict[str, Path] = {}
+        self.selected_received_sheet = tk.StringVar()
         self.working_sheet_paths: dict[str, Path] = {}
+        self.home_sheet_kind = tk.StringVar(value="Incoming")
+        self.home_sheet_paths: dict[str, dict[str, Path]] = {"Incoming": {}, "Working": {}}
+        self.home_sheet_summaries: dict[str, dict[str, object]] = {}
+        self.home_sheet_markers: dict[str, dict[str, object]] = self._load_sheet_markers()
+        self.home_selected_sheet_key = ""
 
         self._build_ui()
         self._show_mode()
         self._poll_events()
-        self.status_var.set("Bridge running at http://127.0.0.1:8765")
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.status_var.set(self.bridge_status_text)
+        self.after(100, self._start_startup_refresh)
+
+    def _on_close(self) -> None:
+        try:
+            self.bridge.stop()
+        finally:
+            self.destroy()
 
     def _build_ui(self) -> None:
         palette = {
-            "bg": "#eef1f4",
-            "header": "#17212b",
-            "header_text": "#f8fafc",
-            "panel": "#ffffff",
-            "muted": "#64748b",
-            "button": "#2563eb",
-            "button_hover": "#1d4ed8",
-            "text": "#0f172a",
+            "bg": "#121212",
+            "surface": "#181818",
+            "panel": "#1f1f1f",
+            "panel_high": "#242424",
+            "field": "#2a2a2a",
+            "border": "#333333",
+            "muted": "#b3b3b3",
+            "button": "#1ed760",
+            "button_hover": "#1fdf64",
+            "button_pressed": "#169c46",
+            "soft_button": "#2a2a2a",
+            "soft_button_hover": "#3a3a3a",
+            "text": "#ffffff",
+            "subtle_text": "#d9d9d9",
+            "selection": "#1db954",
+            "warning": "#5a4a14",
+            "danger": "#5a1f1f",
         }
         self.configure(bg=palette["bg"])
+        self.option_add("*TCombobox*Listbox.background", palette["field"])
+        self.option_add("*TCombobox*Listbox.foreground", palette["text"])
+        self.option_add("*TCombobox*Listbox.selectBackground", palette["selection"])
+        self.option_add("*TCombobox*Listbox.selectForeground", "#000000")
         style = ttk.Style(self)
         style.theme_use("clam")
         style.configure(".", font=("Segoe UI", 10))
         style.configure("App.TFrame", background=palette["bg"])
         style.configure("Panel.TFrame", background=palette["panel"])
-        style.configure("Header.TFrame", background=palette["header"])
-        style.configure("HeaderTitle.TLabel", background=palette["header"], foreground=palette["header_text"], font=("Segoe UI Semibold", 20))
-        style.configure("HeaderSub.TLabel", background=palette["header"], foreground="#cbd5e1")
+        style.configure("Header.TFrame", background=palette["surface"])
+        style.configure("Header.TLabel", background=palette["surface"])
+        style.configure("HeaderTitle.TLabel", background=palette["surface"], foreground=palette["text"], font=("Segoe UI Semibold", 22))
+        style.configure("HeaderSub.TLabel", background=palette["surface"], foreground=palette["muted"])
+        style.configure("BridgeBadge.TLabel", background=palette["panel_high"], foreground=palette["button"], font=("Segoe UI Semibold", 9), padding=(12, 7))
         style.configure("Panel.TLabel", background=palette["panel"], foreground=palette["text"])
         style.configure("Muted.TLabel", background=palette["panel"], foreground=palette["muted"])
-        style.configure("Primary.TButton", font=("Segoe UI Semibold", 10), padding=(14, 8), background=palette["button"], foreground="#ffffff", borderwidth=0)
-        style.map("Primary.TButton", background=[("active", palette["button_hover"]), ("disabled", "#94a3b8")])
-        style.configure("Soft.TButton", padding=(12, 8), background="#f8fafc", foreground=palette["text"])
-        style.configure("Treeview", rowheight=32, font=("Segoe UI", 10), background=palette["panel"], fieldbackground=palette["panel"], foreground=palette["text"], borderwidth=0)
-        style.configure("Treeview.Heading", font=("Segoe UI Semibold", 9), background="#e2e8f0", foreground="#334155", padding=(8, 7), borderwidth=0)
-        style.map("Treeview", background=[("selected", "#dbeafe")], foreground=[("selected", palette["text"])])
+        style.configure("Status.TLabel", background=palette["bg"], foreground=palette["muted"])
+        style.configure("Panel.TCheckbutton", background=palette["panel"], foreground=palette["text"])
+        style.map(
+            "Panel.TCheckbutton",
+            background=[("active", palette["panel"])],
+            foreground=[("active", palette["text"]), ("disabled", "#777777")],
+        )
+        style.configure(
+            "ChromeTab.TButton",
+            font=("Segoe UI Semibold", 9),
+            padding=(12, 6),
+            background=palette["soft_button"],
+            foreground=palette["muted"],
+            borderwidth=0,
+            relief=tk.FLAT,
+        )
+        style.map(
+            "ChromeTab.TButton",
+            background=[("pressed", palette["border"]), ("active", palette["soft_button_hover"])],
+            foreground=[("active", palette["text"])],
+        )
+        style.configure(
+            "ChromeTabActive.TButton",
+            font=("Segoe UI Semibold", 9),
+            padding=(12, 6),
+            background=palette["panel_high"],
+            foreground=palette["text"],
+            borderwidth=0,
+            relief=tk.FLAT,
+        )
+        style.map(
+            "ChromeTabActive.TButton",
+            background=[("pressed", palette["panel_high"]), ("active", palette["panel_high"])],
+            foreground=[("active", palette["text"])],
+        )
+        style.configure(
+            "Primary.TButton",
+            font=("Segoe UI Semibold", 10),
+            padding=(18, 9),
+            background=palette["button"],
+            foreground="#000000",
+            borderwidth=0,
+            focusthickness=0,
+            relief=tk.FLAT,
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("pressed", palette["button_pressed"]), ("active", palette["button_hover"]), ("disabled", "#535353")],
+            foreground=[("disabled", "#b3b3b3")],
+            relief=[("pressed", tk.FLAT), ("!pressed", tk.FLAT)],
+        )
+        style.configure(
+            "Soft.TButton",
+            font=("Segoe UI Semibold", 10),
+            padding=(16, 9),
+            background=palette["soft_button"],
+            foreground=palette["text"],
+            borderwidth=0,
+            focusthickness=0,
+            relief=tk.FLAT,
+        )
+        style.map(
+            "Soft.TButton",
+            background=[("pressed", palette["border"]), ("active", palette["soft_button_hover"]), ("disabled", "#1a1a1a")],
+            foreground=[("disabled", "#777777")],
+            relief=[("pressed", tk.FLAT), ("!pressed", tk.FLAT)],
+        )
+        style.configure(
+            "TEntry",
+            fieldbackground=palette["field"],
+            background=palette["field"],
+            foreground=palette["text"],
+            insertcolor=palette["text"],
+            bordercolor=palette["border"],
+            lightcolor=palette["border"],
+            darkcolor=palette["border"],
+            padding=(8, 7),
+        )
+        style.map("TEntry", bordercolor=[("focus", palette["selection"])])
+        style.configure(
+            "TCombobox",
+            fieldbackground=palette["field"],
+            background=palette["field"],
+            foreground=palette["text"],
+            arrowcolor=palette["muted"],
+            bordercolor=palette["border"],
+            lightcolor=palette["border"],
+            darkcolor=palette["border"],
+            padding=(8, 6),
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", palette["field"])],
+            foreground=[("readonly", palette["text"])],
+            bordercolor=[("focus", palette["selection"])],
+            arrowcolor=[("active", palette["text"])],
+        )
+        style.configure("TNotebook", background=palette["bg"], borderwidth=0, tabmargins=(0, 0, 0, 0))
+        style.configure(
+            "TNotebook.Tab",
+            background=palette["bg"],
+            foreground=palette["muted"],
+            padding=(18, 10),
+            borderwidth=0,
+            font=("Segoe UI Semibold", 10),
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", palette["panel"]), ("active", palette["panel_high"])],
+            foreground=[("selected", palette["text"]), ("active", palette["text"])],
+        )
+        style.configure("Vertical.TScrollbar", background=palette["field"], troughcolor=palette["panel"], bordercolor=palette["panel"], arrowcolor=palette["muted"])
+        style.configure("Horizontal.TScrollbar", background=palette["field"], troughcolor=palette["panel"], bordercolor=palette["panel"], arrowcolor=palette["muted"])
+        style.configure("Treeview", rowheight=34, font=("Segoe UI", 10), background=palette["panel"], fieldbackground=palette["panel"], foreground=palette["subtle_text"], borderwidth=0)
+        style.configure("Treeview.Heading", font=("Segoe UI Semibold", 9), background=palette["panel_high"], foreground=palette["muted"], padding=(10, 8), borderwidth=0)
+        style.map("Treeview", background=[("selected", palette["selection"])], foreground=[("selected", "#000000")])
 
         header = ttk.Frame(self, style="Header.TFrame", padding=(18, 16))
         header.pack(fill=tk.X)
+        if LUCAS_LOGO_PATH.exists():
+            try:
+                self.logo_image = tk.PhotoImage(file=str(LUCAS_LOGO_PATH)).subsample(6, 6)
+                self.iconphoto(False, self.logo_image)
+                ttk.Label(header, image=self.logo_image, style="Header.TLabel").pack(side=tk.LEFT, padx=(0, 14))
+            except tk.TclError:
+                self.logo_image = None
         title_group = ttk.Frame(header, style="Header.TFrame")
         title_group.pack(side=tk.LEFT)
-        ttk.Label(title_group, text="Card Pipeline", style="HeaderTitle.TLabel").pack(anchor=tk.W)
-        ttk.Label(title_group, text="Intake cards by scanner, photos, or spreadsheet, then run comps.", style="HeaderSub.TLabel").pack(anchor=tk.W, pady=(3, 0))
+        ttk.Label(title_group, text=APP_TITLE, style="HeaderTitle.TLabel").pack(anchor=tk.W)
+        ttk.Label(title_group, text=APP_SUBTITLE, style="HeaderSub.TLabel").pack(anchor=tk.W, pady=(3, 0))
+        ttk.Label(header, textvariable=self.bridge_status_var, style="BridgeBadge.TLabel").pack(side=tk.RIGHT, padx=(16, 0))
 
         self.tabs = ttk.Notebook(self)
-        self.tabs.pack(fill=tk.BOTH, expand=True, padx=16, pady=(14, 12))
+        self.tabs.pack(fill=tk.BOTH, expand=True, padx=18, pady=(16, 12))
+        self.home_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.intake_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.comp_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.review_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
+        self.tabs.add(self.home_tab, text="Home")
         self.tabs.add(self.intake_tab, text="Intake")
         self.tabs.add(self.comp_tab, text="Comp")
         self.tabs.add(self.review_tab, text="Review")
         self.row_trees: list[ttk.Treeview] = []
+
+        self._build_home_tab(palette)
 
         intake_controls = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         intake_controls.pack(fill=tk.X, pady=(0, 10))
@@ -253,13 +461,14 @@ class CardPipelineApp(tk.Tk):
         )
         mode.grid(row=0, column=1, sticky="w", padx=(8, 16))
         mode.bind("<<ComboboxSelected>>", lambda _event: self._show_mode())
-        ttk.Button(intake_controls, text="Clear Rows", command=self.clear_rows, style="Soft.TButton").grid(row=0, column=2, sticky="w")
-        intake_controls.columnconfigure(3, weight=1)
-        ttk.Label(intake_controls, textvariable=self.summary_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ttk.Button(intake_controls, text="Delete Selected", command=self.delete_selected_intake_rows, style="Soft.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
+        ttk.Button(intake_controls, text="Clear Rows", command=self.clear_rows, style="Soft.TButton").grid(row=0, column=3, sticky="w")
+        intake_controls.columnconfigure(4, weight=1)
+        ttk.Label(intake_controls, textvariable=self.summary_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(10, 0))
 
         self.mode_host = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         self.mode_host.pack(fill=tk.X, pady=(0, 10))
-        self.intake_tree = self._build_table(self.intake_tab, editable=True)
+        self.intake_tree = self._build_table(self.intake_tab, editable=True, columns=INTAKE_COLUMNS)
         intake_save = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         intake_save.pack(fill=tk.X, pady=(10, 0))
         ttk.Label(intake_save, text="Working Sheet Title", style="Panel.TLabel").pack(side=tk.LEFT, padx=(0, 8))
@@ -271,27 +480,54 @@ class CardPipelineApp(tk.Tk):
         sheet_panel = ttk.Frame(comp_body, style="Panel.TFrame", padding=(12, 12))
         sheet_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         ttk.Label(sheet_panel, text="Active Sheets", style="Panel.TLabel").pack(anchor=tk.W)
-        self.working_sheet_list = tk.Listbox(sheet_panel, width=34, height=24, activestyle="dotbox", exportselection=False)
+        self.working_sheet_list = tk.Listbox(
+            sheet_panel,
+            width=34,
+            height=24,
+            activestyle="none",
+            exportselection=False,
+            bg=palette["panel"],
+            fg=palette["subtle_text"],
+            selectbackground=palette["selection"],
+            selectforeground="#000000",
+            highlightthickness=1,
+            highlightbackground=palette["border"],
+            highlightcolor=palette["selection"],
+            relief=tk.FLAT,
+            borderwidth=0,
+            font=("Segoe UI", 10),
+        )
         self.working_sheet_list.pack(fill=tk.Y, expand=True, pady=(8, 8))
         self.working_sheet_list.bind("<Double-Button-1>", lambda _event: self.load_selected_working_sheet())
         ttk.Button(sheet_panel, text="Load Selected Sheet", command=self.load_selected_working_sheet, style="Primary.TButton").pack(fill=tk.X, pady=(0, 8))
         ttk.Button(sheet_panel, text="Refresh Sheets", command=self.refresh_pipeline, style="Soft.TButton").pack(fill=tk.X)
         comp_main = ttk.Frame(comp_body, style="App.TFrame")
         comp_main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.comp_tree = self._build_table(comp_main, editable=True)
+        self.comp_tree = self._build_table(comp_main, editable=True, columns=COMP_COLUMNS)
         comp_controls = ttk.Frame(comp_main, style="Panel.TFrame", padding=(16, 12))
         comp_controls.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(comp_controls, text="Save Output", command=self.save_output, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_controls, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Combobox(
+        ttk.Button(comp_controls, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        self.comp_scope_combo = ttk.Combobox(
+            comp_controls,
+            textvariable=self.comp_scope_label,
+            state="readonly",
+            values=(COMP_SCOPE_EMPTY, COMP_SCOPE_ALL),
+            width=17,
+        )
+        self.comp_scope_combo.pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Label(comp_controls, text="Run Scope", style="Panel.TLabel").pack(side=tk.RIGHT)
+        self.comp_method_combo = ttk.Combobox(
             comp_controls,
             textvariable=self.comp_strategy_label,
             state="readonly",
             values=list(COMP_STRATEGY_DISPLAY.keys()),
             width=20,
-        ).pack(side=tk.RIGHT, padx=(8, 0))
+        )
+        self.comp_method_combo.pack(side=tk.RIGHT, padx=(8, 0))
+        self.comp_method_combo.bind("<<ComboboxSelected>>", self.recalculate_comp_method)
         ttk.Label(comp_controls, text="Comp Method", style="Panel.TLabel").pack(side=tk.RIGHT)
-        self.refresh_working_sheets()
 
         review_controls = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         review_controls.pack(fill=tk.X, pady=(0, 10))
@@ -305,28 +541,35 @@ class CardPipelineApp(tk.Tk):
         )
         review_mode.grid(row=0, column=1, sticky="w", padx=(8, 16))
         review_mode.bind("<<ComboboxSelected>>", lambda _event: self._show_review_mode())
-        review_controls.columnconfigure(4, weight=1)
-        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(10, 0))
+        ttk.Label(review_controls, text="Received Sheet", style="Panel.TLabel").grid(row=0, column=2, sticky="w")
+        self.received_sheet_combo = ttk.Combobox(review_controls, textvariable=self.selected_received_sheet, state="readonly", width=32)
+        self.received_sheet_combo.grid(row=0, column=3, sticky="ew", padx=(8, 8))
+        ttk.Button(review_controls, text="Load", command=self.load_selected_received_sheet_for_review, style="Primary.TButton").grid(row=0, column=4, sticky="w", padx=(0, 8))
+        ttk.Button(review_controls, text="Refresh", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=5, sticky="w")
+        review_controls.columnconfigure(3, weight=1)
+        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=6, sticky="w", pady=(10, 0))
         self.review_mode_host = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         self.review_mode_host.pack(fill=tk.X, pady=(0, 10))
-        self.review_tree = self._build_table(self.review_tab, editable=True)
+        self.review_tree = self._build_table(self.review_tab, editable=True, columns=REVIEW_COLUMNS)
         review_bottom = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         review_bottom.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(review_bottom, text="Mark Received in Sheets", command=self.mark_review_received_in_sheets, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(review_bottom, text="Refresh Incoming Sheets", command=self.refresh_incoming_index, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(review_bottom, text="Delete Selected", command=self.delete_selected_review_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(review_bottom, text="Clear Review Rows", command=self.clear_review_rows, style="Soft.TButton").pack(side=tk.RIGHT)
         self._show_review_mode()
-        self.refresh_incoming_index()
 
         bottom = ttk.Frame(self, style="App.TFrame", padding=(16, 0, 16, 14))
         bottom.pack(fill=tk.X)
-        ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT)
+        ttk.Label(bottom, textvariable=self.status_var, style="Status.TLabel").pack(side=tk.LEFT)
 
-    def _build_table(self, parent: ttk.Frame, editable: bool = False) -> ttk.Treeview:
+    def _build_table(self, parent: ttk.Frame, editable: bool = False, columns: tuple[str, ...] = DISPLAY_COLUMNS) -> ttk.Treeview:
         content = ttk.Frame(parent, style="Panel.TFrame", padding=(1, 1))
         content.pack(fill=tk.BOTH, expand=True)
-        tree = ttk.Treeview(content, columns=DISPLAY_COLUMNS, show="headings", selectmode="extended")
-        for col in DISPLAY_COLUMNS:
-            tree.heading(col, text=HEADINGS[col])
+        tree = ttk.Treeview(content, columns=columns, show="headings", selectmode="extended")
+        setattr(tree, "_display_columns", columns)
+        for col in columns:
+            tree.heading(col, text=HEADINGS[col], anchor=tk.W)
             tree.column(col, width=COLUMN_WIDTHS[col], minwidth=45, stretch=False)
         tree.grid(row=0, column=0, sticky="nsew")
         y_scroll = ttk.Scrollbar(content, orient=tk.VERTICAL, command=tree.yview)
@@ -334,19 +577,524 @@ class CardPipelineApp(tk.Tk):
         x_scroll = ttk.Scrollbar(content, orient=tk.HORIZONTAL, command=tree.xview)
         x_scroll.grid(row=1, column=0, sticky="ew")
         tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
-        tree.tag_configure("duplicate_cert", background="#fef3c7")
-        tree.tag_configure("no_sheet_found", background="#fecaca")
-        tree.tag_configure("add_review_row", background="#f8fafc", foreground="#2563eb")
+        tree.tag_configure("duplicate_cert", background="#4a3d12", foreground="#fff3b0")
+        tree.tag_configure("no_sheet_found", background="#4a1717", foreground="#ffd1d1")
+        tree.tag_configure("add_review_row", background="#242424", foreground="#1ed760")
         if editable:
             tree.bind("<Double-1>", self._begin_cell_edit)
             tree.bind("<Button-1>", self._handle_table_click, add="+")
+            tree.bind("<Delete>", self._delete_selected_table_rows)
         tree.bind("<ButtonRelease-1>", lambda _event, target=tree: self._remember_column_widths(target), add="+")
         content.columnconfigure(0, weight=1)
         content.rowconfigure(0, weight=1)
         setattr(tree, "_table_frame", content)
         self.row_trees.append(tree)
-        self.column_widths_by_tree[id(tree)] = dict(COLUMN_WIDTHS)
+        self.column_widths_by_tree[id(tree)] = {col: COLUMN_WIDTHS[col] for col in columns}
         return tree
+
+    def _build_home_tab(self, palette: dict[str, str]) -> None:
+        body = ttk.Frame(self.home_tab, style="App.TFrame")
+        body.pack(fill=tk.BOTH, expand=True)
+
+        sheet_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 12))
+        sheet_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        sheet_panel.configure(width=360)
+        sheet_panel.pack_propagate(False)
+        toggle_row = tk.Frame(sheet_panel, bg=palette["panel"])
+        toggle_row.pack(fill=tk.X, pady=(0, 8))
+        self.home_tab_palette = palette
+        self.home_incoming_tab = self._build_home_tab_button(toggle_row, "Incoming", lambda: self._set_home_sheet_kind("Incoming"))
+        self.home_incoming_tab.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.home_working_tab = self._build_home_tab_button(toggle_row, "Working", lambda: self._set_home_sheet_kind("Working"))
+        self.home_working_tab.grid(row=0, column=1, sticky="ew", padx=(0, 4))
+        self.home_edit_markers_tab = self._build_home_tab_button(toggle_row, "Edit Markers", self.open_sheet_marker_editor)
+        self.home_edit_markers_tab.grid(row=0, column=2, sticky="ew")
+        for col in range(3):
+            toggle_row.columnconfigure(col, weight=1, uniform="home_tabs")
+        self.home_sheet_list = tk.Listbox(
+            sheet_panel,
+            width=1,
+            height=28,
+            activestyle="none",
+            exportselection=False,
+            bg=palette["panel"],
+            fg=palette["subtle_text"],
+            selectbackground=palette["selection"],
+            selectforeground="#000000",
+            highlightthickness=1,
+            highlightbackground=palette["border"],
+            highlightcolor=palette["selection"],
+            relief=tk.FLAT,
+            borderwidth=0,
+            font=("Segoe UI", 10),
+        )
+        self.home_sheet_list.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.home_sheet_list.bind("<<ListboxSelect>>", lambda _event: self._load_home_selected_marker())
+        ttk.Button(sheet_panel, text="Refresh Home", command=self.refresh_home, style="Primary.TButton").pack(fill=tk.X)
+
+        right = ttk.Frame(body, style="App.TFrame")
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        metrics = ttk.Frame(right, style="App.TFrame")
+        metrics.pack(fill=tk.BOTH, expand=True)
+        volume_panel = ttk.Frame(metrics, style="Panel.TFrame", padding=(12, 12))
+        volume_panel.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        ttk.Label(volume_panel, text="Incoming Volume by Sheet", style="Panel.TLabel").pack(anchor=tk.W)
+        self.incoming_volume_tree = self._build_home_tree(
+            volume_panel,
+            columns=("sheet", "person", "cards", "received", "volume", "status"),
+            headings={"sheet": "Sheet", "person": "Person", "cards": "Cards", "received": "Received", "volume": "Price Volume", "status": "Status"},
+            widths={"sheet": 320, "person": 130, "cards": 80, "received": 95, "volume": 130, "status": 150},
+            height=9,
+        )
+
+        partial_panel = ttk.Frame(metrics, style="Panel.TFrame", padding=(12, 12))
+        partial_panel.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(partial_panel, text="Partially Received Incoming Sheets", style="Panel.TLabel").pack(anchor=tk.W)
+        self.partial_received_tree = self._build_home_tree(
+            partial_panel,
+            columns=("sheet", "progress", "volume", "person", "paid", "tracking", "all_received"),
+            headings={"sheet": "Sheet", "progress": "Received", "volume": "Price Volume", "person": "Person", "paid": "Paid", "tracking": "Tracking", "all_received": "All Received"},
+            widths={"sheet": 280, "progress": 100, "volume": 130, "person": 130, "paid": 80, "tracking": 180, "all_received": 110},
+            height=8,
+        )
+        self.partial_received_tree.tag_configure("partial_sheet", background="#4a3d12", foreground="#fff3b0")
+
+    def _build_home_tree(self, parent: ttk.Frame, columns: tuple[str, ...], headings: dict[str, str], widths: dict[str, int], height: int) -> ttk.Treeview:
+        tree = ttk.Treeview(parent, columns=columns, show="headings", selectmode="browse", height=height)
+        for col in columns:
+            tree.heading(col, text=headings[col], anchor=tk.W)
+            tree.column(col, width=widths[col], minwidth=60, stretch=col == "sheet", anchor=tk.W)
+        tree.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        return tree
+
+    def _build_home_tab_button(self, parent: tk.Frame, text: str, command) -> tk.Button:
+        palette = self.home_tab_palette
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=palette["soft_button"],
+            fg=palette["muted"],
+            activebackground=palette["soft_button_hover"],
+            activeforeground=palette["text"],
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=0,
+            padx=8,
+            pady=6,
+            font=("Segoe UI Semibold", 9),
+            cursor="hand2",
+        )
+
+    def _set_home_sheet_kind(self, kind: str) -> None:
+        self.home_sheet_kind.set(kind)
+        self._update_home_sheet_tabs()
+        self._refresh_home_sheet_list()
+
+    def _update_home_sheet_tabs(self) -> None:
+        if not hasattr(self, "home_incoming_tab") or not hasattr(self, "home_working_tab"):
+            return
+        palette = self.home_tab_palette
+        incoming_active = self.home_sheet_kind.get() == "Incoming"
+        active = {"bg": palette["panel_high"], "fg": palette["text"], "activebackground": palette["panel_high"], "activeforeground": palette["text"]}
+        inactive = {"bg": palette["soft_button"], "fg": palette["muted"], "activebackground": palette["soft_button_hover"], "activeforeground": palette["text"]}
+        self.home_incoming_tab.configure(**(active if incoming_active else inactive))
+        self.home_working_tab.configure(**(inactive if incoming_active else active))
+        if hasattr(self, "home_edit_markers_tab"):
+            self.home_edit_markers_tab.configure(**inactive)
+
+    def refresh_home(self) -> None:
+        self.home_sheet_paths = {"Incoming": {}, "Working": {}}
+        self.home_sheet_summaries = {}
+        errors: list[str] = []
+        for kind, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR)):
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                paths = sorted(directory.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+            except Exception as error:
+                errors.append(f"{kind}: {error}")
+                continue
+            self.home_sheet_paths[kind] = {path.name: path for path in paths}
+            for path in paths:
+                key = self._home_sheet_key(kind, path.name)
+                try:
+                    summary = summarize_workbook(path)
+                except Exception as error:
+                    errors.append(f"{path.name}: {error}")
+                    summary = {"name": path.name, "row_count": 0, "received_count": 0, "purchase_total": 0.0, "all_received": False, "partially_received": False}
+                self.home_sheet_summaries[key] = summary
+        self._refresh_home_sheet_list()
+        self._refresh_home_metrics()
+        self._update_home_sheet_tabs()
+        if errors:
+            self.status_var.set(f"Home refreshed with {len(errors)} sheet issue(s).")
+        else:
+            self.status_var.set("Home metrics refreshed.")
+
+    def _start_startup_refresh(self) -> None:
+        self.status_var.set("Loading sheet lists...")
+        thread = threading.Thread(target=self._startup_refresh_worker, daemon=True)
+        thread.start()
+
+    def _startup_refresh_worker(self) -> None:
+        payload = {
+            "working_paths": {},
+            "received_paths": {},
+            "incoming_index": {},
+            "incoming_path_count": 0,
+            "home_paths": {"Incoming": {}, "Working": {}},
+            "home_summaries": {},
+            "errors": [],
+        }
+        errors: list[str] = payload["errors"]
+
+        try:
+            CARD_PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
+            WORKING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+            working_paths = sorted(WORKING_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+            payload["working_paths"] = {path.name: path for path in working_paths}
+            payload["home_paths"]["Working"] = {path.name: path for path in working_paths}
+        except Exception as error:
+            errors.append(f"Working: {error}")
+            working_paths = []
+
+        try:
+            RECEIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+            received_paths = sorted(RECEIVED_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+            payload["received_paths"] = {path.name: path for path in received_paths}
+        except Exception as error:
+            errors.append(f"Received: {error}")
+
+        try:
+            INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+            incoming_paths = sorted(INCOMING_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+            payload["home_paths"]["Incoming"] = {path.name: path for path in incoming_paths}
+            payload["incoming_path_count"] = len(incoming_paths)
+        except Exception as error:
+            errors.append(f"Incoming: {error}")
+            incoming_paths = []
+
+        index: dict[str, dict[str, object]] = {}
+        for path in sorted(incoming_paths, key=lambda path: path.name.lower()):
+            try:
+                rows = read_simple_spreadsheet(path)
+            except Exception as error:
+                errors.append(f"{path.name}: {error}")
+                continue
+            for row in rows:
+                cert = scan_to_cert(row.get("cert_number"))
+                if not cert or cert in index:
+                    continue
+                index[cert] = {
+                    "sheet": path.name,
+                    "path": path,
+                    "card_title": row.get("card_title") or "",
+                    "grader": row.get("grader") or "",
+                    "purchase_price": row.get("purchase_price"),
+                    "card_ladder_value": row.get("card_ladder_value"),
+                    "card_ladder_comps_average": row.get("card_ladder_comps_average"),
+                    "card_ladder_comp_confidence": row.get("card_ladder_comp_confidence") or "",
+                    "card_ladder_comps": row.get("card_ladder_comps") or "",
+                }
+        payload["incoming_index"] = index
+
+        for kind, paths in (("Incoming", incoming_paths), ("Working", working_paths)):
+            for path in paths:
+                key = self._home_sheet_key(kind, path.name)
+                try:
+                    summary = summarize_workbook(path)
+                except Exception as error:
+                    errors.append(f"{path.name}: {error}")
+                    summary = {"name": path.name, "row_count": 0, "received_count": 0, "purchase_total": 0.0, "all_received": False, "partially_received": False}
+                payload["home_summaries"][key] = summary
+
+        self.events.put(("startup_refresh", payload))
+
+    def _apply_startup_refresh(self, payload: dict[str, object]) -> None:
+        self.working_sheet_paths = dict(payload.get("working_paths") or {})
+        if hasattr(self, "working_sheet_list"):
+            self.working_sheet_list.delete(0, tk.END)
+            for name in self.working_sheet_paths:
+                self.working_sheet_list.insert(tk.END, name)
+        if self.working_sheet_paths and self.selected_working_sheet.get() not in self.working_sheet_paths:
+            self.selected_working_sheet.set(next(iter(self.working_sheet_paths)))
+        self._select_working_sheet_in_list()
+
+        self.received_sheet_paths = dict(payload.get("received_paths") or {})
+        if hasattr(self, "received_sheet_combo"):
+            received_names = list(self.received_sheet_paths)
+            self.received_sheet_combo["values"] = received_names
+            if received_names and self.selected_received_sheet.get() not in self.received_sheet_paths:
+                self.selected_received_sheet.set(received_names[0])
+            elif not received_names:
+                self.selected_received_sheet.set("")
+
+        self.incoming_cert_index = dict(payload.get("incoming_index") or {})
+        self._match_all_review_rows()
+        self.review_status.set(f"Indexed {len(self.incoming_cert_index)} cert(s) from {int(payload.get('incoming_path_count') or 0)} incoming sheet(s).")
+
+        self.home_sheet_paths = dict(payload.get("home_paths") or {"Incoming": {}, "Working": {}})
+        self.home_sheet_summaries = dict(payload.get("home_summaries") or {})
+        self._refresh_home_sheet_list()
+        self._refresh_home_metrics()
+        self._update_home_sheet_tabs()
+
+        errors = list(payload.get("errors") or [])
+        if errors:
+            self.status_var.set(f"Startup sheet refresh finished with {len(errors)} issue(s).")
+        else:
+            self.status_var.set("Sheet lists loaded.")
+
+    def _refresh_home_sheet_list(self) -> None:
+        if not hasattr(self, "home_sheet_list"):
+            return
+        kind = self.home_sheet_kind.get()
+        self.home_sheet_list.delete(0, tk.END)
+        for name in self.home_sheet_paths.get(kind, {}):
+            self.home_sheet_list.insert(tk.END, name)
+        if self.home_sheet_list.size():
+            self.home_sheet_list.selection_set(0)
+            self._load_home_selected_marker()
+        else:
+            self.home_selected_sheet_key = ""
+
+    def _refresh_home_metrics(self) -> None:
+        if not hasattr(self, "incoming_volume_tree"):
+            return
+        for tree in (self.incoming_volume_tree, self.partial_received_tree):
+            tree.delete(*tree.get_children())
+        incoming_names = self.home_sheet_paths.get("Incoming", {})
+        for name in incoming_names:
+            key = self._home_sheet_key("Incoming", name)
+            summary = self.home_sheet_summaries.get(key, {})
+            marker = self.home_sheet_markers.get(key, {})
+            total = int(summary.get("row_count") or 0)
+            received = int(summary.get("received_count") or 0)
+            volume = float(summary.get("purchase_total") or 0.0)
+            self.incoming_volume_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    name,
+                    str(marker.get("assigned_person") or ""),
+                    total,
+                    received,
+                    format_money(volume),
+                    self._incoming_sheet_status(marker, summary),
+                ),
+            )
+            if summary.get("partially_received"):
+                self.partial_received_tree.insert(
+                    "",
+                    tk.END,
+                    tags=("partial_sheet",),
+                    values=(
+                        name,
+                        f"{received}/{total}",
+                        format_money(volume),
+                        str(marker.get("assigned_person") or ""),
+                        "Yes" if marker.get("paid") else "",
+                        str(marker.get("tracking_number") or ""),
+                        "Yes" if marker.get("all_received") else "",
+                    ),
+                )
+
+    def _incoming_sheet_status(self, marker: dict[str, object], summary: dict[str, object]) -> str:
+        has_tracking = bool(str(marker.get("tracking_number") or "").strip())
+        received = int(summary.get("received_count") or 0)
+        if has_tracking or received:
+            return "Awaiting Receive"
+        return "Awaiting tracking"
+
+    def _load_home_selected_marker(self) -> None:
+        if not hasattr(self, "home_sheet_list"):
+            return
+        selected = self.home_sheet_list.curselection()
+        if not selected:
+            return
+        kind = self.home_sheet_kind.get()
+        name = str(self.home_sheet_list.get(selected[0]))
+        key = self._home_sheet_key(kind, name)
+        self.home_selected_sheet_key = key
+
+    def open_sheet_marker_editor(self) -> None:
+        if not self.home_selected_sheet_key:
+            messagebox.showinfo("Choose sheet", "Choose a sheet on Home before editing markers.")
+            return
+        kind, name = self._split_home_sheet_key(self.home_selected_sheet_key)
+        marker = self.home_sheet_markers.get(self.home_selected_sheet_key, {})
+        summary = self.home_sheet_summaries.get(self.home_selected_sheet_key, {})
+        paid_var = tk.BooleanVar(value=bool(marker.get("paid")))
+        all_received_var = tk.BooleanVar(value=bool(marker.get("all_received") or summary.get("all_received")))
+        tracking_var = tk.StringVar(value=str(marker.get("tracking_number") or ""))
+        person_var = tk.StringVar(value=str(marker.get("assigned_person") or ""))
+
+        popup = tk.Toplevel(self)
+        popup.title("Edit Sheet Markers")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=name, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text=kind, style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        ttk.Checkbutton(frame, text="Paid", variable=paid_var, style="Panel.TCheckbutton").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Tracking Number", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        ttk.Entry(frame, textvariable=tracking_var, width=34).grid(row=3, column=1, sticky="ew", pady=(0, 10))
+        ttk.Checkbutton(frame, text="All Received", variable=all_received_var, style="Panel.TCheckbutton").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
+        ttk.Entry(frame, textvariable=person_var, width=34).grid(row=5, column=1, sticky="ew", pady=(0, 14))
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=6, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            buttons,
+            text="Save Markers",
+            command=lambda: self.save_home_sheet_markers(
+                {
+                    "paid": bool(paid_var.get()),
+                    "tracking_number": tracking_var.get().strip(),
+                    "all_received": bool(all_received_var.get()),
+                    "assigned_person": person_var.get().strip(),
+                },
+                popup,
+            ),
+            style="Primary.TButton",
+        ).pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+
+    def save_home_sheet_markers(self, marker: dict[str, object], popup: tk.Toplevel | None = None) -> None:
+        if not self.home_selected_sheet_key:
+            messagebox.showinfo("Choose sheet", "Choose a sheet on Home before saving markers.")
+            return
+        marker = {
+            "paid": bool(marker.get("paid")),
+            "tracking_number": str(marker.get("tracking_number") or "").strip(),
+            "all_received": bool(marker.get("all_received")),
+            "assigned_person": str(marker.get("assigned_person") or "").strip(),
+        }
+        key = self.home_selected_sheet_key
+        moved = False
+        try:
+            if marker["all_received"]:
+                moved_key = self._move_sheet_to_received(key)
+                if moved_key:
+                    self.home_sheet_markers.pop(key, None)
+                    key = moved_key
+                    self.home_selected_sheet_key = key
+                    moved = True
+            elif marker["paid"]:
+                moved_key = self._move_paid_working_sheet_to_incoming(key)
+                if moved_key:
+                    self.home_sheet_markers.pop(key, None)
+                    key = moved_key
+                    self.home_selected_sheet_key = key
+                    self.home_sheet_kind.set("Incoming")
+                    moved = True
+            self.home_sheet_markers[key] = marker
+            self._save_sheet_markers()
+        except Exception as error:
+            messagebox.showerror("Save failed", str(error))
+            return
+        self.refresh_working_sheets()
+        self.refresh_received_sheets()
+        self.refresh_home()
+        if popup is not None:
+            popup.destroy()
+        self.status_var.set("Sheet markers saved and moved." if moved else "Sheet markers saved.")
+
+    def _home_sheet_key(self, kind: str, name: str) -> str:
+        return f"{kind}|{name}"
+
+    def _split_home_sheet_key(self, key: str) -> tuple[str, str]:
+        if "|" not in key:
+            return "", key
+        kind, name = key.split("|", 1)
+        return kind, name
+
+    def _move_paid_working_sheet_to_incoming(self, key: str) -> str:
+        kind, name = self._split_home_sheet_key(key)
+        if kind != "Working" or not name:
+            return ""
+        source = self.home_sheet_paths.get("Working", {}).get(name) or WORKING_SHEETS_DIR / name
+        if not source.exists():
+            raise FileNotFoundError(f"Working sheet not found: {source}")
+        INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        destination = INCOMING_SHEETS_DIR / source.name
+        if destination.exists():
+            raise FileExistsError(f"Incoming sheet already exists: {destination.name}")
+        shutil.move(str(source), str(destination))
+        return self._home_sheet_key("Incoming", destination.name)
+
+    def _move_sheet_to_received(self, key: str) -> str:
+        kind, name = self._split_home_sheet_key(key)
+        if kind not in {"Working", "Incoming"} or not name:
+            return ""
+        source = self._sheet_path_for_stage(kind, name)
+        if not source.exists():
+            raise FileNotFoundError(f"{kind} sheet not found: {source}")
+        RECEIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        destination = RECEIVED_SHEETS_DIR / source.name
+        if destination.exists():
+            raise FileExistsError(f"Received sheet already exists: {destination.name}")
+        shutil.move(str(source), str(destination))
+        return self._home_sheet_key("Received", destination.name)
+
+    def _sheet_path_for_stage(self, kind: str, name: str) -> Path:
+        if kind == "Working":
+            return self.home_sheet_paths.get("Working", {}).get(name) or WORKING_SHEETS_DIR / name
+        if kind == "Incoming":
+            return self.home_sheet_paths.get("Incoming", {}).get(name) or INCOMING_SHEETS_DIR / name
+        if kind == "Received":
+            return self.received_sheet_paths.get(name) or RECEIVED_SHEETS_DIR / name
+        return Path(name)
+
+    def _move_fully_received_sheets_to_received(self, paths: list[Path]) -> list[str]:
+        moved: list[str] = []
+        for path in paths:
+            if not path.exists():
+                continue
+            try:
+                summary = summarize_workbook(path)
+            except Exception:
+                continue
+            if not summary.get("all_received"):
+                continue
+            parent = path.parent.resolve()
+            kind = "Incoming" if parent == INCOMING_SHEETS_DIR.resolve() else "Working" if parent == WORKING_SHEETS_DIR.resolve() else ""
+            if not kind:
+                continue
+            old_key = self._home_sheet_key(kind, path.name)
+            marker = dict(self.home_sheet_markers.get(old_key, {}))
+            marker["all_received"] = True
+            new_key = self._move_sheet_to_received(old_key)
+            if new_key:
+                self.home_sheet_markers.pop(old_key, None)
+                self.home_sheet_markers[new_key] = marker
+                moved.append(path.name)
+        return moved
+
+    def _load_sheet_markers(self) -> dict[str, dict[str, object]]:
+        try:
+            if not SHEET_MARKERS_PATH.exists():
+                return {}
+            raw = json.loads(SHEET_MARKERS_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                return {str(key): dict(value) for key, value in raw.items() if isinstance(value, dict)}
+        except Exception:
+            return {}
+        return {}
+
+    def _save_sheet_markers(self) -> None:
+        SHEET_MARKERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SHEET_MARKERS_PATH.write_text(json.dumps(self.home_sheet_markers, indent=2, sort_keys=True), encoding="utf-8")
 
     def _show_mode(self) -> None:
         for child in self.mode_host.winfo_children():
@@ -373,7 +1121,7 @@ class CardPipelineApp(tk.Tk):
 
     def _build_manual_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
-        ttk.Label(self.review_mode_host, text="Double-click cells in the Review table to enter cert, grader, card, and purchase price.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
+        ttk.Label(self.review_mode_host, text="Double-click cells in the Review table to enter certs or adjust matched details.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
 
     def _build_automatic_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
@@ -400,8 +1148,6 @@ class CardPipelineApp(tk.Tk):
         self.review_scan_entry.grid(row=0, column=start_col + 2, sticky="w", padx=(8, 14))
         self.review_scan_entry.bind("<Return>", lambda _event: self.add_review_scanned_row())
         self.review_scan_entry.bind("<KP_Enter>", lambda _event: self.add_review_scanned_row())
-        ttk.Label(self.review_mode_host, text="Grader", style="Panel.TLabel").grid(row=0, column=start_col + 3, sticky="w")
-        ttk.Combobox(self.review_mode_host, textvariable=self.review_scan_grader, values=["PSA", "BGS", "SGC", "CGC"], state="readonly", width=8).grid(row=0, column=start_col + 4, sticky="w", padx=(8, 14))
         self._set_review_station_controls()
         if self.review_scanning_active:
             self.after(100, self._arm_review_scanner)
@@ -460,7 +1206,7 @@ class CardPipelineApp(tk.Tk):
             self._arm_scanner()
             return
         grader = self.scan_grader.get().strip().upper()
-        card = self.scan_card.get().strip() or grader
+        card = self.scan_card.get().strip()
         added_rows = self._append_rows([
             {
                 "cert_number": cert,
@@ -652,10 +1398,74 @@ class CardPipelineApp(tk.Tk):
                     "card_title": row.get("card_title") or "",
                     "grader": row.get("grader") or "",
                     "purchase_price": row.get("purchase_price"),
+                    "card_ladder_value": row.get("card_ladder_value"),
+                    "card_ladder_comps_average": row.get("card_ladder_comps_average"),
+                    "card_ladder_comp_confidence": row.get("card_ladder_comp_confidence") or "",
+                    "card_ladder_comps": row.get("card_ladder_comps") or "",
                 }
         self.incoming_cert_index = index
         self._match_all_review_rows()
         self.review_status.set(f"Indexed {len(index)} cert(s) from {len(paths)} incoming sheet(s).")
+
+    def refresh_received_sheets(self) -> None:
+        try:
+            RECEIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+            paths = sorted(RECEIVED_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+        except Exception as error:
+            self.received_sheet_paths = {}
+            if hasattr(self, "received_sheet_combo"):
+                self.received_sheet_combo["values"] = []
+            self.review_status.set(f"Received sheets unavailable: {error}")
+            return
+        self.received_sheet_paths = {path.name: path for path in paths}
+        if hasattr(self, "received_sheet_combo"):
+            names = list(self.received_sheet_paths)
+            self.received_sheet_combo["values"] = names
+            if names and self.selected_received_sheet.get() not in self.received_sheet_paths:
+                self.selected_received_sheet.set(names[0])
+            elif not names:
+                self.selected_received_sheet.set("")
+
+    def load_selected_received_sheet_for_review(self) -> None:
+        name = self.selected_received_sheet.get()
+        path = self.received_sheet_paths.get(name)
+        if not path:
+            messagebox.showinfo("Choose sheet", "Choose a received sheet to load into Review.")
+            return
+        self.review_status.set(f"Loading received sheet: {name}...")
+        self.status_var.set(f"Loading received sheet: {name}...")
+        threading.Thread(target=self._load_received_sheet_worker, args=(name, path), daemon=True).start()
+
+    def _load_received_sheet_worker(self, name: str, path: Path) -> None:
+        try:
+            rows = read_simple_spreadsheet(path)
+        except Exception as error:
+            self.events.put(("load_received_sheet_error", {"name": name, "error": str(error)}))
+            return
+        self.events.put(("load_received_sheet_done", {"name": name, "rows": rows}))
+
+    def _apply_loaded_received_sheet(self, name: str, rows: list[dict[str, object]]) -> None:
+        review_rows = []
+        for row in rows:
+            review_rows.append(
+                {
+                    "cert_number": row.get("cert_number"),
+                    "grader": row.get("grader"),
+                    "card_title": row.get("card_title"),
+                    "purchase_price": row.get("purchase_price"),
+                    "card_ladder_value": row.get("card_ladder_value"),
+                    "card_ladder_comps_average": row.get("card_ladder_comps_average"),
+                    "card_ladder_comp_confidence": row.get("card_ladder_comp_confidence") or "",
+                    "card_ladder_comps": row.get("card_ladder_comps") or "",
+                    "source": f"Received Sheet: {name}",
+                    "sheet_source": name,
+                    "status": "Received",
+                    "notes": "Loaded from received sheet",
+                }
+            )
+        added = self._append_review_rows(review_rows)
+        self.review_status.set(f"Loaded {len(added)} row(s) from {name}.")
+        self.status_var.set(f"Loaded received sheet: {name}")
 
     def add_manual_review_row(self) -> int | None:
         added_rows = self._append_review_rows([
@@ -702,12 +1512,11 @@ class CardPipelineApp(tk.Tk):
             self.review_status.set("No cert detected. Scan again.")
             self._arm_review_scanner()
             return
-        grader = self.review_scan_grader.get().strip().upper()
         self._append_review_rows([
             {
                 "cert_number": cert,
-                "grader": grader,
-                "card_title": grader,
+                "grader": "",
+                "card_title": "",
                 "purchase_price": None,
                 "source": "Review Barcode",
                 "notes": "Received",
@@ -791,9 +1600,14 @@ class CardPipelineApp(tk.Tk):
             cert = scan_to_cert(row.get("cert_number"))
             match = self._incoming_match(cert)
             grader = str(row.get("grader") or match.get("grader") or infer_grader(str(row.get("card_title") or ""))).upper()
-            card = str(row.get("card_title") or match.get("card_title") or "").strip() or grader
+            card = str(row.get("card_title") or match.get("card_title") or "").strip()
             purchase_price = row.get("purchase_price") if row.get("purchase_price") is not None else match.get("purchase_price")
-            status = "Needs setup" if not cert else ("Received" if match else "Received - no incoming match")
+            card_ladder_value = row.get("card_ladder_value") if row.get("card_ladder_value") is not None else match.get("card_ladder_value")
+            comps_average = row.get("card_ladder_comps_average") if row.get("card_ladder_comps_average") is not None else match.get("card_ladder_comps_average")
+            comp_confidence = str(row.get("card_ladder_comp_confidence") or match.get("card_ladder_comp_confidence") or "")
+            comp_details = str(row.get("card_ladder_comps") or match.get("card_ladder_comps") or "")
+            sheet_source = str(row.get("sheet_source") or match.get("sheet") or ("NO SHEET FOUND" if cert else ""))
+            status = str(row.get("status") or ("Needs setup" if not cert else ("Received" if match else "Received - no incoming match")))
             excel_row = start + offset
             existing.append(
                 WorkbookRow(
@@ -802,12 +1616,16 @@ class CardPipelineApp(tk.Tk):
                     card_title=card,
                     grader=grader,
                     existing_value=purchase_price,
+                    card_ladder_value=card_ladder_value,
+                    card_ladder_comps_average=comps_average,
+                    card_ladder_comp_confidence=comp_confidence,
+                    card_ladder_comps=comp_details,
                     status=status,
                     notes=str(row.get("notes") or ""),
                 )
             )
             self.review_sources[excel_row] = str(row.get("source") or "")
-            self.review_sheet_sources[excel_row] = str(match.get("sheet") or ("NO SHEET FOUND" if cert else ""))
+            self.review_sheet_sources[excel_row] = sheet_source
             added_excel_rows.append(excel_row)
         self.review_rows = existing
         self._refresh_table()
@@ -827,6 +1645,14 @@ class CardPipelineApp(tk.Tk):
                     row.grader = str(match.get("grader") or "")
                 if row.existing_value is None and match.get("purchase_price") is not None:
                     row.existing_value = match.get("purchase_price")
+                if row.card_ladder_value is None and match.get("card_ladder_value") is not None:
+                    row.card_ladder_value = match.get("card_ladder_value")
+                if row.card_ladder_comps_average is None and match.get("card_ladder_comps_average") is not None:
+                    row.card_ladder_comps_average = match.get("card_ladder_comps_average")
+                if not row.card_ladder_comp_confidence and match.get("card_ladder_comp_confidence"):
+                    row.card_ladder_comp_confidence = str(match.get("card_ladder_comp_confidence") or "")
+                if not row.card_ladder_comps and match.get("card_ladder_comps"):
+                    row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
                 row.status = "Received"
             elif row.status == "Received":
                 row.status = "Received - no incoming match"
@@ -837,6 +1663,62 @@ class CardPipelineApp(tk.Tk):
         self.review_sheet_sources = {}
         self._refresh_table()
         self.review_status.set("Review rows cleared.")
+
+    def delete_selected_review_rows(self) -> None:
+        deleted = self._delete_selected_rows(
+            self.review_tree,
+            self.review_rows,
+            self.review_sources,
+            self.review_sheet_sources,
+        )
+        if deleted:
+            self.review_status.set(f"Deleted {deleted} review row(s).")
+            self.status_var.set(f"Deleted {deleted} review row(s).")
+        else:
+            self.review_status.set("Select review rows to delete.")
+
+    def mark_review_received_in_sheets(self) -> None:
+        certs = {scan_to_cert(row.cert_number) for row in self.review_rows if scan_to_cert(row.cert_number)}
+        if not certs:
+            messagebox.showinfo("No received certs", "Scan or load received cards in Review before marking sheets.")
+            return
+        paths: list[Path] = []
+        errors: list[str] = []
+        for directory in (INCOMING_SHEETS_DIR, WORKING_SHEETS_DIR):
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                paths.extend(sorted(directory.glob("*.xlsx"), key=lambda path: path.name.lower()))
+            except Exception as error:
+                errors.append(f"{directory}: {error}")
+        if not paths:
+            messagebox.showinfo("No sheets found", "No incoming or working sheets were found to update.")
+            return
+        result = mark_received_in_workbooks(paths, certs)
+        errors.extend(result.get("errors") or [])
+        rows_marked = int(result.get("rows_marked") or 0)
+        files_updated = int(result.get("files_updated") or 0)
+        certs_marked = len(result.get("certs_marked") or set())
+        moved_received: list[str] = []
+        try:
+            moved_received = self._move_fully_received_sheets_to_received(paths)
+            if moved_received:
+                self._save_sheet_markers()
+        except Exception as error:
+            errors.append(f"Move to received failed: {error}")
+        self.refresh_incoming_index()
+        self.refresh_working_sheets()
+        self.refresh_received_sheets()
+        if rows_marked:
+            self.review_status.set(f"Marked {rows_marked} row(s) received across {files_updated} sheet file(s).")
+            self.status_var.set(f"Marked {certs_marked}/{len(certs)} received cert(s) in sheets.")
+        else:
+            self.review_status.set("No matching cert rows were found in incoming or working sheets.")
+            self.status_var.set("No sheet rows marked received.")
+        if moved_received:
+            self.status_var.set(f"Moved {len(moved_received)} fully received sheet(s) to RECEIVED SHEETS.")
+        self.refresh_home()
+        if errors:
+            messagebox.showwarning("Some sheets were skipped", "\n".join(errors[:8]))
 
     def _arm_review_scanner(self) -> None:
         if self.review_mode.get() != "Automatic Review" or self.review_scan_entry is None:
@@ -851,10 +1733,82 @@ class CardPipelineApp(tk.Tk):
         if not self.state.rows:
             messagebox.showinfo("No comp sheet loaded", "Choose and load a working sheet in the Comp tab first.")
             return
+        requery_all = self.comp_scope_label.get() == COMP_SCOPE_ALL
+        eligible = [
+            row
+            for row in self.state.rows
+            if row.cert_number and row.grader and (requery_all or not row_has_comp_data(row))
+        ]
+        if not eligible:
+            if requery_all:
+                message = "No rows have both a cert number and company ready for Card Ladder."
+            else:
+                message = "No rows are missing comp data. Switch Run Scope to Recomp All if you want to refresh every row."
+            messagebox.showinfo("No eligible rows", message)
+            self.status_var.set(message)
+            return
         self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE))
-        command_id = self.state.start_all_comps()
+        command_id = self.state.start_all_comps(requery_all=requery_all)
+        self.comp_output_saved = False
         self._refresh_table()
-        self.status_var.set(f"Run all comps queued with {self.comp_strategy_label.get()} as command #{command_id}.")
+        self.after(12000, lambda queued_command_id=command_id: self._warn_if_extension_not_checked_in(queued_command_id))
+        self.status_var.set(f"Queued {len(eligible)} Card Ladder row(s) using {self.comp_scope_label.get()} with {self.comp_strategy_label.get()} as command #{command_id}.")
+
+    def _warn_if_extension_not_checked_in(self, command_id: int) -> None:
+        with self.state.lock:
+            command_pending = bool(self.state.command and self.state.command.get("id") == command_id)
+        if not command_pending:
+            return
+        messagebox.showwarning(
+            "Card Ladder extension not connected",
+            "The rows were queued, but the Card Ladder Chrome extension has not checked in. Make sure the extension is loaded and Chrome is open.",
+        )
+
+    def clear_comp_rows(self) -> None:
+        if self.state.rows and not self.comp_output_saved:
+            confirmed = messagebox.askyesno(
+                "Clear unsaved comp rows?",
+                "These comp rows have not been saved as an output. Clear them anyway?",
+                icon=messagebox.WARNING,
+            )
+            if not confirmed:
+                self.status_var.set("Clear comp rows cancelled.")
+                return
+        self.state.set_rows([])
+        self.row_sources = {}
+        self.comp_sheet_sources = {}
+        self.selected_working_sheet.set("")
+        self.comp_output_saved = True
+        self._cancel_cell_edit()
+        try:
+            self.working_sheet_list.selection_clear(0, tk.END)
+        except tk.TclError:
+            pass
+        self._refresh_table()
+        self.status_var.set("Comp rows cleared.")
+
+    def recalculate_comp_method(self, _event=None) -> None:
+        strategy = COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE)
+        self.state.set_comp_strategy(strategy)
+        updated = 0
+        with self.state.lock:
+            for row in self.state.rows:
+                comps = parse_formatted_comps(row.card_ladder_comps)
+                if not comps:
+                    continue
+                row.card_ladder_comps_average = comp_price(comps, strategy)
+                row.card_ladder_comp_confidence = comp_confidence(comps)
+                row.card_ladder_comps = format_comps(comps, strategy)
+                updated += 1
+        if updated:
+            self.comp_output_saved = False
+        self._refresh_table()
+        if updated:
+            self.status_var.set(f"Recalculated {updated} comp row(s) with {self.comp_strategy_label.get()}.")
+        elif self.state.rows:
+            self.status_var.set("Comp method updated. No stored comp details were available to recalculate.")
+        else:
+            self.status_var.set("Comp method updated.")
 
     def save_output(self) -> None:
         if not self.state.rows:
@@ -872,6 +1826,7 @@ class CardPipelineApp(tk.Tk):
         if not path:
             return
         write_pipeline_output(Path(path), self.state.rows, self.row_sources)
+        self.comp_output_saved = True
         self.status_var.set(f"Saved {path}")
 
     def save_working_sheet(self) -> None:
@@ -894,9 +1849,11 @@ class CardPipelineApp(tk.Tk):
         self.intake_sheet_sources = {}
         self.working_sheet_title.set("")
         self._refresh_table()
+        self.refresh_home()
 
     def refresh_pipeline(self) -> None:
         self.refresh_working_sheets()
+        self.refresh_home()
         self._refresh_table()
 
     def refresh_working_sheets(self) -> None:
@@ -926,17 +1883,24 @@ class CardPipelineApp(tk.Tk):
         if not path:
             messagebox.showinfo("Choose sheet", "Choose a working sheet first.")
             return
+        self.status_var.set(f"Loading working sheet: {name}...")
+        threading.Thread(target=self._load_working_sheet_worker, args=(name, path), daemon=True).start()
+
+    def _load_working_sheet_worker(self, name: str, path: Path) -> None:
         try:
             rows = read_simple_spreadsheet(path)
         except Exception as error:
-            messagebox.showerror("Load failed", str(error))
+            self.events.put(("load_working_sheet_error", {"name": name, "error": str(error)}))
             return
+        self.events.put(("load_working_sheet_done", {"name": name, "rows": rows}))
+
+    def _apply_loaded_working_sheet(self, name: str, rows: list[dict[str, object]]) -> None:
         workbook_rows: list[WorkbookRow] = []
         sources: dict[int, str] = {}
         for offset, row in enumerate(rows, start=2):
             cert = str(row.get("cert_number") or "")
-            grader = str(row.get("grader") or infer_grader(str(row.get("card_title") or ""))).upper()
-            card = str(row.get("card_title") or "").strip() or grader
+            grader = str(row.get("grader") or infer_grader(str(row.get("card_title") or "")) or "PSA").upper()
+            card = str(row.get("card_title") or "").strip()
             workbook_rows.append(
                 WorkbookRow(
                     excel_row=offset,
@@ -944,7 +1908,11 @@ class CardPipelineApp(tk.Tk):
                     card_title=card,
                     grader=grader,
                     existing_value=row.get("purchase_price"),
-                    status="Ready" if cert and grader else "Needs setup",
+                    card_ladder_value=row.get("card_ladder_value"),
+                    card_ladder_comps_average=row.get("card_ladder_comps_average"),
+                    card_ladder_comp_confidence=str(row.get("card_ladder_comp_confidence") or ""),
+                    card_ladder_comps=str(row.get("card_ladder_comps") or ""),
+                    status=str(row.get("status") or ("Ready" if cert and grader else "Needs setup")),
                     notes=str(row.get("notes") or ""),
                 )
             )
@@ -952,6 +1920,7 @@ class CardPipelineApp(tk.Tk):
         self.state.set_rows(workbook_rows)
         self.row_sources = sources
         self.comp_sheet_sources = {}
+        self.comp_output_saved = True
         self._refresh_table()
         self.selected_working_sheet.set(name)
         self._select_working_sheet_in_list()
@@ -982,6 +1951,18 @@ class CardPipelineApp(tk.Tk):
         self._refresh_table()
         self.status_var.set("Intake rows cleared.")
 
+    def delete_selected_intake_rows(self) -> None:
+        deleted = self._delete_selected_rows(
+            self.intake_tree,
+            self.intake_rows,
+            self.intake_sources,
+            self.intake_sheet_sources,
+        )
+        if deleted:
+            self.status_var.set(f"Deleted {deleted} intake row(s).")
+        else:
+            self.status_var.set("Select intake rows to delete.")
+
     def _append_rows(self, rows: list[dict[str, object]]) -> list[int]:
         existing = list(self.intake_rows)
         start = len(existing) + 2
@@ -989,7 +1970,7 @@ class CardPipelineApp(tk.Tk):
         for offset, row in enumerate(rows):
             cert = str(row.get("cert_number") or "")
             grader = str(row.get("grader") or infer_grader(str(row.get("card_title") or ""))).upper()
-            card = str(row.get("card_title") or "").strip() or grader
+            card = str(row.get("card_title") or "").strip()
             status = "Ready" if cert and grader else "Needs setup"
             notes = str(row.get("notes") or "")
             excel_row = start + offset
@@ -1034,6 +2015,7 @@ class CardPipelineApp(tk.Tk):
         self._remember_column_widths(tree)
         tree.delete(*tree.get_children())
         duplicate_certs = self._duplicate_certs(rows)
+        columns = self._tree_columns(tree)
         for row in rows:
             tags = []
             if row.cert_number and row.cert_number in duplicate_certs:
@@ -1045,30 +2027,112 @@ class CardPipelineApp(tk.Tk):
                 tk.END,
                 iid=str(row.excel_row),
                 tags=tuple(tags),
-                values=(
-                        row.excel_row,
-                        sources.get(row.excel_row, ""),
-                        (sheet_sources or {}).get(row.excel_row, ""),
-                        row.cert_number,
-                    row.grader,
-                    row.card_title,
-                    format_money(row.existing_value if isinstance(row.existing_value, (int, float)) else None),
-                    format_money(row.card_ladder_value),
-                    format_money(row.card_ladder_comps_average),
-                    row.best_company,
-                    format_money(row.estimated_payout),
-                    row.status,
-                ),
+                values=tuple(self._row_display_value(row, col, sources, sheet_sources) for col in columns),
             )
         if tree is self.review_tree and self.review_mode.get() == "Manual Review":
+            add_values = []
+            for col in columns:
+                if col == "excel_row":
+                    add_values.append("+")
+                elif col == "card_title":
+                    add_values.append("Add row")
+                else:
+                    add_values.append("")
             tree.insert(
                 "",
                 tk.END,
                 iid=ADD_REVIEW_ROW_IID,
                 tags=("add_review_row",),
-                values=("+", "", "", "", "", "Add row", "", "", "", "", "", ""),
+                values=tuple(add_values),
             )
         self._restore_column_widths(tree)
+
+    def _tree_columns(self, tree: ttk.Treeview) -> tuple[str, ...]:
+        return tuple(getattr(tree, "_display_columns", DISPLAY_COLUMNS))
+
+    def _row_display_value(
+        self,
+        row: WorkbookRow,
+        column: str,
+        sources: dict[int, str],
+        sheet_sources: dict[int, str] | None,
+    ) -> object:
+        if column == "excel_row":
+            return row.excel_row
+        if column == "source":
+            return sources.get(row.excel_row, "")
+        if column == "sheet_source":
+            return (sheet_sources or {}).get(row.excel_row, "")
+        if column == "cert_number":
+            return row.cert_number
+        if column == "grader":
+            return row.grader
+        if column == "card_title":
+            return row.card_title
+        if column == "purchase_price":
+            return format_money(row.existing_value if isinstance(row.existing_value, (int, float)) else None)
+        if column == "card_ladder_value":
+            return format_money(row.card_ladder_value)
+        if column == "card_ladder_comps_average":
+            return format_money(row.card_ladder_comps_average)
+        if column == "card_ladder_comp_confidence":
+            return row.card_ladder_comp_confidence
+        if column == "best_company":
+            return row.best_company
+        if column == "estimated_payout":
+            return format_money(row.estimated_payout)
+        if column == "status":
+            return row.status
+        return ""
+
+    def _delete_selected_table_rows(self, event) -> str | None:
+        tree = event.widget
+        if tree is self.intake_tree:
+            self.delete_selected_intake_rows()
+            return "break"
+        if tree is self.review_tree:
+            self.delete_selected_review_rows()
+            return "break"
+        return None
+
+    def _delete_selected_rows(
+        self,
+        tree: ttk.Treeview,
+        rows: list[WorkbookRow],
+        sources: dict[int, str],
+        sheet_sources: dict[int, str],
+    ) -> int:
+        selected_rows = {
+            int(iid)
+            for iid in tree.selection()
+            if str(iid).isdigit() and str(iid) != ADD_REVIEW_ROW_IID
+        }
+        if not selected_rows:
+            return 0
+        remaining: list[WorkbookRow] = []
+        new_sources: dict[int, str] = {}
+        new_sheet_sources: dict[int, str] = {}
+        for next_excel_row, row in enumerate((row for row in rows if row.excel_row not in selected_rows), start=2):
+            old_excel_row = row.excel_row
+            row.excel_row = next_excel_row
+            remaining.append(row)
+            if old_excel_row in sources:
+                new_sources[next_excel_row] = sources[old_excel_row]
+            if old_excel_row in sheet_sources:
+                new_sheet_sources[next_excel_row] = sheet_sources[old_excel_row]
+        if tree is self.intake_tree:
+            self.intake_rows = remaining
+            self.intake_sources = new_sources
+            self.intake_sheet_sources = new_sheet_sources
+        elif tree is self.review_tree:
+            self.review_rows = remaining
+            self.review_sources = new_sources
+            self.review_sheet_sources = new_sheet_sources
+        else:
+            return 0
+        self._cancel_cell_edit()
+        self._refresh_table()
+        return len(selected_rows)
 
     def _duplicate_certs(self, rows: list[WorkbookRow]) -> set[str]:
         counts: dict[str, int] = {}
@@ -1081,7 +2145,7 @@ class CardPipelineApp(tk.Tk):
 
     def _remember_column_widths(self, tree: ttk.Treeview) -> None:
         widths = self.column_widths_by_tree.setdefault(id(tree), {})
-        for col in DISPLAY_COLUMNS:
+        for col in self._tree_columns(tree):
             try:
                 widths[col] = int(tree.column(col, "width"))
             except tk.TclError:
@@ -1089,7 +2153,7 @@ class CardPipelineApp(tk.Tk):
 
     def _restore_column_widths(self, tree: ttk.Treeview) -> None:
         widths = self.column_widths_by_tree.get(id(tree), {})
-        for col in DISPLAY_COLUMNS:
+        for col in self._tree_columns(tree):
             if col in widths:
                 tree.column(col, width=widths[col])
 
@@ -1118,9 +2182,10 @@ class CardPipelineApp(tk.Tk):
         if not row_id or not column_id:
             return
         column_index = int(column_id.replace("#", "")) - 1
-        if column_index < 0 or column_index >= len(DISPLAY_COLUMNS):
+        columns = self._tree_columns(tree)
+        if column_index < 0 or column_index >= len(columns):
             return
-        column = DISPLAY_COLUMNS[column_index]
+        column = columns[column_index]
         if column not in EDITABLE_COLUMNS:
             return
         bbox = tree.bbox(row_id, column_id)
@@ -1149,6 +2214,8 @@ class CardPipelineApp(tk.Tk):
         self._destroy_cell_editor()
         excel_row = int(row_id)
         self._apply_cell_value(tree, excel_row, column, value)
+        if tree is self.comp_tree:
+            self.comp_output_saved = False
         self._refresh_table()
         if tree.exists(row_id):
             tree.selection_set(row_id)
@@ -1196,7 +2263,7 @@ class CardPipelineApp(tk.Tk):
             elif column == "grader":
                 row.grader = normalize_grader(clean_value) or clean_value.upper()
             elif column == "card_title":
-                row.card_title = clean_value or row.grader
+                row.card_title = clean_value
                 inferred = infer_grader(row.card_title)
                 if inferred:
                     row.grader = inferred
@@ -1212,6 +2279,14 @@ class CardPipelineApp(tk.Tk):
                         row.card_title = str(match.get("card_title") or "")
                     if row.existing_value is None and match.get("purchase_price") is not None:
                         row.existing_value = match.get("purchase_price")
+                    if row.card_ladder_value is None and match.get("card_ladder_value") is not None:
+                        row.card_ladder_value = match.get("card_ladder_value")
+                    if row.card_ladder_comps_average is None and match.get("card_ladder_comps_average") is not None:
+                        row.card_ladder_comps_average = match.get("card_ladder_comps_average")
+                    if not row.card_ladder_comp_confidence and match.get("card_ladder_comp_confidence"):
+                        row.card_ladder_comp_confidence = str(match.get("card_ladder_comp_confidence") or "")
+                    if not row.card_ladder_comps and match.get("card_ladder_comps"):
+                        row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
                 elif row.cert_number:
                     target_sheet_sources[excel_row] = "NO SHEET FOUND"
                     row.status = "Received - no incoming match"
@@ -1229,6 +2304,9 @@ class CardPipelineApp(tk.Tk):
                 event = self.events.get_nowait()
                 if event == "refresh":
                     self._refresh_table()
+                elif event == "comp_refresh":
+                    self.comp_output_saved = False
+                    self._refresh_table()
                 elif isinstance(event, tuple):
                     kind, payload = event
                     if kind == "photo_rows":
@@ -1242,12 +2320,22 @@ class CardPipelineApp(tk.Tk):
                         self.review_photo_status.set(str(payload))
                         self.review_status.set(str(payload))
                         self.status_var.set(str(payload))
+                    elif kind == "startup_refresh":
+                        self._apply_startup_refresh(payload)
+                    elif kind == "load_working_sheet_done":
+                        self._apply_loaded_working_sheet(str(payload.get("name") or ""), list(payload.get("rows") or []))
+                    elif kind == "load_working_sheet_error":
+                        self.status_var.set(f"Working sheet load failed: {payload.get('error')}")
+                        messagebox.showerror("Load failed", str(payload.get("error") or "Unknown error"))
+                    elif kind == "load_received_sheet_done":
+                        self._apply_loaded_received_sheet(str(payload.get("name") or ""), list(payload.get("rows") or []))
+                    elif kind == "load_received_sheet_error":
+                        self.review_status.set(f"Received sheet load failed: {payload.get('error')}")
+                        self.status_var.set(f"Received sheet load failed: {payload.get('error')}")
+                        messagebox.showerror("Load failed", str(payload.get("error") or "Unknown error"))
         except queue.Empty:
             pass
-        snapshot = self.state.snapshot()
-        if snapshot["extensionLastSeen"]:
-            self.status_var.set(f"Bridge running. Extension last seen {snapshot['extensionLastSeen']}.")
-        self.after(1000, self._poll_events)
+        self.after(200, self._poll_events)
 
     def _parse_money_text(self, value: str) -> float | None:
         text = value.strip().replace("$", "").replace(",", "")

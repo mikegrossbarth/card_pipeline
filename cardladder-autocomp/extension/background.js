@@ -1,23 +1,32 @@
 const SALES_HISTORY_URL = "https://app.cardladder.com/sales-history";
-const BRIDGE_URL = "http://127.0.0.1:8765";
-const MAX_RUN_MS = 20 * 60 * 1000;
+const BRIDGE_PORTS = [8765, 8766, 8767, 8768, 8769, 8770, 8771, 8772];
+const BRIDGE_URLS = BRIDGE_PORTS.map((port) => `http://127.0.0.1:${port}`);
+const BRIDGE_ALARM_NAME = "cardladder-bridge-poll";
+const BRIDGE_POLL_MS = 1000;
+const BETWEEN_ROWS_MS = 1200;
+const OCR_SETTLE_MS = 600;
+const OCR_RETRY_MS = 800;
 
 let runInProgress = false;
 let activeWindowId = null;
-let lastCommandId = 0;
+let activeBridgeUrl = BRIDGE_URLS[0];
+let cancelRequested = false;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.runtime.openOptionsPage?.();
-  chrome.alarms.create("cardladder-bridge-poll", { periodInMinutes: 0.05 });
+  chrome.alarms.create(BRIDGE_ALARM_NAME, { periodInMinutes: 0.05 });
+  pollDesktopBridge();
 });
 
 chrome.action.onClicked.addListener(() => startCardLadderRun(true));
-setInterval(pollDesktopBridge, 2500);
+pollDesktopBridge();
+setInterval(pollDesktopBridge, BRIDGE_POLL_MS);
 chrome.runtime.onStartup?.addListener(() => {
-  chrome.alarms.create("cardladder-bridge-poll", { periodInMinutes: 0.05 });
+  chrome.alarms.create(BRIDGE_ALARM_NAME, { periodInMinutes: 0.05 });
+  pollDesktopBridge();
 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "cardladder-bridge-poll") pollDesktopBridge();
+  if (alarm.name === BRIDGE_ALARM_NAME) pollDesktopBridge();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -28,13 +37,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "CARDLADDER_SYNC_NOW") {
-    startCardLadderRun(true).then(sendResponse);
+    startCardLadderRun(true, { keepWindowOpen: Boolean(message.keepWindowOpen) }).then(sendResponse);
+    return true;
+  }
+
+  if (message.type === "CARDLADDER_CANCEL_RUN") {
+    cancelRun().then(sendResponse);
     return true;
   }
 
   if (message.type === "CARDLADDER_GET_STATUS") {
-    pollDesktopBridge();
-    chrome.storage.local.get(["cardladderStatus", "cardladderResults", "cardladderQueue"]).then(sendResponse);
+    pollDesktopBridge()
+      .then(() => chrome.storage.local.get(["cardladderStatus", "cardladderResults", "cardladderQueue"]))
+      .then(sendResponse);
     return true;
   }
 
@@ -43,15 +58,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "CARDLADDER_TEST_BGS_NATIVE_CLICK") {
-    testBgsNativeClick().then(sendResponse);
+  if (message.type === "CARDLADDER_TEST_BGS_DROPDOWN") {
+    testBgsDropdown().then(sendResponse);
     return true;
   }
 });
 
-async function startCardLadderRun(focusWindow) {
+async function startCardLadderRun(focusWindow, options = {}) {
   if (runInProgress) return { ok: false, error: "Card Ladder run already in progress" };
   runInProgress = true;
+  cancelRequested = false;
 
   try {
     const { cardladderQueue } = await chrome.storage.local.get(["cardladderQueue"]);
@@ -70,7 +86,7 @@ async function startCardLadderRun(focusWindow) {
     });
 
     const tab = await createSalesHistoryWindow(focusWindow);
-    await runRows(tab.id, rows);
+    await runRows(tab.id, rows, options);
     return { ok: true };
   } catch (error) {
     await chrome.storage.local.set({
@@ -88,23 +104,36 @@ async function startCardLadderRun(focusWindow) {
 }
 
 async function pollDesktopBridge() {
-  if (runInProgress) return;
-  const response = await fetch(`${BRIDGE_URL}/command`).then((r) => r.json()).catch(() => null);
-  const command = response?.command;
-  if (!command || command.id === lastCommandId) return;
-  lastCommandId = command.id;
-  if (command.type !== "RUN_ALL_COMPS") return;
-  await fetch(`${BRIDGE_URL}/ack`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id: command.id }),
-  }).catch(() => {});
-  await startBridgeRun(command.queue || []);
+  try {
+    if (runInProgress) return;
+    for (const bridgeUrl of prioritizedBridgeUrls()) {
+      const response = await fetch(`${bridgeUrl}/command`).then((r) => r.json()).catch(() => null);
+      const command = response?.command;
+      if (!response) continue;
+      activeBridgeUrl = bridgeUrl;
+      if (!command || command.type !== "RUN_ALL_COMPS") continue;
+      await fetch(`${bridgeUrl}/ack`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: command.id }),
+      }).catch(() => {});
+      await startBridgeRun(command.queue || [], bridgeUrl);
+      return;
+    }
+  } catch (_error) {
+    return;
+  }
 }
 
-async function startBridgeRun(rows) {
+function prioritizedBridgeUrls() {
+  return [activeBridgeUrl, ...BRIDGE_URLS.filter((url) => url !== activeBridgeUrl)];
+}
+
+async function startBridgeRun(rows, bridgeUrl = activeBridgeUrl) {
   if (runInProgress) return;
   runInProgress = true;
+  cancelRequested = false;
+  activeBridgeUrl = bridgeUrl;
   try {
     if (!rows.length) throw new Error("Desktop bridge sent no Card Ladder rows.");
     await chrome.storage.local.set({
@@ -149,7 +178,7 @@ async function runRows(tabId, rows, options = {}) {
   const results = [];
 
   for (let index = 0; index < rows.length; index += 1) {
-    if (Date.now() - started > MAX_RUN_MS) throw new Error("Card Ladder run timed out.");
+    throwIfCancelled();
     const row = rows[index];
     await waitForTabNotLoading(tabId);
     await injectContent(tabId);
@@ -166,6 +195,7 @@ async function runRows(tabId, rows, options = {}) {
     });
 
     const result = await lookupRowWithRetries(tabId, row);
+    throwIfCancelled();
 
     results.push(result);
     if (options.postToBridge) await postBridgeResult(result);
@@ -181,7 +211,7 @@ async function runRows(tabId, rows, options = {}) {
       },
     });
 
-    await delay(1800);
+    await delay(BETWEEN_ROWS_MS);
   }
 
   await chrome.storage.local.set({
@@ -192,6 +222,7 @@ async function runRows(tabId, rows, options = {}) {
       total: rows.length,
       completed: rows.length,
       found: results.filter((result) => result.value != null).length,
+      windowKeptOpen: Boolean(options.keepWindowOpen),
       finishedAt: new Date().toISOString(),
     },
   });
@@ -202,24 +233,85 @@ async function runRows(tabId, rows, options = {}) {
       found: results.filter((result) => result.value != null).length,
     });
   }
+  if (!options.keepWindowOpen) {
+    await closeActiveWindow();
+  }
+}
+
+function throwIfCancelled() {
+  if (cancelRequested) throw new Error("Card Ladder run cancelled.");
+}
+
+async function cancelRun() {
+  cancelRequested = true;
+  await chrome.storage.local.set({
+    cardladderStatus: {
+      ok: false,
+      stage: "cancelled",
+      error: "Card Ladder run cancelled by user.",
+      finishedAt: new Date().toISOString(),
+    },
+  });
   await closeActiveWindow();
+  await postBridgeFinish({ ok: false, cancelled: true, error: "Card Ladder run cancelled by user." }).catch(() => {});
+  runInProgress = false;
+  return { ok: true };
 }
 
 async function lookupRowWithRetries(tabId, row) {
-  const pageResult = await submitRowWithNativeGrader(tabId, row);
+  throwIfCancelled();
+  const pageResult = await submitRowWithGrader(tabId, row);
+  throwIfCancelled();
 
-  if (pageResult?.status === "error") return pageResult;
+  if (["error", "invalid_cert", "no_results"].includes(pageResult?.status)) return pageResult;
+
+  const domResult = await captureValueFromDom(tabId, row, pageResult);
+  if (["invalid_cert", "no_results"].includes(domResult?.status)) return domResult;
+  if (domResultLooksComplete(domResult)) return domResult;
+  const expectedResultCount = Number(domResult?.ocr?.resultCount);
 
   let lastResult = null;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    throwIfCancelled();
+    const invalidCheck = await checkInvalidCertToast(tabId, row);
+    if (invalidCheck?.status === "invalid_cert") return invalidCheck;
     lastResult = await captureValueWithOcr(tabId, row, { ...pageResult, ocrAttempt: attempt });
-    if (lastResult?.value != null) return lastResult;
-    await delay(3000);
+    if (captureResultLooksComplete(lastResult, expectedResultCount)) return lastResult;
+    await delay(OCR_RETRY_MS);
   }
-  return lastResult;
+  return markPartialCapture(lastResult || domResult, expectedResultCount);
 }
 
-async function submitRowWithNativeGrader(tabId, row) {
+function domResultLooksComplete(result) {
+  return captureResultLooksComplete(result, Number(result?.ocr?.resultCount));
+}
+
+function captureResultLooksComplete(result, expectedResultCount = null) {
+  if (result?.value == null) return false;
+  const comps = Array.isArray(result?.ocr?.comps) ? result.ocr.comps : [];
+  if (!comps.length) return false;
+  const resultCount = Number.isFinite(expectedResultCount) && expectedResultCount > 0
+    ? expectedResultCount
+    : Number(result?.ocr?.resultCount);
+  if (comps.length >= 3) return true;
+  if (!Number.isFinite(resultCount) || resultCount <= 0) return comps.length >= 2;
+  return comps.length >= Math.min(2, resultCount);
+}
+
+function markPartialCapture(result, expectedResultCount = null) {
+  const comps = Array.isArray(result?.ocr?.comps) ? result.ocr.comps : [];
+  const expected = Number.isFinite(expectedResultCount) && expectedResultCount > 0
+    ? Math.min(2, expectedResultCount)
+    : 2;
+  return {
+    ...(result || {}),
+    value: null,
+    status: "partial_comp_capture",
+    error: `Only captured ${comps.length} comp(s); expected ${expected}. Re-run this row.`,
+  };
+}
+
+async function submitRowWithGrader(tabId, row) {
   const prepared = await chrome.tabs.sendMessage(tabId, {
     type: "CARDLADDER_PREPARE_CERT_MODAL",
     row,
@@ -240,7 +332,7 @@ async function submitRowWithNativeGrader(tabId, row) {
 
   const grader = String(row.grader || "").toUpperCase();
   if (grader) {
-    const selected = await nativeSelectGrader(tabId, grader);
+    const selected = await selectGraderInPage(tabId, grader);
     if (!selected?.ok) {
       return {
         ...row,
@@ -264,33 +356,59 @@ async function submitRowWithNativeGrader(tabId, row) {
   }));
 }
 
-async function nativeSelectGrader(tabId, grader) {
-  const coords = await chrome.tabs.sendMessage(tabId, {
-    type: "CARDLADDER_GET_GRADER_COORDS",
+async function selectGraderInPage(tabId, grader) {
+  return chrome.tabs.sendMessage(tabId, {
+    type: "CARDLADDER_SELECT_GRADER",
     grader,
   }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-  if (!coords?.ok) return coords;
-  await debuggerClick(tabId, coords.dropdown.x, coords.dropdown.y);
-  await delay(700);
-  await debuggerClick(tabId, coords.option.x, coords.option.y);
-  await delay(900);
-  return { ok: true, grader, selectedLabel: coords.wanted, before: coords };
+}
+
+async function captureValueFromDom(tabId, row, pageResult = {}) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const result = await chrome.tabs.sendMessage(tabId, {
+    type: "CARDLADDER_EXTRACT_DOM_RESULT",
+    row,
+  }).catch((error) => ({
+    ...row,
+    value: null,
+    status: "dom_error",
+    error: String(error?.message || error),
+    capturedAt: new Date().toISOString(),
+  }));
+  return {
+    ...result,
+    pageUrl: result.pageUrl || pageResult.pageUrl || tab?.url || "",
+    capturedAt: result.capturedAt || new Date().toISOString(),
+  };
+}
+
+async function checkInvalidCertToast(tabId, row) {
+  return chrome.tabs.sendMessage(tabId, {
+    type: "CARDLADDER_CHECK_INVALID_CERT_TOAST",
+    row,
+  }).then((result) => {
+    if (!result?.invalid) return { ...row, status: "ok" };
+    return {
+      ...row,
+      value: null,
+      status: "invalid_cert",
+      error: result.error || "Card Ladder showed no information with this cert.",
+      ocr: { ok: false, value: null, comps: [], evidence: result.error || "Invalid cert toast detected.", debugImage: "" },
+      pageUrl: result.pageUrl || "",
+      capturedAt: result.capturedAt || new Date().toISOString(),
+    };
+  }).catch(() => ({ ...row, status: "ok" }));
 }
 
 async function captureValueWithOcr(tabId, row, pageResult = {}) {
-  await delay(3500);
+  await delay(OCR_SETTLE_MS);
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   let captureError = "";
-  let image = tabId ? await debuggerCaptureScreenshot(tabId).catch((error) => {
+  if (tabId) await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  const image = tab?.windowId ? await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }).catch((error) => {
     captureError = String(error?.message || error);
     return "";
   }) : "";
-  if (!image) {
-    image = await chrome.tabs.captureVisibleTab(tab?.windowId, { format: "png" }).catch((error) => {
-      captureError = String(error?.message || error);
-      return "";
-    });
-  }
   if (!image) {
     return {
       ...row,
@@ -301,7 +419,7 @@ async function captureValueWithOcr(tabId, row, pageResult = {}) {
       capturedAt: new Date().toISOString(),
     };
   }
-  const ocr = await fetch(`${BRIDGE_URL}/ocr/cardladder`, {
+  const ocr = await fetch(`${activeBridgeUrl}/ocr/cardladder`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ image, row }),
@@ -325,53 +443,18 @@ async function captureActiveTabWithOcr(row) {
   return captureValueWithOcr(tab.id, row, { pageUrl: tab.url });
 }
 
-async function debuggerCaptureScreenshot(tabId) {
-  const target = { tabId };
-  await chrome.debugger.attach(target, "1.3").catch((error) => {
-    const message = String(error?.message || error);
-    if (!/Another debugger|already attached/i.test(message)) throw error;
-  });
-  try {
-    const metrics = await chrome.debugger.sendCommand(target, "Page.getLayoutMetrics").catch(() => null);
-    const viewport = metrics?.cssVisualViewport || metrics?.visualViewport;
-    const content = metrics?.cssContentSize || metrics?.contentSize;
-    const width = Math.max(900, Math.ceil(viewport?.clientWidth || content?.width || 1280));
-    const height = Math.min(1900, Math.max(1200, Math.ceil(content?.height || viewport?.clientHeight || 1200)));
-    const result = await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
-      format: "png",
-      fromSurface: true,
-      captureBeyondViewport: true,
-      clip: {
-        x: 0,
-        y: 0,
-        width,
-        height,
-        scale: 1,
-      },
-    });
-    if (!result?.data) throw new Error("Debugger screenshot returned no data");
-    return `data:image/png;base64,${result.data}`;
-  } finally {
-    await chrome.debugger.detach(target).catch(() => {});
-  }
-}
-
-async function testBgsNativeClick() {
+async function testBgsDropdown() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url?.startsWith("https://app.cardladder.com/")) {
     return { ok: false, error: "Open Card Ladder with the cert-search modal visible first." };
   }
   await injectContent(tab.id);
-  const coords = await chrome.tabs.sendMessage(tab.id, {
+  const before = await chrome.tabs.sendMessage(tab.id, {
     type: "CARDLADDER_GET_GRADER_COORDS",
     grader: "BGS",
   }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-  if (!coords?.ok) return coords;
-
-  await debuggerClick(tab.id, coords.dropdown.x, coords.dropdown.y);
-  await delay(700);
-  await debuggerClick(tab.id, coords.option.x, coords.option.y);
-  await delay(700);
+  if (!before?.ok) return before;
+  const selected = await selectGraderInPage(tab.id, "BGS");
 
   const after = await chrome.tabs.sendMessage(tab.id, {
     type: "CARDLADDER_GET_GRADER_COORDS",
@@ -380,48 +463,15 @@ async function testBgsNativeClick() {
 
   return {
     ok: true,
-    method: "debugger-native-click",
-    before: coords,
+    method: "dom-selection",
+    selected,
+    before,
     after,
   };
 }
 
-async function debuggerClick(tabId, x, y) {
-  const target = { tabId };
-  await chrome.debugger.attach(target, "1.3").catch((error) => {
-    const message = String(error?.message || error);
-    if (!/Another debugger|already attached/i.test(message)) throw error;
-  });
-  try {
-    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x,
-      y,
-      button: "none",
-    });
-    await delay(80);
-    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x,
-      y,
-      button: "left",
-      clickCount: 1,
-    });
-    await delay(80);
-    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x,
-      y,
-      button: "left",
-      clickCount: 1,
-    });
-  } finally {
-    await chrome.debugger.detach(target).catch(() => {});
-  }
-}
-
 async function postBridgeResult(result) {
-  await fetch(`${BRIDGE_URL}/result/cardladder`, {
+  await fetch(`${activeBridgeUrl}/result/cardladder`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(result),
@@ -429,7 +479,7 @@ async function postBridgeResult(result) {
 }
 
 async function postBridgeFinish(payload) {
-  await fetch(`${BRIDGE_URL}/finish/cardladder`, {
+  await fetch(`${activeBridgeUrl}/finish/cardladder`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),

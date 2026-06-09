@@ -10,6 +10,9 @@ from openpyxl.styles import Font, PatternFill
 
 
 DEFAULT_SHEET = "Cards"
+RECEIVED_HEADER = "RECEIVED"
+RECEIVED_FILL = PatternFill("solid", fgColor="C6EFCE")
+RECEIVED_FONT = Font(color="006100")
 
 PHOTO_EXPORT_HEADERS = {
     "cert": ("certificationnumber", "certnumber", "cert"),
@@ -45,22 +48,37 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
     try:
         sheet = workbook[sheet_name] if sheet_name else workbook[workbook.sheetnames[0]]
         rows: list[dict[str, Any]] = []
-        start_row = 2 if _looks_like_simple_header(sheet) else 1
+        has_header = _looks_like_simple_header(sheet)
+        headers = _header_map_for_row(sheet, 1) if has_header else {}
+        start_row = 2 if has_header else 1
         for row_index in range(start_row, sheet.max_row + 1):
-            cert = normalize_cert(sheet.cell(row_index, 1).value)
-            card = clean_part(sheet.cell(row_index, 2).value)
-            purchase_price = parse_money(sheet.cell(row_index, 3).value)
-            source = clean_part(sheet.cell(row_index, 4).value)
+            cert = normalize_cert(_cell_by_header(sheet, row_index, headers, ("certificationnumber", "certnumber", "cert"), 1))
+            grader = normalize_grader(_cell_by_header(sheet, row_index, headers, ("company", "gradingcompany", "grader", "gradingco"), None))
+            card = clean_part(_cell_by_header(sheet, row_index, headers, ("carddescription", "card", "description"), 2))
+            purchase_price = parse_money(_cell_by_header(sheet, row_index, headers, ("purchaseprice", "price", "cost"), 3))
+            card_ladder_value = parse_money(_cell_by_header(sheet, row_index, headers, ("cardladdervalue", "cardladder", "clvalue", "value"), None))
+            comps_average = parse_money(_cell_by_header(sheet, row_index, headers, ("comps", "cardladdercomps", "cardladdercompsaverage", "compsaverage", "compaverage"), None))
+            comp_confidence = clean_part(_cell_by_header(sheet, row_index, headers, ("compconfidence", "cardladdercompconfidence", "clconfidence"), None))
+            comp_details = clean_part(_cell_by_header(sheet, row_index, headers, ("cardladdercompdetails", "compdetails"), None))
+            status = clean_part(_cell_by_header(sheet, row_index, headers, ("compstatus", "status"), None))
+            notes = clean_part(_cell_by_header(sheet, row_index, headers, ("notes", "note"), None))
+            source = clean_part(_cell_by_header(sheet, row_index, headers, ("source", "sourcephoto", "sourcefile"), None if has_header else 4))
             if not cert and not card and purchase_price is None:
                 continue
+            grader = grader or infer_grader(card)
             rows.append(
                 {
                     "cert_number": cert,
                     "card_title": card,
-                    "grader": infer_grader(card),
+                    "grader": grader,
                     "purchase_price": purchase_price,
+                    "card_ladder_value": card_ladder_value,
+                    "card_ladder_comps_average": comps_average,
+                    "card_ladder_comp_confidence": comp_confidence,
+                    "card_ladder_comps": comp_details,
                     "source": source or f"{path.name}:{row_index}",
-                    "notes": _setup_notes(cert, card, infer_grader(card)),
+                    "status": status,
+                    "notes": notes or _setup_notes(cert, card, grader),
                 }
             )
         return rows
@@ -104,6 +122,43 @@ def workbook_sheet_names(path: Path) -> list[str]:
         workbook.close()
 
 
+def summarize_workbook(path: Path) -> dict[str, Any]:
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        row_count = 0
+        received_count = 0
+        purchase_total = 0.0
+        for sheet in workbook.worksheets:
+            header_row = 1 if _looks_like_simple_header(sheet) else None
+            first_data_row = 2 if header_row else 1
+            cert_col = _cert_column(sheet) or 1
+            card_col = _card_column(sheet) or 2
+            price_col = _price_column(sheet) or 3
+            received_col = _received_column(sheet)
+            for row_index in range(first_data_row, sheet.max_row + 1):
+                cert = normalize_cert(sheet.cell(row_index, cert_col).value)
+                card = clean_part(sheet.cell(row_index, card_col).value)
+                purchase_price = parse_money(sheet.cell(row_index, price_col).value)
+                if not cert and not card and purchase_price is None:
+                    continue
+                row_count += 1
+                if purchase_price is not None:
+                    purchase_total += purchase_price
+                if received_col and _is_received_value(sheet.cell(row_index, received_col).value):
+                    received_count += 1
+        return {
+            "path": path,
+            "name": path.name,
+            "row_count": row_count,
+            "received_count": received_count,
+            "purchase_total": purchase_total,
+            "all_received": bool(row_count and received_count == row_count),
+            "partially_received": bool(received_count and received_count < row_count),
+        }
+    finally:
+        workbook.close()
+
+
 def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, str] | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     workbook = Workbook()
@@ -116,6 +171,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         "Purchase Price",
         "Card Ladder Value",
         "Comps",
+        "Comp Confidence",
         "Card Ladder Comp Details",
         "Card Ladder Screenshot",
         "Best Company",
@@ -133,6 +189,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
                 row.existing_value,
                 row.card_ladder_value,
                 row.card_ladder_comps_average,
+                row.card_ladder_comp_confidence,
                 row.card_ladder_comps,
                 row.card_ladder_screenshot,
                 row.best_company,
@@ -149,7 +206,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         cell.font = header_font
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    widths = [18, 22, 62, 16, 18, 14, 58, 42, 18, 18, 20, 38]
+    widths = [18, 22, 62, 16, 18, 14, 18, 58, 42, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[chr(64 + index)].width = width
     workbook.save(path)
@@ -161,14 +218,16 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = DEFAULT_SHEET
-    headers = ["Certification Number", "Card Description", "Purchase Price", "Source"]
+    headers = ["Certification Number", "Company", "Card Description", "Purchase Price", "Source", RECEIVED_HEADER]
     sheet.append(headers)
     for row in rows:
         sheet.append([
             row.cert_number,
+            row.grader,
             row.card_title,
             row.existing_value,
             (source_lookup or {}).get(row.excel_row, ""),
+            "",
         ])
     header_fill = PatternFill("solid", fgColor="111827")
     header_font = Font(color="FFFFFF", bold=True)
@@ -177,10 +236,61 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
         cell.font = header_font
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for letter, width in {"A": 22, "B": 62, "C": 16, "D": 38}.items():
+    for letter, width in {"A": 22, "B": 14, "C": 62, "D": 16, "E": 38, "F": 14}.items():
         sheet.column_dimensions[letter].width = width
     workbook.save(path)
     return path
+
+
+def mark_received_in_workbooks(paths: list[Path], certs: set[str]) -> dict[str, Any]:
+    target_certs = {normalize_cert(cert) for cert in certs if normalize_cert(cert)}
+    result = {
+        "files_scanned": 0,
+        "files_updated": 0,
+        "rows_marked": 0,
+        "certs_marked": set(),
+        "errors": [],
+    }
+    if not target_certs:
+        return result
+
+    for path in paths:
+        result["files_scanned"] += 1
+        try:
+            workbook = load_workbook(path)
+        except Exception as error:
+            result["errors"].append(f"{path.name}: {error}")
+            continue
+
+        changed = False
+        try:
+            for sheet in workbook.worksheets:
+                cert_col = _cert_column(sheet)
+                if not cert_col:
+                    continue
+                header_row = 1 if _looks_like_simple_header(sheet) else None
+                received_col = _ensure_received_column(sheet, header_row)
+                first_data_row = 2 if header_row else 1
+                for row_index in range(first_data_row, sheet.max_row + 1):
+                    cert = normalize_cert(sheet.cell(row_index, cert_col).value)
+                    if cert not in target_certs:
+                        continue
+                    sheet.cell(row_index, received_col).value = "X"
+                    for col_index in range(1, sheet.max_column + 1):
+                        cell = sheet.cell(row_index, col_index)
+                        cell.fill = RECEIVED_FILL
+                        cell.font = RECEIVED_FONT
+                    result["rows_marked"] += 1
+                    result["certs_marked"].add(cert)
+                    changed = True
+            if changed:
+                workbook.save(path)
+                result["files_updated"] += 1
+        except Exception as error:
+            result["errors"].append(f"{path.name}: {error}")
+        finally:
+            workbook.close()
+    return result
 
 
 def working_sheet_path(directory: Path, title: str) -> Path:
@@ -246,7 +356,6 @@ def format_money(value: float | None) -> str:
 
 def build_card_title(row: dict[str, Any]) -> str:
     description = clean_part(row.get("description", ""))
-    grader = normalize_grader(row.get("grader", ""))
     grade = clean_grade(row.get("grade", ""))
     if description:
         parts = [description]
@@ -259,9 +368,8 @@ def build_card_title(row: dict[str, Any]) -> str:
             clean_part(row.get("parallel")),
             clean_part(row.get("subset")),
         ]
-    if grader and not re.search(rf"\b{re.escape(grader)}\b", " ".join(parts), re.I):
-        parts.append(grader)
-    if grade and not re.search(rf"(?<!\d){re.escape(grade)}(?!\d)", " ".join(parts)):
+    title = " ".join(part for part in parts if part)
+    if grade and title and not re.search(rf"(?<!\d){re.escape(grade)}(?!\d)", title):
         parts.append(grade)
     return re.sub(r"\s+", " ", " ".join(part for part in parts if part)).strip()
 
@@ -278,6 +386,58 @@ def clean_part(value: Any) -> str:
 def _looks_like_simple_header(sheet) -> bool:
     first = " ".join(clean_part(sheet.cell(1, col).value).lower() for col in range(1, min(sheet.max_column, 3) + 1))
     return any(token in first for token in ("cert", "card", "description", "purchase", "price"))
+
+
+def _cert_column(sheet) -> int | None:
+    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    for alias in ("certificationnumber", "certnumber", "cert", "certification", "cert#"):
+        if alias in headers:
+            return headers[alias]
+    if _looks_like_simple_header(sheet):
+        return None
+    return 1 if sheet.max_column >= 1 else None
+
+
+def _card_column(sheet) -> int | None:
+    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    for alias in ("carddescription", "card", "description"):
+        if alias in headers:
+            return headers[alias]
+    return None
+
+
+def _price_column(sheet) -> int | None:
+    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    for alias in ("purchaseprice", "price", "cost"):
+        if alias in headers:
+            return headers[alias]
+    return None
+
+
+def _received_column(sheet) -> int | None:
+    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    return headers.get(_normalize_header(RECEIVED_HEADER))
+
+
+def _ensure_received_column(sheet, header_row: int | None) -> int:
+    headers = _header_map_for_row(sheet, header_row or 1) if header_row else {}
+    existing = headers.get(_normalize_header(RECEIVED_HEADER))
+    if existing:
+        return existing
+    col = sheet.max_column + 1
+    if header_row:
+        header_cell = sheet.cell(header_row, col)
+        header_cell.value = RECEIVED_HEADER
+        header_cell.fill = PatternFill("solid", fgColor="111827")
+        header_cell.font = Font(color="FFFFFF", bold=True)
+        sheet.column_dimensions[header_cell.column_letter].width = 14
+        sheet.auto_filter.ref = sheet.dimensions
+    return col
+
+
+def _is_received_value(value: Any) -> bool:
+    text = clean_part(value).upper()
+    return text in {"X", "Y", "YES", "TRUE", "1", "RECEIVED"}
 
 
 def _setup_notes(cert: str, card: str, grader: str) -> str:
@@ -335,6 +495,14 @@ def _source_row(sheet, row_index: int, headers: dict[str, int]) -> dict[str, Any
 
 
 def _cell(sheet, row_index: int, headers: dict[str, int], aliases: tuple[str, ...], fallback_col: int | None) -> Any:
+    for alias in aliases:
+        col = headers.get(alias)
+        if col:
+            return sheet.cell(row_index, col).value
+    return sheet.cell(row_index, fallback_col).value if fallback_col else ""
+
+
+def _cell_by_header(sheet, row_index: int, headers: dict[str, int], aliases: tuple[str, ...], fallback_col: int | None) -> Any:
     for alias in aliases:
         col = headers.get(alias)
         if col:

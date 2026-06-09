@@ -128,15 +128,78 @@ def parse_jsonish(raw: str) -> dict:
     text = str(raw or "").strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
     try:
-        return json.loads(text)
+        return repair_parsed_jsonish(json.loads(text), text)
     except Exception:
         match = re.search(r"\{.*\}", text, re.S)
         if match:
             try:
-                return json.loads(match.group(0))
+                return repair_parsed_jsonish(json.loads(match.group(0)), text)
             except Exception:
                 pass
-    return {"value": None, "label_seen": False, "evidence": text}
+    return salvage_jsonish(text)
+
+
+def repair_parsed_jsonish(parsed: dict, text: str) -> dict:
+    if not isinstance(parsed, dict):
+        return salvage_jsonish(text)
+    parsed_comps = parsed.get("comps") if isinstance(parsed.get("comps"), list) else []
+    source_count = len(re.findall(r'"source"\s*:', text, flags=re.I))
+    if source_count > len(parsed_comps):
+        salvaged = salvage_comps(text)
+        if len(salvaged) > len(parsed_comps):
+            parsed = dict(parsed)
+            parsed["comps"] = salvaged
+    return parsed
+
+
+def salvage_jsonish(text: str) -> dict:
+    return {
+        "value": first_jsonish_field(text, "value"),
+        "label_seen": first_jsonish_field(text, "label_seen"),
+        "profile_title": first_jsonish_field(text, "profile_title"),
+        "profile_grader": first_jsonish_field(text, "profile_grader"),
+        "profile_grade": first_jsonish_field(text, "profile_grade"),
+        "evidence": first_jsonish_field(text, "evidence") or text,
+        "comps": salvage_comps(text),
+    }
+
+
+def first_jsonish_field(text: str, key: str):
+    pattern = rf'"{re.escape(key)}"\s*:\s*(true|false|null|"(?:[^"\\]|\\.)*"|[-+]?\d+(?:\.\d+)?)'
+    match = re.search(pattern, text, flags=re.I | re.S)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    if value.lower() == "true":
+        return True
+    if value.lower() == "false":
+        return False
+    if value.lower() == "null":
+        return None
+    if value.startswith('"') and value.endswith('"'):
+        return value[1:-1].replace('\\"', '"')
+    return value
+
+
+def salvage_comps(text: str) -> list[dict]:
+    comps: list[dict] = []
+    for source_match in re.finditer(r'"source"\s*:', text, flags=re.I):
+        block = text[source_match.start():]
+        next_source = re.search(r',\s*"source"\s*:', block[10:], flags=re.I)
+        if next_source:
+            block = block[: 10 + next_source.start()]
+        comp = {
+            "source": first_jsonish_field(block, "source"),
+            "title": first_jsonish_field(block, "title"),
+            "date_sold": first_jsonish_field(block, "date_sold") or first_jsonish_field(block, "date"),
+            "sale_type": first_jsonish_field(block, "sale_type") or first_jsonish_field(block, "type"),
+            "price": first_jsonish_field(block, "price"),
+        }
+        if comp["source"] and comp["title"] and comp["date_sold"] and comp["price"]:
+            comps.append(comp)
+        if len(comps) >= 5:
+            break
+    return comps
 
 
 def parse_money(value) -> float | None:

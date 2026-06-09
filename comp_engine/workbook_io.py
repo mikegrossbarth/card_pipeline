@@ -21,6 +21,7 @@ class WorkbookRow:
     existing_value: Any = None
     card_ladder_value: float | None = None
     card_ladder_comps_average: float | None = None
+    card_ladder_comp_confidence: str = ""
     card_ladder_comps: str = ""
     card_ladder_screenshot: str = ""
     alt_value: float | None = None
@@ -89,6 +90,7 @@ def write_results(path: Path, sheet_name: str, rows: list[WorkbookRow], output_p
         extra_cols = {
             "cardladdervalue": ensure_header(sheet, "Card Ladder Value"),
             "comps": ensure_header(sheet, "Comps"),
+            "compconfidence": ensure_header(sheet, "Comp Confidence"),
             "cardladdercompdetails": ensure_header(sheet, "Card Ladder Comp Details"),
             "cardladderscreenshot": ensure_header(sheet, "Card Ladder Screenshot"),
             "altvalue": ensure_header(sheet, "ALT Value"),
@@ -104,6 +106,8 @@ def write_results(path: Path, sheet_name: str, rows: list[WorkbookRow], output_p
                 sheet.cell(excel_row, extra_cols["cardladdervalue"]).value = row.card_ladder_value
             if row.card_ladder_comps_average is not None:
                 sheet.cell(excel_row, extra_cols["comps"]).value = row.card_ladder_comps_average
+            if row.card_ladder_comp_confidence:
+                sheet.cell(excel_row, extra_cols["compconfidence"]).value = row.card_ladder_comp_confidence
             if row.card_ladder_comps:
                 sheet.cell(excel_row, extra_cols["cardladdercompdetails"]).value = row.card_ladder_comps
             if row.card_ladder_screenshot:

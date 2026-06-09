@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Card Ladder Auto-Comp Helper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Runs Card Ladder cert lookups from a prepared queue in your normal Chrome session.",
-  "permissions": ["activeTab", "alarms", "debugger", "downloads", "scripting", "storage", "tabs"],
+  "permissions": ["activeTab", "alarms", "downloads", "scripting", "storage", "tabs"],
   "host_permissions": [
     "<all_urls>",
     "https://app.cardladder.com/*",

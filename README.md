@@ -1,6 +1,8 @@
-# Card Pipeline
+# L.U.C.A.S
 
-Combined intake and comping desktop app.
+Lot Upload, Comping & Assignment System.
+
+Combined intake, receiving, sheet tracking, and comping desktop app.
 
 ## Input Modes
 
@@ -24,7 +26,7 @@ Working sheets are saved to:
 
 Use the `Comp` tab for all comping controls. The left side lists active working sheets from the working sheets folder. Select a saved sheet, then use the buttons below the sheet list to load or refresh sheets. The comp table is editable like the Intake table.
 
-`Refresh Sheets` rescans the Card Pipeline folders and refreshes the active sheet list.
+`Refresh Sheets` rescans the L.U.C.A.S folders and refreshes the active sheet list.
 
 After a working sheet is loaded, use the bottom-right comp controls to choose a comp method and click `Run All Comps`. If a row has no card description and Card Ladder returns a profile title, grader, and grade, the app fills the `Card` field as `Description Grader Grade`.
 
