@@ -6,7 +6,19 @@ where py >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
     py -3 -m venv .venv
 ) else (
-    python -m venv .venv
+    where python >nul 2>nul
+    if %ERRORLEVEL% EQU 0 (
+        python -m venv .venv
+    ) else (
+        echo L.U.C.A.S could not find Python.
+        echo.
+        echo Install Python 3.11 or newer from python.org.
+        echo Make sure "Add python.exe to PATH" is checked during install.
+        echo Then run this installer again.
+        echo.
+        pause
+        exit /b 1
+    )
 )
 
 ".venv\Scripts\python.exe" -m pip install --upgrade pip

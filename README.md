@@ -6,7 +6,7 @@ L.U.C.A.S is a desktop workflow app for intake, receiving, working-sheet trackin
 
 ## Install
 
-1. Install Python 3.11 or newer and Google Chrome. Install Node.js too if you plan to use the optional Card Ladder CLI scripts.
+1. Install Python 3.11 or newer and Google Chrome. When installing Python, check `Add python.exe to PATH`. Install Node.js too if you plan to use the optional Card Ladder CLI scripts.
 2. Download this project or clone the repository.
 3. Double-click `install_dependencies.bat`.
 4. Open `.env`, which the installer creates from `.env.example`.
