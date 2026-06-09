@@ -8,6 +8,9 @@ import re
 from google import genai
 from google.genai import types as genai_types
 
+BGS_SUBGRADE_LABEL_RE = re.compile(r"\b(?:CENTERING|CORNERS?|EDGES?|SURFACE|AUTO|AUTOGRAPH)\b", re.IGNORECASE)
+NUMERIC_GRADE_RE = re.compile(r"\d+(?:\.\d+)?")
+
 CY_PROMPT = (
     "You are helping a buyer on a live Whatnot stream evaluate a graded trading card slab. "
     "Your main job is to identify the grading company and read the certification number from that company's slab label. "
@@ -17,6 +20,9 @@ CY_PROMPT = (
     "Focus on the slab label area only. Ignore streamer overlays, chat, listing titles, price graphics, and non-card UI. "
     "Do not guess or hallucinate digits. If the cert number is not clearly readable, return an empty string. "
     "Normalize the cert number to digits only when possible, with no spaces or punctuation. "
+    "For BGS/Beckett slabs, grade must be the overall slab grade from the main grade box only. "
+    "Never use BGS subgrades such as Centering, Corners, Edges, Surface, Auto, or Autograph as grade. "
+    "If only BGS subgrades are readable and the overall slab grade is not visible, return grade as an empty string and preserve the subgrade text in label_text. "
     "If the screenshot is not clearly a graded slab, set is_graded_slab to false, grading_company to unknown, and cert_number to an empty string. "
     "Also classify the broad category when possible: soccer, basketball, hockey, pokemon, one_piece, or unknown. "
     "Return JSON only with this exact shape: "
@@ -35,6 +41,9 @@ MARKET_SCAN_PROMPT = (
     "If a field is unclear, return an empty string rather than making it up. "
     "Then build a search query tailored for eBay sold comps / SerpAPI input using the strongest exact identifiers first. "
     "Ignore streamer overlays, chat, listing titles, price graphics, and non-card UI. "
+    "For BGS/Beckett slabs, grade must be the overall slab grade from the main grade box only. "
+    "Never use BGS subgrades such as Centering, Corners, Edges, Surface, Auto, or Autograph as grade. "
+    "If only BGS subgrades are readable and the overall slab grade is not visible, return grade as an empty string and preserve the subgrade text in label_text. "
     "Return JSON only with this exact shape: "
     '{"mode": "ebay", "grading_company": str, "cert_number": str, "player": str, "year": str, '
     '"set": str, "card_number": str, "parallel": str, "subset": str, "grade": str, "confidence": str, "query_ebay": str, "label_text": str}. '
@@ -231,6 +240,7 @@ def identify_card_sync(gclient: genai.Client, screenshot_b64: str, mode: str = '
         else:
             company = 'unknown'
     result['grading_company'] = company
+    result['grade'] = _normalize_grade(result.get('grade', ''), company, label_text)
     result['card_number'] = str(result.get('card_number', '') or '').strip()
     result['parallel'] = str(result.get('parallel', '') or '').strip()
     result['subset'] = str(result.get('subset', '') or '').strip()
@@ -242,3 +252,32 @@ def identify_card_sync(gclient: genai.Client, screenshot_b64: str, mode: str = '
 
 def identify_cert_sync(gclient: genai.Client, screenshot_b64: str) -> dict:
     return identify_card_sync(gclient, screenshot_b64, mode='cy')
+
+
+def _normalize_grade(value: str, grading_company: str = '', label_text: str = '') -> str:
+    numbers = NUMERIC_GRADE_RE.findall(str(value or ''))
+    grade = numbers[-1] if numbers else ''
+    if grade and _is_bgs_subgrade_read(value, grading_company, label_text, grade):
+        return ''
+    return grade
+
+
+def _is_bgs_subgrade_read(value: str, grading_company: str, label_text: str, grade: str) -> bool:
+    combined = f'{grading_company} {label_text}'.upper()
+    if 'BGS' not in combined and 'BECKETT' not in combined:
+        return False
+    if BGS_SUBGRADE_LABEL_RE.search(str(value or '')):
+        return True
+
+    label = str(label_text or '').upper()
+    escaped_grade = re.escape(grade)
+    subgrade_pattern = rf'\b(?:CENTERING|CORNERS?|EDGES?|SURFACE|AUTO|AUTOGRAPH)\b\D{{0,24}}{escaped_grade}\b'
+    if not re.search(subgrade_pattern, label):
+        return False
+
+    main_grade_patterns = [
+        rf'\b(?:PRISTINE|GEM\s*MINT|MINT|NM-MT)\b\D{{0,16}}{escaped_grade}\b',
+        rf'\b{escaped_grade}\b\D{{0,16}}(?:PRISTINE|GEM\s*MINT|MINT|NM-MT)\b',
+        rf'\b(?:FINAL|OVERALL)\s+GRADE\b\D{{0,16}}{escaped_grade}\b',
+    ]
+    return not any(re.search(pattern, label) for pattern in main_grade_patterns)

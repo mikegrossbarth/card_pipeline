@@ -29,6 +29,7 @@ GRADE_WORDS_RE = re.compile(
     re.IGNORECASE,
 )
 NUMERIC_GRADE_RE = re.compile(r"\d+(?:\.\d+)?")
+BGS_SUBGRADE_LABEL_RE = re.compile(r"\b(?:CENTERING|CORNERS?|EDGES?|SURFACE|AUTO|AUTOGRAPH)\b", re.IGNORECASE)
 
 
 MULTI_CARD_PROMPT = (
@@ -40,6 +41,9 @@ MULTI_CARD_PROMPT = (
     "Focus on the slab labels and card identifiers. Ignore background objects, table texture, hands, price stickers, and unrelated text. "
     "Do not hallucinate details. If a field is unclear, return an empty string. "
     "Normalize certification numbers to digits only when possible, with no spaces or punctuation. "
+    "For BGS/Beckett slabs, grade must be the overall slab grade from the main grade box only. "
+    "Never use BGS subgrades such as Centering, Corners, Edges, Surface, Auto, or Autograph as grade. "
+    "If only BGS subgrades are readable and the overall slab grade is not visible, return grade as an empty string and preserve the subgrade text in label_text. "
     "Important: if visible graded slabs or slab-like card holders are present, return one card object for each visible slab even when the label is blurry or the cert number is unreadable. "
     "Use blank fields and low confidence for unreadable labels, but do not return an empty cards array when slabs are visibly present. "
     "Only return an empty cards array when there are truly no visible card slabs or graded-card holders. "
@@ -122,6 +126,9 @@ CROP_CARD_PROMPT = (
     "CGC labels often show CGC text/logo and blue/green/white certification styling. "
     "Do not mark a card PSA just because the slab label is red; read visible company text or use unknown when uncertain. "
     "Normalize cert_number to digits only when possible. "
+    "For BGS/Beckett slabs, grade must be the overall slab grade from the main grade box only. "
+    "Never use BGS subgrades such as Centering, Corners, Edges, Surface, Auto, or Autograph as grade. "
+    "If only BGS subgrades are readable and the overall slab grade is not visible, return grade as an empty string and preserve the subgrade text in label_text or attributes. "
     "Only include a player/year/set/grade when the text is actually visible or nearly certain from the crop; prefer blanks over hallucination. "
     "Return JSON only with this exact shape: "
     '{"mode": "crop", "is_graded_slab": bool, "grading_company": str, "cert_number": str, "player": str, "year": str, '
@@ -134,6 +141,7 @@ CERT_ONLY_PROMPT = (
     "Only read the main/central slab label in this crop. Ignore neighboring labels, handwritten prices, sticky notes, price stickers, and marker writing. "
     "Read the grading company and the complete certification number printed on the slab label. "
     "For PSA labels, the cert number is usually at the far right or bottom-right of the label; pay special attention to the rightmost digits and do not drop a trailing digit. "
+    "For BGS/Beckett labels, ignore subgrade numbers such as Centering, Corners, Edges, Surface, Auto, and Autograph; this task is cert verification only. "
     "Do not guess. If every digit of the cert is not clearly readable, return an empty cert_number and low confidence. "
     "Return JSON only with this exact shape: "
     '{"mode":"cert_verify","grading_company":str,"cert_number":str,"confidence":str,"label_text":str}. '
@@ -144,6 +152,7 @@ FALLBACK_MULTI_CARD_PROMPT = (
     "This image may contain multiple graded trading card slabs. Your first priority is to create one inventory row per visible slab/card holder. "
     "Do not require readable labels. Count every visible slab-like holder, moving left-to-right and top-to-bottom. "
     "For each visible slab, fill any readable fields, and leave unreadable fields blank. "
+    "For BGS/Beckett slabs, grade must be the overall slab grade only; never use Centering, Corners, Edges, Surface, Auto, or Autograph subgrades as grade. "
     "Return JSON only with this exact shape: "
     '{"cards":[{"card_index": int, "position": str, "is_graded_slab": bool, "grading_company": str, '
     '"cert_number": str, "player": str, "year": str, "set": str, "card_number": str, '
@@ -444,7 +453,6 @@ def _normalize_card(card: dict, fallback_index: int) -> dict:
     result["card_index"] = fallback_index
     result["is_graded_slab"] = bool(card.get("is_graded_slab", True))
     result["cert_number"] = "".join(ch for ch in result["cert_number"] if ch.isdigit())
-    result["grade"] = normalize_grade(result["grade"])
     result["confidence"] = (result["confidence"] or "low").lower()
     if result["confidence"] not in {"high", "medium", "low"}:
         result["confidence"] = "low"
@@ -465,6 +473,7 @@ def _normalize_card(card: dict, fallback_index: int) -> dict:
         else:
             company = "unknown"
     result["grading_company"] = company
+    result["grade"] = normalize_grade(result["grade"], company, result["label_text"])
     result["category"] = normalize_sport(result.get("category", ""), result.get("player", ""), result.get("label_text", ""))
     return _normalize_display_text(result)
 
@@ -476,7 +485,6 @@ def _identify_crop_sync(gclient: genai.Client, crop_b64: str) -> dict:
     cert = "".join(ch for ch in str(result.get("cert_number", "") or "").strip() if ch.isdigit())
     result["cert_number"] = cert
     result["confidence"] = str(result.get("confidence", "low") or "low").strip().lower()
-    result["grade"] = normalize_grade(str(result.get("grade", "") or ""))
     result["card_number"] = str(result.get("card_number", "") or "").strip()
     result["parallel"] = str(result.get("parallel", "") or "").strip()
     result["subset"] = str(result.get("subset", "") or "").strip()
@@ -500,6 +508,7 @@ def _identify_crop_sync(gclient: genai.Client, crop_b64: str) -> dict:
         else:
             company = "unknown"
     result["grading_company"] = company
+    result["grade"] = normalize_grade(str(result.get("grade", "") or ""), company, result["label_text"])
     _verify_crop_cert(gclient, crop_b64, result)
     if result.get("is_graded_slab") is False and any(result.get(key) for key in ("grading_company", "player", "grade", "label_text")):
         result["is_graded_slab"] = True
@@ -584,10 +593,36 @@ def _verify_rotated_cert_only_sync(gclient: genai.Client, crop_b64: str) -> dict
     return max(candidates, key=lambda item: len(str(item.get("cert_number", "") or "")), default={})
 
 
-def normalize_grade(value: str) -> str:
+def normalize_grade(value: str, grading_company: str = "", label_text: str = "") -> str:
     text = GRADE_WORDS_RE.sub(" ", str(value or ""))
     numbers = NUMERIC_GRADE_RE.findall(text)
-    return numbers[-1] if numbers else ""
+    grade = numbers[-1] if numbers else ""
+    if grade and _is_bgs_subgrade_read(value, grading_company, label_text, grade):
+        return ""
+    return grade
+
+
+def _is_bgs_subgrade_read(value: str, grading_company: str, label_text: str, grade: str) -> bool:
+    combined = f"{grading_company} {label_text}".upper()
+    if "BGS" not in combined and "BECKETT" not in combined:
+        return False
+
+    raw_grade = str(value or "")
+    if BGS_SUBGRADE_LABEL_RE.search(raw_grade):
+        return True
+
+    label = str(label_text or "").upper()
+    escaped_grade = re.escape(grade)
+    subgrade_pattern = rf"\b(?:CENTERING|CORNERS?|EDGES?|SURFACE|AUTO|AUTOGRAPH)\b\D{{0,24}}{escaped_grade}\b"
+    if not re.search(subgrade_pattern, label):
+        return False
+
+    main_grade_patterns = [
+        rf"\b(?:PRISTINE|GEM\s*MINT|MINT|NM-MT)\b\D{{0,16}}{escaped_grade}\b",
+        rf"\b{escaped_grade}\b\D{{0,16}}(?:PRISTINE|GEM\s*MINT|MINT|NM-MT)\b",
+        rf"\b(?:FINAL|OVERALL)\s+GRADE\b\D{{0,16}}{escaped_grade}\b",
+    ]
+    return not any(re.search(pattern, label) for pattern in main_grade_patterns)
 
 
 def _normalize_attributes(value: str) -> str:
