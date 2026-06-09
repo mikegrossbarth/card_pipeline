@@ -39,6 +39,7 @@ class BridgeState:
         self.command_id = int(time.time() * 1000)
         self.last_seen_extension = ""
         self.cardladder_running = False
+        self.cancel_requested = False
         self.comp_strategy = COMP_STRATEGY_AVERAGE
         self.on_update: Callable[[], None] | None = None
 
@@ -81,7 +82,19 @@ class BridgeState:
                 "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             self.cardladder_running = True
+            self.cancel_requested = False
             return self.command_id
+
+    def request_cancel(self) -> None:
+        with self.lock:
+            self.cancel_requested = True
+            self.command = None
+            self.cardladder_running = False
+            for row in self.rows:
+                if row.status == "Queued":
+                    row.status = "Card Ladder cancelled"
+        if self.on_update:
+            self.on_update()
 
     def extension_poll(self) -> dict:
         with self.lock:
@@ -95,63 +108,69 @@ class BridgeState:
 
     def post_cardladder_result(self, result: dict) -> None:
         DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-        (DEBUG_DIR / f"result-{time.strftime('%Y%m%d-%H%M%S')}.json").write_text(
+        debug_stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000_000:09d}"
+        (DEBUG_DIR / f"result-{debug_stamp}.json").write_text(
             json.dumps(result, indent=2),
             encoding="utf-8",
         )
         with self.lock:
             cert = str(result.get("certNumber") or "")
             excel_row = int(result.get("excelRow") or 0)
-            for row in self.rows:
-                if row.excel_row == excel_row or row.cert_number == cert:
-                    result_status = str(result.get("status") or "")
-                    value = parse_value(result.get("value"))
-                    row.card_ladder_value = value
-                    ocr = result.get("ocr") if isinstance(result.get("ocr"), dict) else {}
-                    comps = ocr.get("comps") if isinstance(ocr.get("comps"), list) else []
-                    if result_status == "partial_comp_capture":
-                        if row_has_comp_data(row):
-                            row.notes = str(result.get("error") or "Partial Card Ladder capture skipped; kept existing comps.")
-                            break
-                        row.card_ladder_value = None
-                        row.card_ladder_comps_average = None
-                        row.card_ladder_comp_confidence = ""
-                        row.card_ladder_comps = ""
-                        row.card_ladder_screenshot = ""
-                        row.status = "Card Ladder partial capture"
-                        row.notes = str(result.get("error") or "Card Ladder comp capture was incomplete.")
-                        break
-                    if result_status == "invalid_cert":
-                        row.card_title = ""
-                        row.card_ladder_value = None
-                        row.card_ladder_comps_average = None
-                        row.card_ladder_comp_confidence = ""
-                        row.card_ladder_comps = ""
-                        row.card_ladder_screenshot = ""
-                        row.status = "Card Ladder invalid cert"
-                        row.notes = str(result.get("error") or "Card Ladder showed no information with this cert.")
-                        break
-                    profile_title = clean_profile_title(ocr.get("profileTitle") or ocr.get("profile_title") or ocr.get("profile"))
-                    profile_grader = clean_grader(ocr.get("profileGrader") or ocr.get("profile_grader") or row.grader)
-                    profile_grade = clean_grade(ocr.get("profileGrade") or ocr.get("profile_grade") or "")
-                    if profile_title and result_status not in {"no_results", "invalid_cert"}:
-                        row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
-                    row.card_ladder_comps_average = comp_price(comps, self.comp_strategy)
-                    row.card_ladder_comp_confidence = comp_confidence(comps)
-                    row.card_ladder_comps = format_comps(comps, self.comp_strategy)
-                    row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
-                    if result_status == "no_results":
-                        row.status = "Card Ladder no results"
-                    else:
-                        row.status = "Card Ladder OK" if value is not None else "Card Ladder review"
-                    row.notes = str(result.get("error") or result.get("status") or "")
-                    break
+            target_row = next((row for row in self.rows if excel_row and row.excel_row == excel_row), None)
+            if target_row is None and cert:
+                target_row = next((row for row in self.rows if row.cert_number == cert), None)
+            if target_row is not None:
+                self._apply_cardladder_result_to_row(target_row, result)
         if self.on_update:
             self.on_update()
+
+    def _apply_cardladder_result_to_row(self, row: WorkbookRow, result: dict) -> None:
+        result_status = str(result.get("status") or "")
+        value = parse_value(result.get("value"))
+        row.card_ladder_value = value
+        ocr = result.get("ocr") if isinstance(result.get("ocr"), dict) else {}
+        comps = ocr.get("comps") if isinstance(ocr.get("comps"), list) else []
+        if result_status == "partial_comp_capture":
+            if row_has_comp_data(row):
+                row.notes = str(result.get("error") or "Partial Card Ladder capture skipped; kept existing comps.")
+                return
+            row.card_ladder_value = None
+            row.card_ladder_comps_average = None
+            row.card_ladder_comp_confidence = ""
+            row.card_ladder_comps = ""
+            row.card_ladder_screenshot = ""
+            row.status = "Card Ladder partial capture"
+            row.notes = str(result.get("error") or "Card Ladder comp capture was incomplete.")
+            return
+        if result_status == "invalid_cert":
+            row.card_title = ""
+            row.card_ladder_value = None
+            row.card_ladder_comps_average = None
+            row.card_ladder_comp_confidence = ""
+            row.card_ladder_comps = ""
+            row.card_ladder_screenshot = ""
+            row.status = "Card Ladder invalid cert"
+            row.notes = str(result.get("error") or "Card Ladder showed no information with this cert.")
+            return
+        profile_title = clean_profile_title(ocr.get("profileTitle") or ocr.get("profile_title") or ocr.get("profile"))
+        profile_grader = clean_grader(ocr.get("profileGrader") or ocr.get("profile_grader") or row.grader)
+        profile_grade = clean_grade(ocr.get("profileGrade") or ocr.get("profile_grade") or "")
+        if profile_title and result_status != "no_results":
+            row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
+        row.card_ladder_comps_average = comp_price(comps, self.comp_strategy)
+        row.card_ladder_comp_confidence = comp_confidence(comps)
+        row.card_ladder_comps = format_comps(comps, self.comp_strategy)
+        row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
+        if result_status == "no_results":
+            row.status = "Card Ladder no results"
+        else:
+            row.status = "Card Ladder OK" if value is not None else "Card Ladder review"
+        row.notes = str(result.get("error") or result.get("status") or "")
 
     def finish_cardladder(self, payload: dict) -> None:
         with self.lock:
             self.cardladder_running = False
+            self.cancel_requested = False
             for row in self.rows:
                 if row.status == "Queued":
                     row.status = "Card Ladder not found"
@@ -165,6 +184,7 @@ class BridgeState:
                 "instanceId": self.instance_id,
                 "extensionLastSeen": self.last_seen_extension,
                 "cardladderRunning": self.cardladder_running,
+                "cancelRequested": self.cancel_requested,
                 "compStrategy": self.comp_strategy,
                 "rows": [asdict(row) for row in self.rows],
             }

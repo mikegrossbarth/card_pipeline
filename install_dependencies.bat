@@ -23,21 +23,22 @@ if %ERRORLEVEL% EQU 0 (
 
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+".venv\Scripts\python.exe" -c "import tkinter" >nul 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo Python installed, but Tkinter is not available.
+    echo.
+    echo Reinstall Python from python.org and include Tcl/Tk support.
+    echo Then run this installer again.
+    echo.
+    pause
+    exit /b 1
+)
 
 if not exist ".env" (
     copy ".env.example" ".env" >nul
 )
 
-where npm >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
-    pushd cardladder-autocomp
-    npm install
-    popd
-) else (
-    echo npm was not found. Skipping optional Card Ladder CLI utility dependencies.
-)
-
 echo.
 echo Dependencies installed.
-echo Copy .env.example to .env and add GOOGLE_API_KEY if you use Photo OCR or OCR fallback.
+echo Open .env and add GOOGLE_API_KEY if you use Photo OCR or OCR fallback.
 pause

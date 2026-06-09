@@ -13,7 +13,6 @@ let activeBridgeUrl = BRIDGE_URLS[0];
 let cancelRequested = false;
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.runtime.openOptionsPage?.();
   chrome.alarms.create(BRIDGE_ALARM_NAME, { periodInMinutes: 0.05 });
   pollDesktopBridge();
 });
@@ -58,10 +57,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "CARDLADDER_TEST_BGS_DROPDOWN") {
-    testBgsDropdown().then(sendResponse);
-    return true;
-  }
 });
 
 async function startCardLadderRun(focusWindow, options = {}) {
@@ -178,7 +173,7 @@ async function runRows(tabId, rows, options = {}) {
   const results = [];
 
   for (let index = 0; index < rows.length; index += 1) {
-    throwIfCancelled();
+    await throwIfCancelled(options);
     const row = rows[index];
     await waitForTabNotLoading(tabId);
     await injectContent(tabId);
@@ -195,7 +190,7 @@ async function runRows(tabId, rows, options = {}) {
     });
 
     const result = await lookupRowWithRetries(tabId, row);
-    throwIfCancelled();
+    await throwIfCancelled(options);
 
     results.push(result);
     if (options.postToBridge) await postBridgeResult(result);
@@ -238,8 +233,14 @@ async function runRows(tabId, rows, options = {}) {
   }
 }
 
-function throwIfCancelled() {
+async function throwIfCancelled(options = {}) {
   if (cancelRequested) throw new Error("Card Ladder run cancelled.");
+  if (!options.postToBridge) return;
+  const status = await fetch(`${activeBridgeUrl}/status`).then((r) => r.json()).catch(() => null);
+  if (status?.cancelRequested) {
+    cancelRequested = true;
+    throw new Error("Card Ladder run cancelled by L.U.C.A.S.");
+  }
 }
 
 async function cancelRun() {
@@ -259,9 +260,7 @@ async function cancelRun() {
 }
 
 async function lookupRowWithRetries(tabId, row) {
-  throwIfCancelled();
   const pageResult = await submitRowWithGrader(tabId, row);
-  throwIfCancelled();
 
   if (["error", "invalid_cert", "no_results"].includes(pageResult?.status)) return pageResult;
 
@@ -272,7 +271,6 @@ async function lookupRowWithRetries(tabId, row) {
 
   let lastResult = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    throwIfCancelled();
     const invalidCheck = await checkInvalidCertToast(tabId, row);
     if (invalidCheck?.status === "invalid_cert") return invalidCheck;
     lastResult = await captureValueWithOcr(tabId, row, { ...pageResult, ocrAttempt: attempt });
@@ -441,33 +439,6 @@ async function captureActiveTabWithOcr(row) {
     return { ...row, value: null, status: "error", error: "Open a Card Ladder results page first" };
   }
   return captureValueWithOcr(tab.id, row, { pageUrl: tab.url });
-}
-
-async function testBgsDropdown() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url?.startsWith("https://app.cardladder.com/")) {
-    return { ok: false, error: "Open Card Ladder with the cert-search modal visible first." };
-  }
-  await injectContent(tab.id);
-  const before = await chrome.tabs.sendMessage(tab.id, {
-    type: "CARDLADDER_GET_GRADER_COORDS",
-    grader: "BGS",
-  }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-  if (!before?.ok) return before;
-  const selected = await selectGraderInPage(tab.id, "BGS");
-
-  const after = await chrome.tabs.sendMessage(tab.id, {
-    type: "CARDLADDER_GET_GRADER_COORDS",
-    grader: "BGS",
-  }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-
-  return {
-    ok: true,
-    method: "dom-selection",
-    selected,
-    before,
-    after,
-  };
 }
 
 async function postBridgeResult(result) {

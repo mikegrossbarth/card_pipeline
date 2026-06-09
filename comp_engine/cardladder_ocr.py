@@ -36,7 +36,7 @@ def extract_cl_value_from_data_url(data_url: str) -> dict:
         return {"ok": False, "value": None, "error": "GOOGLE_API_KEY is not configured"}
 
     mime_type, image_bytes = parse_data_url(data_url)
-    debug_id = time.strftime("%Y%m%d-%H%M%S")
+    debug_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000_000:09d}"
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
     image_path = DEBUG_DIR / f"cardladder-{debug_id}.png"
     image_path.write_bytes(image_bytes)

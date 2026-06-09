@@ -297,10 +297,7 @@ class CardPipelineApp(tk.Tk):
         self.after(100, self._start_startup_refresh)
 
     def _on_close(self) -> None:
-        try:
-            self.bridge.stop()
-        finally:
-            self.destroy()
+        self.destroy()
 
     def _build_ui(self) -> None:
         palette = {
@@ -545,6 +542,7 @@ class CardPipelineApp(tk.Tk):
         comp_controls.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(comp_controls, text="Save Output", command=self.save_output, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_controls, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_controls, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_controls, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         self.comp_scope_combo = ttk.Combobox(
             comp_controls,
@@ -1821,6 +1819,12 @@ class CardPipelineApp(tk.Tk):
             "Card Ladder extension not connected",
             "The rows were queued, but the Card Ladder Chrome extension has not checked in. Make sure the extension is loaded and Chrome is open.",
         )
+
+    def stop_comp_run(self) -> None:
+        self.state.request_cancel()
+        self.comp_output_saved = False
+        self._refresh_table()
+        self.status_var.set("Stop requested. Card Ladder will stop after the current row.")
 
     def clear_comp_rows(self) -> None:
         if self.state.rows and not self.comp_output_saved:

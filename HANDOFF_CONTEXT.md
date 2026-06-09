@@ -45,8 +45,11 @@ Card Ladder automation requires Chrome, the unpacked extension, and a logged-in 
 
 Load the extension from `cardladder-autocomp\extension` using `chrome://extensions` with Developer Mode enabled. The L.U.C.A.S app starts the local bridge automatically when the app opens.
 
+The bridge binds to the first open port from `8765` through `8772`. The extension manifest includes host permissions for that full local range. The Comp tab's `Stop Run` button sets a bridge cancellation flag; the extension checks that flag between rows.
+
 ## Notes For Future Work
 
 - Keep machine-specific folders out of source. Use `.env`, `lucas_settings.json`, or the `Folders` button.
 - Do not commit `.env`, `.venv`, `work`, `outputs`, or generated debug screenshots.
 - Rows with `invalid_cert` are intentional non-empty statuses and should be skipped by empty-comps-only comp runs.
+- The Card Ladder extension is plain unpacked Chrome extension code. There is no Node/npm build step for normal install.

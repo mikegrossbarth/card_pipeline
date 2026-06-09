@@ -6,7 +6,7 @@ L.U.C.A.S is a desktop workflow app for intake, receiving, working-sheet trackin
 
 ## Install
 
-1. Install Python 3.11 or newer and Google Chrome. When installing Python, check `Add python.exe to PATH`. Install Node.js too if you plan to use the optional Card Ladder CLI scripts.
+1. Install Python 3.11 or newer and Google Chrome. When installing Python, check `Add python.exe to PATH`.
 2. Download this project or clone the repository.
 3. Double-click `install_dependencies.bat`.
 4. Open `.env`, which the installer creates from `.env.example`.
@@ -61,6 +61,8 @@ Enter a title, then click `Save as Working Sheet`. Working sheets are saved to t
 Use the `Comp` tab for Card Ladder comping. Select a saved sheet, choose the comp method and run scope, then click `Run All Comps`.
 
 The app stores Card Ladder value, comps, confidence, and status in the active workbook output. Rows marked `invalid_cert` are skipped by empty-comps-only runs.
+
+Use `Stop Run` to request cancellation of an active Card Ladder run. The Chrome extension checks this signal between rows and stops before starting the next card.
 
 ## Review
 

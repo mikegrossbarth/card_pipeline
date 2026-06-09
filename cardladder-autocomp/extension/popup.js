@@ -2,11 +2,8 @@ const queueFile = document.getElementById("queueFile");
 const loadQueue = document.getElementById("loadQueue");
 const start = document.getElementById("start");
 const stop = document.getElementById("stop");
-const testBgs = document.getElementById("testBgs");
-const testInvalidCerts = document.getElementById("testInvalidCerts");
 const capture = document.getElementById("capture");
 const download = document.getElementById("download");
-const delayMs = document.getElementById("delayMs");
 const status = document.getElementById("status");
 const BRIDGE_PORTS = [8765, 8766, 8767, 8768, 8769, 8770, 8771, 8772];
 const BRIDGE_URLS = BRIDGE_PORTS.map((port) => `http://127.0.0.1:${port}`);
@@ -34,34 +31,6 @@ stop.addEventListener("click", async () => {
   const response = await chrome.runtime.sendMessage({ type: "CARDLADDER_CANCEL_RUN" })
     .catch((error) => ({ ok: false, error: String(error?.message || error) }));
   setStatus(response?.ok ? "Card Ladder run cancelled." : response?.error || "Cancel failed.");
-});
-
-testBgs.addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url?.startsWith("https://app.cardladder.com/")) {
-    return setStatus("Open Card Ladder with the cert-search modal visible first.");
-  }
-  const response = await chrome.runtime.sendMessage({
-    type: "CARDLADDER_TEST_BGS_DROPDOWN",
-  }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-  setStatus(JSON.stringify(response, null, 2));
-});
-
-testInvalidCerts.addEventListener("click", async () => {
-  const testQueue = {
-    sourceSheet: "Invalid cert regression test",
-    sourceWorkbook: "popup-self-test",
-    rows: [
-      { excelRow: 1, certNumber: "48263063", grader: "PSA", cardTitle: "" },
-      { excelRow: 2, certNumber: "5239336", grader: "PSA", cardTitle: "" },
-    ],
-  };
-  queue = testQueue;
-  results = [];
-  await chrome.runtime.sendMessage({ type: "CARDLADDER_SAVE_QUEUE", queue: testQueue });
-  const response = await chrome.runtime.sendMessage({ type: "CARDLADDER_SYNC_NOW", keepWindowOpen: true });
-  if (!response?.ok) return setStatus(response?.error || "Invalid cert test failed to start.");
-  setStatus("Running cert regression test and leaving the Card Ladder window open: PSA 48263063, then PSA 5239336.");
 });
 
 capture.addEventListener("click", async () => {

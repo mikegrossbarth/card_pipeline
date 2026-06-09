@@ -56,16 +56,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
-  if (message.type === "CARDLADDER_TEST_GRADER") {
-    testGraderSelection(message.grader || "BGS")
-      .then((result) => sendResponse(result))
-      .catch((error) => sendResponse({ ok: false, error: error.message, version: CARDLADDER_CONTENT_VERSION }));
-    return true;
-  }
-  if (message.type === "CARDLADDER_GET_GRADER_COORDS") {
-    sendResponse(getGraderClickCoordinates(message.grader || "BGS"));
-    return true;
-  }
   if (message.type === "CARDLADDER_SELECT_GRADER") {
     selectGraderForAutomation(message.grader || "PSA")
       .then((result) => sendResponse(result))
@@ -507,67 +497,6 @@ async function selectGraderForAutomation(grader) {
     grader: normalized,
     selectedLabel: optionLabel,
     selectedText: selectedControlText(afterControl),
-  };
-}
-
-async function testGraderSelection(grader) {
-  const normalized = String(grader || "BGS").toUpperCase();
-  const optionLabel = cardLadderGraderLabel(normalized);
-  const modal = certSearchModal();
-  if (!modal) {
-    return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Open the SEARCH SALES BY CERT # modal first." };
-  }
-  const control = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
-  if (!control) {
-    return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Could not find Grader control.", modal: visibleText(modal).slice(0, 300) };
-  }
-  const ok = await clickDropdownThenOption(modal, control, normalized, optionLabel);
-  return {
-    ok,
-    version: CARDLADDER_CONTENT_VERSION,
-    wanted: optionLabel,
-    selectedText: selectedControlText(control),
-    debug: graderSelectionDebug(modal, optionLabel),
-  };
-}
-
-function getGraderClickCoordinates(grader) {
-  const normalized = String(grader || "BGS").toUpperCase();
-  const modal = certSearchModal();
-  if (!modal) {
-    return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Open the SEARCH SALES BY CERT # modal first." };
-  }
-  const control = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
-  if (!control) {
-    return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Could not find Grader control.", modal: visibleText(modal).slice(0, 300) };
-  }
-  const indexByGrader = {
-    PSA: 0,
-    BGS: 1,
-    BECKETT: 1,
-    SGC: 2,
-    CGC: 3,
-  };
-  const targetIndex = indexByGrader[normalized];
-  if (targetIndex == null) {
-    return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: `Unsupported grader ${normalized}` };
-  }
-  const rect = graderFieldRect(modal, control);
-  const optionHeight = Math.max(48, Math.min(58, rect.height));
-  return {
-    ok: true,
-    version: CARDLADDER_CONTENT_VERSION,
-    wanted: cardLadderGraderLabel(normalized),
-    dropdown: {
-      x: Math.max(rect.left + 20, rect.right - 32),
-      y: rect.top + rect.height / 2,
-    },
-    option: {
-      x: Math.min(rect.right - 24, rect.left + 38),
-      y: rect.bottom + optionHeight * targetIndex + optionHeight / 2,
-    },
-    rect,
-    selectedText: selectedControlText(control),
   };
 }
 
