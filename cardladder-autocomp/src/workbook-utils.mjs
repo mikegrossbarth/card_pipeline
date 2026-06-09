@@ -1,18 +1,25 @@
-import { FileBlob, SpreadsheetFile } from "@oai/artifact-tool";
+import * as XLSX from "xlsx";
 
-export const DEFAULT_WORKBOOK = "C:/Users/User/Downloads/Blez x mikey MASTER SHEET.xlsx";
+export const DEFAULT_WORKBOOK = "";
 export const DEFAULT_SHEET = "612026";
 
 export async function loadWorkbook(workbookPath) {
-  const input = await FileBlob.load(workbookPath);
-  const workbook = await SpreadsheetFile.importXlsx(input);
-  return workbook;
+  return XLSX.readFile(workbookPath, { cellDates: false });
+}
+
+export function getWorksheet(workbook, sheetName) {
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) throw new Error(`Missing sheet: ${sheetName}`);
+  return worksheet;
+}
+
+export function saveWorkbook(workbook, outputPath) {
+  XLSX.writeFile(workbook, outputPath);
 }
 
 export function findLookupRows(sheet, { force = false } = {}) {
-  const usedRange = sheet.getUsedRange(true);
-  const values = usedRange.values;
-  if (!values?.length) throw new Error(`Sheet ${sheet.name} has no used rows.`);
+  const values = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  if (!values?.length) throw new Error("Selected sheet has no used rows.");
 
   const header = values[0].map((value) => String(value || "").trim());
   const columns = header.reduce((acc, name, index) => {
@@ -34,7 +41,6 @@ export function findLookupRows(sheet, { force = false } = {}) {
       const grader = inferGrader(cardTitle);
       return {
         excelRow,
-        rowIndex: index + 1,
         certNumber,
         cardTitle,
         currentValue,
@@ -51,6 +57,15 @@ export function findLookupRows(sheet, { force = false } = {}) {
     runnable: rows.filter((row) => !row.reason),
     skipped: rows.filter((row) => row.reason),
   };
+}
+
+export function setCellValue(sheet, excelRow, columnIndex, value) {
+  const address = XLSX.utils.encode_cell({ r: excelRow - 1, c: columnIndex });
+  sheet[address] = { t: "n", v: value };
+  const range = XLSX.utils.decode_range(sheet["!ref"] || "A1:A1");
+  range.e.r = Math.max(range.e.r, excelRow - 1);
+  range.e.c = Math.max(range.e.c, columnIndex);
+  sheet["!ref"] = XLSX.utils.encode_range(range);
 }
 
 export function inferGrader(cardTitle) {

@@ -2,10 +2,13 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+node_modules/
+cardladder-autocomp/node_modules/
 
 work/
 outputs/
 *.log
+.env
 lucas_settings.json
 
 .DS_Store

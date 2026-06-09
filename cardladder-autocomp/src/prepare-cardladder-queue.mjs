@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_SHEET, DEFAULT_WORKBOOK, findLookupRows, loadWorkbook, parseArgs } from "./workbook-utils.mjs";
+import { DEFAULT_SHEET, DEFAULT_WORKBOOK, findLookupRows, getWorksheet, loadWorkbook, parseArgs } from "./workbook-utils.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const args = parseArgs(process.argv.slice(2));
@@ -11,8 +11,12 @@ const outputPath = args.output || path.join(rootDir, "outputs", "cardladder-queu
 const force = Boolean(args.force);
 const limit = args.limit ? Number(args.limit) : null;
 
+if (!workbookPath) {
+  throw new Error("Pass --workbook \"C:\\path\\to\\workbook.xlsx\".");
+}
+
 const workbook = await loadWorkbook(workbookPath);
-const sheet = workbook.worksheets.getItem(sheetName);
+const sheet = getWorksheet(workbook, sheetName);
 const { candidates, runnable, skipped } = findLookupRows(sheet, { force });
 const selected = limit ? runnable.slice(0, limit) : runnable;
 

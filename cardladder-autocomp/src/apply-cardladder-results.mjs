@@ -1,19 +1,32 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SpreadsheetFile } from "@oai/artifact-tool";
-import { DEFAULT_SHEET, DEFAULT_WORKBOOK, findLookupRows, loadWorkbook, normalizeCert, parseArgs } from "./workbook-utils.mjs";
+import {
+  DEFAULT_SHEET,
+  DEFAULT_WORKBOOK,
+  findLookupRows,
+  getWorksheet,
+  loadWorkbook,
+  normalizeCert,
+  parseArgs,
+  saveWorkbook,
+  setCellValue,
+} from "./workbook-utils.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const args = parseArgs(process.argv.slice(2));
 const workbookPath = args.workbook || DEFAULT_WORKBOOK;
 const sheetName = args.sheet || DEFAULT_SHEET;
 const resultsPath = args.results || path.join(rootDir, "outputs", "cardladder-results.json");
-const outputPath = args.output || path.join(rootDir, "outputs", "Blez x mikey MASTER SHEET - cardladder values.xlsx");
+const outputPath = args.output || path.join(rootDir, "outputs", "cardladder-values.xlsx");
 const force = Boolean(args.force);
 
+if (!workbookPath) {
+  throw new Error("Pass --workbook \"C:\\path\\to\\workbook.xlsx\".");
+}
+
 const workbook = await loadWorkbook(workbookPath);
-const sheet = workbook.worksheets.getItem(sheetName);
+const sheet = getWorksheet(workbook, sheetName);
 const { columns, runnable } = findLookupRows(sheet, { force });
 
 const resultsRaw = await fs.readFile(resultsPath, "utf8");
@@ -30,13 +43,12 @@ for (const row of runnable) {
     missing += 1;
     continue;
   }
-  sheet.getRangeByIndexes(row.rowIndex, columns.valueCol, 1, 1).values = [[value]];
+  setCellValue(sheet, row.excelRow, columns.valueCol, value);
   filled += 1;
 }
 
 await fs.mkdir(path.dirname(outputPath), { recursive: true });
-const exported = await SpreadsheetFile.exportXlsx(workbook);
-await exported.save(outputPath);
+saveWorkbook(workbook, outputPath);
 
 console.log(JSON.stringify({
   resultsPath,

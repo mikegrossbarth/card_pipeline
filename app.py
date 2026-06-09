@@ -50,17 +50,17 @@ from intake_io import (  # noqa: E402
 )
 
 
-PHOTO_APP_ROOT = Path(r"C:\Users\User\Documents\Codex\2026-05-27\photo_to_sheet_conversion")
+PHOTO_APP_ROOT = ROOT / "photo_tool"
 PHOTO_APP_DIR = PHOTO_APP_ROOT / "app"
-PHOTO_SITE_PACKAGES = PHOTO_APP_ROOT / ".venv" / "Lib" / "site-packages"
-if PHOTO_SITE_PACKAGES.exists() and str(PHOTO_SITE_PACKAGES) not in sys.path:
-    sys.path.insert(0, str(PHOTO_SITE_PACKAGES))
 if PHOTO_APP_DIR.exists() and str(PHOTO_APP_DIR) not in sys.path:
     sys.path.insert(0, str(PHOTO_APP_DIR))
 try:
     from dotenv import load_dotenv
 except Exception:
     load_dotenv = None
+if load_dotenv:
+    load_dotenv(ROOT / ".env", override=False)
+    load_dotenv(PHOTO_APP_DIR / ".env", override=False)
 try:
     from google import genai
     from multi_card_extraction import (
@@ -74,10 +74,8 @@ except Exception:
     identify_cards_sync = None
     TemporaryModelUnavailable = ModelQuotaExceeded = ModelResponseParseError = Exception
 SETTINGS_PATH = ROOT / "lucas_settings.json"
-DEFAULT_CARD_PIPELINE_DIR = Path(r"G:\My Drive\CARD_PIPELINE")
+DEFAULT_CARD_PIPELINE_DIR = ROOT / "CARD_PIPELINE"
 CARD_PIPELINE_DIR = Path(os.environ.get("LUCAS_PIPELINE_DIR") or DEFAULT_CARD_PIPELINE_DIR)
-if not CARD_PIPELINE_DIR.exists() and "LUCAS_PIPELINE_DIR" not in os.environ:
-    CARD_PIPELINE_DIR = ROOT / "CARD_PIPELINE"
 WORKING_SHEETS_DIR = CARD_PIPELINE_DIR / "WORKING SHEETS"
 INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
 RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
@@ -1375,7 +1373,7 @@ class CardPipelineApp(tk.Tk):
         self._load_photo_env()
         api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
         if not api_key:
-            messagebox.showerror("Missing GOOGLE_API_KEY", "Create app\\.env in the photo tool or set GOOGLE_API_KEY.")
+            messagebox.showerror("Missing GOOGLE_API_KEY", "Create .env in the L.U.C.A.S project folder or set GOOGLE_API_KEY.")
             return
         self.photo_client = genai.Client(api_key=api_key)
         self.photo_status.set(f"Scanning 0/{len(self.photo_paths)} photo(s)...")
@@ -1430,9 +1428,9 @@ class CardPipelineApp(tk.Tk):
     def _load_photo_env(self) -> None:
         if not load_dotenv:
             return
+        load_dotenv(ROOT / ".env", override=False)
         load_dotenv(PHOTO_APP_DIR / ".env", override=False)
         load_dotenv(PHOTO_APP_ROOT / ".env", override=False)
-        load_dotenv(Path(r"C:\Users\User\Documents\Codex\2026-05-21\automatic-sheet-review\live-comps\.env"), override=False)
 
     def refresh_incoming_index(self) -> None:
         try:
@@ -1624,7 +1622,7 @@ class CardPipelineApp(tk.Tk):
         self._load_photo_env()
         api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
         if not api_key:
-            messagebox.showerror("Missing GOOGLE_API_KEY", "Create app\\.env in the photo tool or set GOOGLE_API_KEY.")
+            messagebox.showerror("Missing GOOGLE_API_KEY", "Create .env in the L.U.C.A.S project folder or set GOOGLE_API_KEY.")
             return
         self.photo_client = genai.Client(api_key=api_key)
         self.review_photo_status.set(f"Scanning 0/{len(self.review_photo_paths)} review photo(s)...")

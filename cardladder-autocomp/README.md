@@ -1,76 +1,34 @@
-# Card Ladder Auto-Comp
+# Card Ladder Auto-Comp Helper
 
-Chrome-extension helper for filling a workbook's `Value` column with Card Ladder values by certification number.
+This folder contains the Chrome extension and optional workbook utility scripts used by L.U.C.A.S for Card Ladder comping.
 
-This follows the same style as the UPS Incoming Package Tracker:
+Most users should run comps from the L.U.C.A.S `Comp` tab. The app starts the local bridge and sends queued rows to the extension.
 
-- normal Chrome opens the site
-- the extension presses through the real web UI
-- helper scripts prepare input and apply output
-- no Playwright browser automation is used
+## Chrome Setup
 
-## Current target workbook
+1. Open Chrome and go to `chrome://extensions`.
+2. Turn on `Developer mode`.
+3. Click `Load unpacked`.
+4. Select this folder: `cardladder-autocomp\extension`.
+5. Log into Card Ladder in the same Chrome profile.
 
-`C:\Users\User\Downloads\Blez x mikey MASTER SHEET.xlsx`
+Card Ladder requires an active account session. If Chrome is not logged in, the extension can load but the run will not complete.
 
-Target tab:
+## Optional CLI Utilities
 
-`612026`
-
-## Step 1: Prepare the lookup queue
-
-From the seller-determination workspace:
+The scripts in `src` are kept for manual queue/result workflows. They require explicit workbook paths:
 
 ```powershell
-& 'C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' cardladder-autocomp\src\prepare-cardladder-queue.mjs
+node cardladder-autocomp\src\prepare-cardladder-queue.mjs --workbook "C:\path\to\workbook.xlsx" --sheet "Sheet1"
+node cardladder-autocomp\src\apply-cardladder-results.mjs --workbook "C:\path\to\workbook.xlsx" --sheet "Sheet1" --results "C:\path\to\cardladder-results.json"
 ```
 
-This creates:
-
-`C:\Users\User\Documents\Codex\2026-06-01\seller-determination\outputs\cardladder-queue.json`
-
-Current queue status:
-
-- blank `Value` rows: `49`
-- runnable rows: `49`
-- skipped rows: `0`
-
-## Step 2: Load the Chrome extension
-
-Load this folder as an unpacked Chrome extension:
-
-`C:\Users\User\Documents\Codex\2026-06-01\seller-determination\cardladder-autocomp\extension`
-
-Then open the extension popup.
-
-## Step 3: Run Card Ladder
-
-1. In the popup, choose `cardladder-queue.json`.
-2. Click `Load Queue`.
-3. Click `Run Window`.
-4. The extension opens Card Ladder Sales History in normal Chrome and presses through the queue.
-5. Click `Download Results` when finished.
-
-Save the results as:
-
-`cardladder-results.json`
-
-## Step 4: Apply results to the workbook copy
-
-```powershell
-& 'C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' cardladder-autocomp\src\apply-cardladder-results.mjs --results "C:\path\to\cardladder-results.json"
-```
-
-Default output workbook:
-
-`C:\Users\User\Documents\Codex\2026-06-01\seller-determination\outputs\Blez x mikey MASTER SHEET - cardladder values.xlsx`
-
-The original workbook is not overwritten.
+Generated files are written to the project `outputs` folder unless `--output` is supplied.
 
 ## Files
 
-- `src\prepare-cardladder-queue.mjs`: creates the lookup queue from the workbook.
+- `src\prepare-cardladder-queue.mjs`: creates a lookup queue from a workbook.
 - `src\apply-cardladder-results.mjs`: writes Card Ladder results into an output workbook copy.
-- `extension\background.js`: opens the Card Ladder window and controls the run.
-- `extension\content.js`: presses buttons, selects grader, enters cert number, and reads value.
-- `extension\popup.*`: loads queues, starts runs, shows status, and downloads results.
+- `extension\background.js`: opens and controls the Card Ladder run window.
+- `extension\content.js`: interacts with Card Ladder pages and reads values/comps.
+- `extension\popup.*`: provides manual queue loading, run status, and result download tools.

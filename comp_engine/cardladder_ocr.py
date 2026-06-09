@@ -4,15 +4,8 @@ import base64
 import json
 import os
 import re
-import sys
 import time
 from pathlib import Path
-
-PHOTO_APP_SITE_PACKAGES = Path(
-    r"C:\Users\User\Documents\Codex\2026-05-27\photo_to_sheet_conversion\.venv\Lib\site-packages"
-)
-if PHOTO_APP_SITE_PACKAGES.exists() and str(PHOTO_APP_SITE_PACKAGES) not in sys.path:
-    sys.path.insert(0, str(PHOTO_APP_SITE_PACKAGES))
 
 try:
     from dotenv import load_dotenv
@@ -29,8 +22,8 @@ except Exception:
 
 ROOT = Path(__file__).resolve().parent.parent
 DEBUG_DIR = ROOT / "work" / "cardladder-ocr"
-PHOTO_APP_ENV = Path(r"C:\Users\User\Documents\Codex\2026-05-27\photo_to_sheet_conversion\app\.env")
-LIVE_COMPS_ENV = Path(r"C:\Users\User\Documents\Codex\2026-05-21\automatic-sheet-review\live-comps\.env")
+PROJECT_ENV = ROOT / ".env"
+PHOTO_TOOL_ENV = ROOT / "photo_tool" / "app" / ".env"
 
 
 def extract_cl_value_from_data_url(data_url: str) -> dict:
@@ -113,8 +106,8 @@ def extract_cl_value_from_data_url(data_url: str) -> dict:
 
 def load_env() -> None:
     if load_dotenv:
-        load_dotenv(PHOTO_APP_ENV, override=False)
-        load_dotenv(LIVE_COMPS_ENV, override=False)
+        load_dotenv(PROJECT_ENV, override=False)
+        load_dotenv(PHOTO_TOOL_ENV, override=False)
 
 
 def parse_data_url(data_url: str) -> tuple[str, bytes]:

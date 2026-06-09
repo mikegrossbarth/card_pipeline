@@ -1,3 +1,12 @@
 Set shell = CreateObject("WScript.Shell")
-shell.CurrentDirectory = "C:\Users\User\Documents\Codex\2026-06-04\card_pipeline"
-shell.Run """C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\pythonw.exe"" ""C:\Users\User\Documents\Codex\2026-06-04\card_pipeline\app.py""", 0, False
+Set fso = CreateObject("Scripting.FileSystemObject")
+
+appDir = fso.GetParentFolderName(WScript.ScriptFullName)
+shell.CurrentDirectory = appDir
+
+pythonwPath = appDir & "\.venv\Scripts\pythonw.exe"
+If Not fso.FileExists(pythonwPath) Then
+    pythonwPath = "pythonw.exe"
+End If
+
+shell.Run """" & pythonwPath & """ """ & appDir & "\app.py""", 0, False

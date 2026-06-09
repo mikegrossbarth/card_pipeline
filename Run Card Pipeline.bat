@@ -1,3 +1,14 @@
 @echo off
-cd /d "C:\Users\User\Documents\Codex\2026-06-04\card_pipeline"
-"C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" "C:\Users\User\Documents\Codex\2026-06-04\card_pipeline\app.py"
+setlocal
+cd /d "%~dp0"
+
+if exist ".venv\Scripts\python.exe" (
+    ".venv\Scripts\python.exe" app.py
+) else (
+    where py >nul 2>nul
+    if %ERRORLEVEL% EQU 0 (
+        py -3 app.py
+    ) else (
+        python app.py
+    )
+)

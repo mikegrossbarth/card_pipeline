@@ -8,7 +8,7 @@ from typing import Any
 from openpyxl import load_workbook
 
 
-DEFAULT_WORKBOOK = Path(r"C:\Users\User\Downloads\Blez x mikey MASTER SHEET.xlsx")
+DEFAULT_WORKBOOK = Path("")
 DEFAULT_SHEET = "612026"
 
 
