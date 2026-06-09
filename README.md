@@ -4,6 +4,16 @@ Lot Upload, Comping & Assignment System.
 
 Combined intake, receiving, sheet tracking, and comping desktop app.
 
+## Setup
+
+Download or clone the repo, then launch the app from the project folder. On first run, click `Folders` in the top-right header and choose the folder where L.U.C.A.S should store sheet data. The app creates and uses these subfolders:
+
+- `WORKING SHEETS`
+- `INCOMING SHEETS`
+- `RECEIVED SHEETS`
+
+The chosen folder is saved locally in `lucas_settings.json`, which is intentionally not committed. If no folder has been selected and `G:\My Drive\CARD_PIPELINE` exists, the app uses that as the default; otherwise it falls back to a local `CARD_PIPELINE` folder inside the project.
+
 ## Input Modes
 
 Use the `Intake` tab for all card entry.
@@ -18,9 +28,7 @@ Use the `Intake` tab for all card entry.
 Enter a title such as `mikey x blez 6/2/26`, then click `Save as Working Sheet`.
 After the working sheet is saved, the Intake rows clear so the next lot can begin.
 
-Working sheets are saved to:
-
-`G:\My Drive\CARD_PIPELINE\WORKING SHEETS`
+Working sheets are saved to the configured `WORKING SHEETS` folder.
 
 ## Comping
 
@@ -37,9 +45,7 @@ Use the `Review` tab for receiving and source matching.
 - `Automatic Review`: choose barcode scanning or photo OCR, then receive cards from that input mode.
 - `Manual Review`: click the `+` row at the bottom of the Review table to add rows, then type directly into the table.
 
-Review rows are independent from Intake and Comp. Each reviewed card is checked against incoming sheets in:
-
-`G:\My Drive\CARD_PIPELINE\INCOMING SHEETS`
+Review rows are independent from Intake and Comp. Each reviewed card is checked against incoming sheets in the configured `INCOMING SHEETS` folder.
 
 When a cert is found, the `Sheet Source` column is filled with the matching incoming sheet name and the row is marked `Received`.
 When no incoming sheet match is found, `Sheet Source` is set to `NO SHEET FOUND` and the row is highlighted red.
@@ -47,7 +53,7 @@ When no incoming sheet match is found, `Sheet Source` is set to `NO SHEET FOUND`
 
 The included Card Ladder extension folder is:
 
-`C:\Users\User\Documents\Codex\2026-06-04\card_pipeline\cardladder-autocomp\extension`
+`cardladder-autocomp\extension`
 
 ## Launch
 

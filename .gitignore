@@ -6,6 +6,7 @@ venv/
 work/
 outputs/
 *.log
+lucas_settings.json
 
 .DS_Store
 Thumbs.db
