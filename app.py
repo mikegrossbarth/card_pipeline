@@ -2499,12 +2499,23 @@ class CardPipelineApp(tk.Tk):
         self._apply_cell_value(tree, excel_row, column, value)
         if tree is self.comp_tree:
             self.comp_output_saved = False
-        self._refresh_table(schedule_recommendations=(tree is self.review_tree))
+        self._refresh_table(schedule_recommendations=self._edit_affects_assignment(tree, column))
         if tree.exists(row_id):
             tree.selection_set(row_id)
             tree.focus(row_id)
             tree.see(row_id)
         self.status_var.set(f"Updated row {excel_row}.")
+
+    def _edit_affects_assignment(self, tree: ttk.Treeview, column: str) -> bool:
+        if tree is not self.comp_tree and tree is not self.review_tree:
+            return False
+        return column in {
+            "cert_number",
+            "grader",
+            "card_title",
+            "card_ladder_value",
+            "card_ladder_comps_average",
+        }
 
     def _cancel_cell_edit(self) -> None:
         self._destroy_cell_editor()
