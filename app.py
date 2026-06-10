@@ -183,6 +183,8 @@ COMP_COLUMNS = (
     "card_ladder_value",
     "card_ladder_comps_average",
     "card_ladder_comp_confidence",
+    "best_company",
+    "estimated_payout",
     "status",
     "sheet_source",
 )
@@ -319,6 +321,7 @@ class CardPipelineApp(tk.Tk):
         self.assignment_engine = AssignmentEngine.load()
         self.assignment_recommendation_job = 0
         self.assignment_recommendation_running = False
+        self.assignment_recommendation_after_id: str | None = None
         self.assignment_config_status = tk.StringVar(value=self._assignment_config_status())
         self.received_sheet_paths: dict[str, Path] = {}
         self.selected_received_sheet = tk.StringVar()
@@ -489,6 +492,14 @@ class CardPipelineApp(tk.Tk):
         )
         style.configure("Vertical.TScrollbar", background=palette["field"], troughcolor=palette["panel"], bordercolor=palette["panel"], arrowcolor=palette["muted"])
         style.configure("Horizontal.TScrollbar", background=palette["field"], troughcolor=palette["panel"], bordercolor=palette["panel"], arrowcolor=palette["muted"])
+        style.configure(
+            "Assignment.Horizontal.TProgressbar",
+            background="#16a34a",
+            troughcolor="#ffffff",
+            bordercolor="#d7dde3",
+            lightcolor="#16a34a",
+            darkcolor="#15803d",
+        )
         style.configure("Treeview", rowheight=34, font=("Segoe UI", 10), background=palette["panel"], fieldbackground=palette["panel"], foreground=palette["subtle_text"], borderwidth=0)
         style.configure("Treeview.Heading", font=("Segoe UI Semibold", 9), background=palette["panel_high"], foreground=palette["muted"], padding=(10, 8), borderwidth=0)
         style.map("Treeview", background=[("selected", palette["selection"])], foreground=[("selected", "#000000")])
@@ -644,6 +655,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=5, sticky="w", pady=(4, 0))
         self.assignment_progress = ttk.Progressbar(
             review_controls,
+            style="Assignment.Horizontal.TProgressbar",
             variable=self.assignment_progress_value,
             maximum=100,
             mode="determinate",
@@ -1967,7 +1979,7 @@ class CardPipelineApp(tk.Tk):
                 updated += 1
         if updated:
             self.comp_output_saved = False
-        self._refresh_table()
+        self._refresh_table(schedule_recommendations=bool(updated))
         if updated:
             self.status_var.set(f"Recalculated {updated} comp row(s) with {self.comp_strategy_label.get()}.")
         elif self.state.rows:
@@ -2086,7 +2098,7 @@ class CardPipelineApp(tk.Tk):
         self.row_sources = sources
         self.comp_sheet_sources = {}
         self.comp_output_saved = True
-        self._refresh_table()
+        self._refresh_table(schedule_recommendations=any(row.card_ladder_comps_average is not None for row in workbook_rows))
         self.selected_working_sheet.set(name)
         self._select_working_sheet_in_list()
         self.status_var.set(f"Loaded working sheet: {name}")
@@ -2172,6 +2184,7 @@ class CardPipelineApp(tk.Tk):
         if not rows or not self.assignment_engine.companies:
             self.assignment_progress_value.set(0)
             return
+        self.assignment_recommendation_after_id = None
         self.assignment_recommendation_job += 1
         job_id = self.assignment_recommendation_job
         self.assignment_recommendation_running = True
@@ -2180,6 +2193,17 @@ class CardPipelineApp(tk.Tk):
         self.review_status.set(f"Calculating assignment recommendations: 0/{total}...")
         self.status_var.set("Calculating assignment recommendations...")
         threading.Thread(target=self._assignment_recommendations_worker, args=(job_id, rows), daemon=True).start()
+
+    def _schedule_assignment_recommendations(self, delay_ms: int = 700) -> None:
+        if not self.assignment_engine.companies:
+            self.assignment_progress_value.set(0)
+            return
+        if self.assignment_recommendation_after_id is not None:
+            try:
+                self.after_cancel(self.assignment_recommendation_after_id)
+            except tk.TclError:
+                pass
+        self.assignment_recommendation_after_id = self.after(delay_ms, self._queue_assignment_recommendations)
 
     def _assignment_recommendations_worker(self, job_id: int, rows: list[WorkbookRow]) -> None:
         total = len(rows)
@@ -2200,12 +2224,18 @@ class CardPipelineApp(tk.Tk):
             for row_id, company, payout in list(payload.get("results") or [])
         }
         filled = 0
+        comp_rows_updated = False
+        state_row_ids = {id(row) for row in self.state.rows}
         for row in [*self.state.rows, *self.review_rows]:
             company, payout = results.get(id(row), ("", None))
             row.best_company = company if payout is not None else ""
             row.estimated_payout = payout if payout is not None else None
             if payout is not None:
                 filled += 1
+                if id(row) in state_row_ids:
+                    comp_rows_updated = True
+        if comp_rows_updated:
+            self.comp_output_saved = False
         total = int(payload.get("total") or 0)
         self.assignment_recommendation_running = False
         self.assignment_progress_value.set(100 if total else 0)
@@ -2248,7 +2278,7 @@ class CardPipelineApp(tk.Tk):
         completed = sum(1 for row in self.state.rows if row.card_ladder_value is not None)
         self.summary_var.set(f"{len(self.intake_rows)} intake rows | Loaded comp rows: {len(self.state.rows)} | Card Ladder values: {completed}")
         if schedule_recommendations:
-            self._queue_assignment_recommendations()
+            self._schedule_assignment_recommendations()
 
     def _render_rows(self, tree: ttk.Treeview, rows: list[WorkbookRow], sources: dict[int, str], sheet_sources: dict[int, str] | None = None) -> None:
         self._remember_column_widths(tree)
@@ -2381,7 +2411,7 @@ class CardPipelineApp(tk.Tk):
         else:
             return 0
         self._cancel_cell_edit()
-        self._refresh_table(schedule_recommendations=(tree is self.review_tree))
+        self._refresh_table(schedule_recommendations=(tree is self.comp_tree or tree is self.review_tree))
         return len(selected_rows)
 
     def _duplicate_certs(self, rows: list[WorkbookRow]) -> set[str]:
@@ -2566,7 +2596,7 @@ class CardPipelineApp(tk.Tk):
                     self._refresh_table()
                 elif event == "comp_refresh":
                     self.comp_output_saved = False
-                    self._refresh_table()
+                    self._refresh_table(schedule_recommendations=True)
                 elif isinstance(event, tuple):
                     kind, payload = event
                     if kind == "photo_rows":
