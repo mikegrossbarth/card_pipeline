@@ -35,6 +35,7 @@ from bridge_server import (  # noqa: E402
 from workbook_io import WorkbookRow  # noqa: E402
 from assignment_engine import AssignmentEngine  # noqa: E402
 from assignment_config_ui import open_assignment_rules_dialog  # noqa: E402
+from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
 
 from intake_io import (  # noqa: E402
     append_company_sheet_rows,
@@ -115,7 +116,7 @@ def load_app_settings() -> dict[str, object]:
 
 
 def save_app_settings(settings: dict[str, object]) -> None:
-    SETTINGS_PATH.write_text(json.dumps(settings, indent=2, sort_keys=True), encoding="utf-8")
+    atomic_write_json(SETTINGS_PATH, settings)
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
@@ -287,6 +288,7 @@ class CardPipelineApp(tk.Tk):
             if self.bridge.started
             else f"Card Ladder bridge failed to start: {self.bridge.error}"
         )
+        self.lucas_identity = local_identity(SETTINGS_PATH)
 
         self.input_mode = tk.StringVar(value="Barcode Scanner")
         self.review_mode = tk.StringVar(value="Automatic Receive")
@@ -337,6 +339,7 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_paths: dict[str, dict[str, Path]] = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries: dict[str, dict[str, object]] = {}
         self.home_sheet_markers: dict[str, dict[str, object]] = self._load_sheet_markers()
+        self.deleted_sheet_marker_keys: set[str] = set()
         self.home_selected_sheet_key = ""
         self.payout_person_var = tk.StringVar()
         self.payout_status_var = tk.StringVar(value="No unpaid sheets loaded.")
@@ -899,8 +902,7 @@ class CardPipelineApp(tk.Tk):
         return [item for item in raw if isinstance(item, dict)]
 
     def _save_profit_ledger(self, rows: list[dict[str, object]]) -> None:
-        PROFIT_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-        PROFIT_LEDGER_PATH.write_text(json.dumps(rows, indent=2, sort_keys=True), encoding="utf-8")
+        atomic_write_json(PROFIT_LEDGER_PATH, rows)
 
     def _profit_record_key(self, record: dict[str, object]) -> str:
         return "|".join(
@@ -938,19 +940,22 @@ class CardPipelineApp(tk.Tk):
     def record_profit_sales(self, records: list[dict[str, object]]) -> int:
         if not records:
             return 0
-        ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
-        existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
-        added = 0
-        for record in records:
-            normalized = self._normalize_profit_record(record)
-            key = str(normalized.get("ledger_key") or "")
-            if not key or key in existing_keys:
-                continue
-            ledger.append(normalized)
-            existing_keys.add(key)
-            added += 1
-        if added:
-            self._save_profit_ledger(ledger)
+        with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
+            ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+            existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
+            added = 0
+            for record in records:
+                normalized = self._normalize_profit_record(record)
+                key = str(normalized.get("ledger_key") or "")
+                if not key or key in existing_keys:
+                    continue
+                normalized["recorded_by"] = self.lucas_identity.get("display_name", "")
+                normalized["recorded_machine"] = self.lucas_identity.get("machine", "")
+                ledger.append(normalized)
+                existing_keys.add(key)
+                added += 1
+            if added:
+                self._save_profit_ledger(ledger)
         self.refresh_profit_tab()
         return added
 
@@ -967,7 +972,16 @@ class CardPipelineApp(tk.Tk):
             existing_keys.add(key)
             backfilled += 1
         if backfilled:
-            self._save_profit_ledger(ledger)
+            with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
+                current = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+                current_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in current}
+                for record in ledger:
+                    key = str(record.get("ledger_key") or "")
+                    if key and key not in current_keys:
+                        current.append(record)
+                        current_keys.add(key)
+                self._save_profit_ledger(current)
+                ledger = current
         self.profit_rows = ledger
         self.profit_rows.sort(key=lambda record: (str(record.get("date_added") or ""), str(record.get("company") or ""), str(record.get("card_title") or "")), reverse=True)
         if not hasattr(self, "profit_tree"):
@@ -1157,6 +1171,9 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries = {}
         errors: list[str] = []
+        conflict_files = self._shared_conflict_files()
+        if conflict_files:
+            errors.append(f"Shared conflicts: {', '.join(path.name for path in conflict_files[:3])}")
         for kind, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR), ("Received", RECEIVED_SHEETS_DIR)):
             try:
                 directory.mkdir(parents=True, exist_ok=True)
@@ -1181,6 +1198,15 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Home refreshed with {len(errors)} sheet issue(s).")
         else:
             self.status_var.set("Home metrics refreshed.")
+
+    def _shared_conflict_files(self) -> list[Path]:
+        if not CARD_PIPELINE_DIR.exists():
+            return []
+        patterns = ("*conflict*.json", "*conflicted*.json", "*copy*.json")
+        found: list[Path] = []
+        for pattern in patterns:
+            found.extend(CARD_PIPELINE_DIR.glob(pattern))
+        return sorted({path for path in found if path.name.lower() != PROFIT_LEDGER_PATH.name.lower() and path.name.lower() != SHEET_MARKERS_PATH.name.lower()})
 
     def _start_startup_refresh(self) -> None:
         self.status_var.set("Loading sheet lists...")
@@ -1777,32 +1803,33 @@ class CardPipelineApp(tk.Tk):
         key = self.home_selected_sheet_key
         moved = False
         try:
-            selected_kind, _selected_name = self._split_home_sheet_key(key)
-            if selected_kind == "Received" and not marker["all_received"]:
-                moved_key = self._move_received_sheet_to_incoming(key)
-                if moved_key:
-                    self.home_sheet_markers.pop(key, None)
-                    key = moved_key
-                    self.home_selected_sheet_key = key
-                    self.home_sheet_kind.set("Incoming")
-                    moved = True
-            elif marker["all_received"]:
-                moved_key = self._move_sheet_to_received(key)
-                if moved_key:
-                    self.home_sheet_markers.pop(key, None)
-                    key = moved_key
-                    self.home_selected_sheet_key = key
-                    moved = True
-            elif incoming_proper:
-                moved_key = self._move_working_sheet_to_incoming(key)
-                if moved_key:
-                    self.home_sheet_markers.pop(key, None)
-                    key = moved_key
-                    self.home_selected_sheet_key = key
-                    self.home_sheet_kind.set("Incoming")
-                    moved = True
-            self.home_sheet_markers[key] = marker
-            self._save_sheet_markers()
+            with shared_lock(CARD_PIPELINE_DIR, "receive-company-sheets", self.lucas_identity):
+                selected_kind, _selected_name = self._split_home_sheet_key(key)
+                if selected_kind == "Received" and not marker["all_received"]:
+                    moved_key = self._move_received_sheet_to_incoming(key)
+                    if moved_key:
+                        self._delete_sheet_marker(key)
+                        key = moved_key
+                        self.home_selected_sheet_key = key
+                        self.home_sheet_kind.set("Incoming")
+                        moved = True
+                elif marker["all_received"]:
+                    moved_key = self._move_sheet_to_received(key)
+                    if moved_key:
+                        self._delete_sheet_marker(key)
+                        key = moved_key
+                        self.home_selected_sheet_key = key
+                        moved = True
+                elif incoming_proper:
+                    moved_key = self._move_working_sheet_to_incoming(key)
+                    if moved_key:
+                        self._delete_sheet_marker(key)
+                        key = moved_key
+                        self.home_selected_sheet_key = key
+                        self.home_sheet_kind.set("Incoming")
+                        moved = True
+                self.home_sheet_markers[key] = marker
+                self._save_sheet_markers()
         except Exception as error:
             messagebox.showerror("Save failed", str(error))
             return
@@ -1894,7 +1921,7 @@ class CardPipelineApp(tk.Tk):
             marker["all_received"] = True
             new_key = self._move_sheet_to_received(old_key)
             if new_key:
-                self.home_sheet_markers.pop(old_key, None)
+                self._delete_sheet_marker(old_key)
                 self.home_sheet_markers[new_key] = marker
                 moved.append(path.name)
         return moved
@@ -1910,9 +1937,21 @@ class CardPipelineApp(tk.Tk):
             return {}
         return {}
 
+    def _delete_sheet_marker(self, key: str) -> None:
+        if not key:
+            return
+        self.home_sheet_markers.pop(key, None)
+        self.deleted_sheet_marker_keys.add(key)
+
     def _save_sheet_markers(self) -> None:
-        SHEET_MARKERS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        SHEET_MARKERS_PATH.write_text(json.dumps(self.home_sheet_markers, indent=2, sort_keys=True), encoding="utf-8")
+        with shared_lock(CARD_PIPELINE_DIR, "sheet-markers", self.lucas_identity):
+            latest = self._load_sheet_markers()
+            latest.update(self.home_sheet_markers)
+            for key in self.deleted_sheet_marker_keys - set(self.home_sheet_markers):
+                latest.pop(key, None)
+            self.deleted_sheet_marker_keys.clear()
+            self.home_sheet_markers = latest
+            atomic_write_json(SHEET_MARKERS_PATH, self.home_sheet_markers)
 
     def _show_mode(self) -> None:
         for child in self.mode_host.winfo_children():
@@ -2551,39 +2590,41 @@ class CardPipelineApp(tk.Tk):
         if not paths:
             messagebox.showinfo("No sheets found", "No incoming or working sheets were found to update.")
             return
-        result = mark_received_in_workbooks(paths, certs)
-        errors.extend(result.get("errors") or [])
-        rows_marked = int(result.get("rows_marked") or 0)
-        files_updated = int(result.get("files_updated") or 0)
-        certs_marked = len(result.get("certs_marked") or set())
-        company_rows_added = 0
-        company_rows_missing_company = 0
-        if rows_marked:
-            company_rows = [
-                row
-                for row in self.review_rows
-                if row.company_pile and scan_to_cert(row.cert_number) in result.get("certs_marked", set())
-            ]
-            self._apply_recommendations_to_rows(company_rows, force=True)
-            eligible_company_rows = [row for row in company_rows if str(row.best_company or "").strip()]
-            company_rows_missing_company = len(company_rows) - len(eligible_company_rows)
-            if eligible_company_rows:
-                company_result = append_company_sheet_rows(
-                    COMPANY_SHEETS_DIR,
-                    eligible_company_rows,
-                    self.review_sources,
-                    self.review_sheet_sources,
-                )
-                company_rows_added = int(company_result.get("rows_added") or 0)
-                self.record_profit_sales(list(company_result.get("added_records") or []))
-                errors.extend(company_result.get("errors") or [])
-        moved_received: list[str] = []
         try:
-            moved_received = self._move_fully_received_sheets_to_received(paths)
-            if moved_received:
-                self._save_sheet_markers()
+            with shared_lock(CARD_PIPELINE_DIR, "receive-company-sheets", self.lucas_identity):
+                result = mark_received_in_workbooks(paths, certs)
+                errors.extend(result.get("errors") or [])
+                rows_marked = int(result.get("rows_marked") or 0)
+                files_updated = int(result.get("files_updated") or 0)
+                certs_marked = len(result.get("certs_marked") or set())
+                company_rows_added = 0
+                company_rows_missing_company = 0
+                if rows_marked:
+                    company_rows = [
+                        row
+                        for row in self.review_rows
+                        if row.company_pile and scan_to_cert(row.cert_number) in result.get("certs_marked", set())
+                    ]
+                    self._apply_recommendations_to_rows(company_rows, force=True)
+                    eligible_company_rows = [row for row in company_rows if str(row.best_company or "").strip()]
+                    company_rows_missing_company = len(company_rows) - len(eligible_company_rows)
+                    if eligible_company_rows:
+                        company_result = append_company_sheet_rows(
+                            COMPANY_SHEETS_DIR,
+                            eligible_company_rows,
+                            self.review_sources,
+                            self.review_sheet_sources,
+                        )
+                        company_rows_added = int(company_result.get("rows_added") or 0)
+                        self.record_profit_sales(list(company_result.get("added_records") or []))
+                        errors.extend(company_result.get("errors") or [])
+                moved_received = self._move_fully_received_sheets_to_received(paths)
+                if moved_received:
+                    self._save_sheet_markers()
         except Exception as error:
-            errors.append(f"Move to received failed: {error}")
+            messagebox.showerror("Shared folder busy", str(error))
+            self.status_var.set(f"Receive update failed: {error}")
+            return
         self.refresh_incoming_index()
         self.refresh_working_sheets()
         self.refresh_received_sheets()
@@ -2786,7 +2827,12 @@ class CardPipelineApp(tk.Tk):
         )
         if not path:
             return
-        write_pipeline_output(Path(path), self.state.rows, self.row_sources)
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
+                write_pipeline_output(Path(path), self.state.rows, self.row_sources)
+        except Exception as error:
+            messagebox.showerror("Save failed", str(error))
+            return
         self.comp_output_saved = True
         self.status_var.set(f"Saved {path}")
 
@@ -2799,8 +2845,9 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Title required", "Enter a working sheet title first.")
             return
         try:
-            path = working_sheet_path(WORKING_SHEETS_DIR, title)
-            write_working_sheet(path, self.intake_rows, self.intake_sources)
+            with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
+                path = working_sheet_path(WORKING_SHEETS_DIR, title)
+                write_working_sheet(path, self.intake_rows, self.intake_sources)
         except Exception as error:
             messagebox.showerror("Save failed", str(error))
             return

@@ -58,6 +58,28 @@ cardladder-autocomp
 
 If you are using Git, clone the repository. If not, download and unzip the project folder.
 
+## Shared Team Folder Setup
+
+For a small team, every computer can use the same synced pipeline folder, for example:
+
+```text
+G:\My Drive\CARD_PIPELINE
+```
+
+Each computer still keeps its own local app folder, `.env`, Google OAuth token, and Card Ladder Chrome extension. The shared folder is only for pipeline data: working sheets, incoming sheets, received sheets, company sheets, payout markers, and profit records.
+
+L.U.C.A.S creates a local `lucas_user_identity.json` on each computer. Do not copy this file between computers. It lets shared locks and profit records identify which user/machine made a change.
+
+When several users share the same pipeline folder, L.U.C.A.S uses lock files in:
+
+```text
+CARD_PIPELINE\.locks
+```
+
+These locks protect shared workbook writes, receive updates, company-sheet appends, payout markers, and the profit ledger. If another user is writing, the app waits briefly instead of writing over them. If Google Drive creates a conflicted JSON copy, the Home refresh will show a warning so the team can resolve it.
+
+All users should keep Google Drive for desktop running and fully synced before marking cards received, moving sheets, or marking payouts paid.
+
 ## Step 2: Install Google Chrome
 
 Install Google Chrome if it is not already installed.

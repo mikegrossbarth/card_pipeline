@@ -10,6 +10,7 @@ outputs/
 *.log
 .env
 lucas_settings.json
+lucas_user_identity.json
 lucas_google_sheets_token.json
 assignment_companies.json
 
