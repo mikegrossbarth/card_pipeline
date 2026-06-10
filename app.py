@@ -198,6 +198,8 @@ RECEIVE_COLUMNS = (
     "card_ladder_value",
     "card_ladder_comps_average",
     "card_ladder_comp_confidence",
+    "best_company",
+    "estimated_payout",
     "status",
 )
 
@@ -2264,7 +2266,12 @@ class CardPipelineApp(tk.Tk):
                 tk.END,
                 iid=str(row.excel_row),
                 tags=tuple(tags),
-                values=tuple(self._row_display_value(row, col, sources, sheet_sources) for col in columns),
+                values=tuple(
+                    ""
+                    if self._is_receive_tree(tree) and col in {"best_company", "estimated_payout"}
+                    else self._row_display_value(row, col, sources, sheet_sources)
+                    for col in columns
+                ),
             )
         if self._is_receive_tree(tree) and self.review_mode.get() == "Manual Receive":
             add_values = []
