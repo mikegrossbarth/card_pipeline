@@ -767,7 +767,8 @@ class CardPipelineApp(tk.Tk):
             widths={"sheet": 320, "person": 130, "cards": 80, "received": 95, "volume": 130, "status": 150},
             height=9,
         )
-        self.incoming_volume_tree.tag_configure("total_row", background="#242424", foreground="#ffffff")
+        self.incoming_volume_tree.tag_configure("total_divider", background="#1f1f1f", foreground="#ffffff", font=("Segoe UI Semibold", 10))
+        self.incoming_volume_tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
 
         partial_panel = ttk.Frame(metrics, style="Panel.TFrame", padding=(12, 12))
         partial_panel.pack(fill=tk.BOTH, expand=True)
@@ -812,7 +813,8 @@ class CardPipelineApp(tk.Tk):
             widths={"person": 220, "sheets": 80, "cards": 80, "balance": 130},
             height=18,
         )
-        self.payout_summary_tree.tag_configure("total_row", background="#242424", foreground="#ffffff")
+        self.payout_summary_tree.tag_configure("total_divider", background="#1f1f1f", foreground="#ffffff", font=("Segoe UI Semibold", 10))
+        self.payout_summary_tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
         self.payout_summary_tree.bind("<ButtonRelease-1>", self.mark_payout_person_paid)
 
         detail_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 12))
@@ -1108,6 +1110,12 @@ class CardPipelineApp(tk.Tk):
             self.incoming_volume_tree.insert(
                 "",
                 tk.END,
+                tags=("total_divider",),
+                values=("━━━━━━", "━━━━━━", "━━━━━━", "━━━━━━", "━━━━━━", "━━━━━━"),
+            )
+            self.incoming_volume_tree.insert(
+                "",
+                tk.END,
                 tags=("total_row",),
                 values=("TOTAL", "", total_cards, total_received, format_money(total_volume), ""),
             )
@@ -1177,6 +1185,12 @@ class CardPipelineApp(tk.Tk):
         total_sheets = sum(int(values["sheets"]) for values in balances.values())
         total_cards = sum(int(values["cards"]) for values in balances.values())
         if balances:
+            self.payout_summary_tree.insert(
+                "",
+                tk.END,
+                tags=("total_divider",),
+                values=("━━━━━━", "━━━━━━", "━━━━━━", "━━━━━━"),
+            )
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
@@ -1276,7 +1290,7 @@ class CardPipelineApp(tk.Tk):
         person = self.payout_summary_people.get(selected[0])
         if not person:
             return
-        if person == "TOTAL":
+        if person in {"TOTAL", "━━━━━━"}:
             return
         matching_items = [
             item
