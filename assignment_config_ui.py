@@ -51,6 +51,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.company_name = tk.StringVar()
         self.rule_source_mode = tk.StringVar(value="manual")
         self.rule_source_path = tk.StringVar()
+        self.link_payouts_to_rule_source = tk.BooleanVar(value=False)
         self.payout_source_mode = tk.StringVar(value="manual")
         self.payout_source_path = tk.StringVar()
         self.status = tk.StringVar(value="Create or edit a company, then save.")
@@ -199,7 +200,15 @@ class AssignmentRulesDialog(tk.Toplevel):
         actions.columnconfigure(1, weight=1)
         ttk.Button(actions, text="Preview Source", command=self._preview_rule_source, style="AssignSoft.TButton").grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(actions, text="Connect Google", command=self._connect_google, style="AssignSoft.TButton").grid(row=0, column=1, sticky="ew", padx=(4, 0))
-        ttk.Label(frame, textvariable=self.preview_status, style="AssignMuted.TLabel", wraplength=420).grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        self.link_payouts_check = ttk.Checkbutton(
+            frame,
+            text="Link Payouts to Same File",
+            variable=self.link_payouts_to_rule_source,
+            command=self._on_source_mode_change,
+            style="Assign.TCheckbutton",
+        )
+        self.link_payouts_check.grid(row=5, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Label(frame, textvariable=self.preview_status, style="AssignMuted.TLabel", wraplength=420).grid(row=6, column=0, sticky="ew", pady=(8, 0))
         return frame
 
     def _build_payout_source_panel(self, parent: ttk.Frame) -> ttk.Frame:
@@ -227,20 +236,26 @@ class AssignmentRulesDialog(tk.Toplevel):
 
     def _sync_source_visibility(self) -> None:
         rule_linked = self.rule_source_mode.get() != "manual"
+        payout_same_file = self.link_payouts_to_rule_source.get() and rule_linked
         manual_rule_payouts = self.rule_source_mode.get() == "manual" and self.payout_source_mode.get() == "manual"
         payout_linked = self.payout_source_mode.get() == "file"
         self.rule_path_entry.configure(state=tk.NORMAL if rule_linked else tk.DISABLED)
-        self.payout_path_entry.configure(state=tk.NORMAL if payout_linked else tk.DISABLED)
+        self.link_payouts_check.configure(state=tk.NORMAL if rule_linked else tk.DISABLED)
+        if not rule_linked and self.link_payouts_to_rule_source.get():
+            self.link_payouts_to_rule_source.set(False)
+            payout_same_file = False
+        payout_source_state = tk.DISABLED if payout_same_file else (tk.NORMAL if payout_linked else tk.DISABLED)
+        self.payout_path_entry.configure(state=payout_source_state)
         if rule_linked:
             self.manual_rule_panel.grid_remove()
         else:
             self.manual_rule_panel.grid(row=0, column=0, columnspan=2, sticky="nsew")
-        if payout_linked or manual_rule_payouts:
+        show_payout_panel = rule_linked and not payout_linked and not payout_same_file
+        if not show_payout_panel:
             self.right_panel.grid_remove()
             self.payout_panel.grid_remove()
         else:
-            self.right_panel.grid(row=0, column=0 if rule_linked else 1, columnspan=2 if rule_linked else 1, sticky="nsew", padx=(0 if rule_linked else 8, 0))
-            self.manual_rule_panel.grid_remove()
+            self.right_panel.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=(0, 0))
             self.payout_panel.grid(row=0, column=0, sticky="nsew")
 
     def _reset_preview_status(self) -> None:
@@ -280,7 +295,14 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.rule_source_mode.set(str(company.get("rules_source_kind") or source_kind_for_path(company.get("rules"))))
         self.rule_source_path.set(display_source_path(company.get("rules")))
         self.rule_materialized_source = company.get("rules") if isinstance(company.get("rules"), dict) else None
-        self.payout_source_mode.set(str(company.get("payout_source_kind") or ("file" if company.get("payout") and not is_generated_payout_path(company.get("payout")) else "manual")))
+        linked_payouts = is_same_file_payout_source(company.get("payout"))
+        self.link_payouts_to_rule_source.set(linked_payouts)
+        payout_kind = str(company.get("payout_source_kind") or "")
+        if linked_payouts or payout_kind == "same_file":
+            self.payout_source_mode.set("file")
+            self.link_payouts_to_rule_source.set(True)
+        else:
+            self.payout_source_mode.set(str(payout_kind or ("file" if company.get("payout") and not is_generated_payout_path(company.get("payout")) else "manual")))
         self.payout_source_path.set(display_source_path(company.get("payout")))
         self.payout_materialized_source = company.get("payout") if isinstance(company.get("payout"), dict) else None
         rules_payload = self._load_json_source(company.get("rules") or company.get("rules_source") or company.get("rulesSource"))
@@ -307,6 +329,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.company_name.set("")
         self.rule_source_mode.set("manual")
         self.rule_source_path.set("")
+        self.link_payouts_to_rule_source.set(False)
         self.payout_source_mode.set("manual")
         self.payout_source_path.set("")
         self.rule_materialized_source = None
@@ -535,7 +558,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         rule_source = self._save_or_link_rules(name)
         if not rule_source:
             return False
-        payout_source = self._save_or_link_payout(name)
+        payout_source = self._save_or_link_payout(name, rule_source)
         if not payout_source:
             return False
 
@@ -544,7 +567,7 @@ class AssignmentRulesDialog(tk.Toplevel):
             "rules": rule_source,
             "rules_source_kind": self.rule_source_mode.get(),
             "payout": payout_source,
-            "payout_source_kind": self.payout_source_mode.get(),
+            "payout_source_kind": "same_file" if self.link_payouts_to_rule_source.get() else self.payout_source_mode.get(),
         }
         if self.selected_index is None:
             self.companies.append(company)
@@ -558,7 +581,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.status.set(f"Saved {name}.")
         return True
 
-    def _save_or_link_rules(self, name: str) -> str:
+    def _save_or_link_rules(self, name: str) -> str | dict[str, Any]:
         mode = self.rule_source_mode.get()
         if mode != "manual":
             path = self.rule_source_path.get().strip()
@@ -575,7 +598,9 @@ class AssignmentRulesDialog(tk.Toplevel):
         rules_path.write_text(json.dumps(self._rules_payload(), indent=2), encoding="utf-8")
         return str(rules_path)
 
-    def _save_or_link_payout(self, name: str) -> str:
+    def _save_or_link_payout(self, name: str, rule_source: str | dict[str, Any]) -> str | dict[str, Any]:
+        if self.link_payouts_to_rule_source.get() and self.rule_source_mode.get() != "manual":
+            return self._same_file_payout_source(rule_source)
         mode = self.payout_source_mode.get()
         if mode == "file":
             path = self.payout_source_path.get().strip()
@@ -591,6 +616,15 @@ class AssignmentRulesDialog(tk.Toplevel):
         payout_path = self.rules_dir / f"{safe_stem(name)}-payout.json"
         payout_path.write_text(json.dumps(self._payout_payload(), indent=2), encoding="utf-8")
         return str(payout_path)
+
+    def _same_file_payout_source(self, rule_source: str | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(rule_source, dict):
+            source = dict(rule_source)
+        else:
+            source = {"path": rule_source}
+        source["sheet_name"] = "Payouts"
+        source["linked_payouts_to_rule_source"] = True
+        return source
 
     def _materialize_source_if_needed(self, path_text: str, is_payout: bool = False) -> str | dict[str, Any]:
         normalized = normalize_source_value(path_text)
@@ -720,6 +754,13 @@ def is_generated_payout_path(value: Any) -> bool:
     if isinstance(value, dict):
         value = value.get("path") or value.get("file") or value.get("url")
     return str(value or "").lower().endswith("-payout.json")
+
+
+def is_same_file_payout_source(value: Any) -> bool:
+    return isinstance(value, dict) and (
+        bool(value.get("linked_payouts_to_rule_source"))
+        or str(value.get("sheet_name") or value.get("sheet") or "").strip().lower() == "payouts"
+    )
 
 
 def display_source_path(value: Any) -> str:

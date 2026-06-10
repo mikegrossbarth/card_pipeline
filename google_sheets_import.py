@@ -38,7 +38,7 @@ def authorize_google_sheets(interactive: bool = True) -> dict[str, Any]:
     return run_desktop_oauth(client_id, client_secret)
 
 
-def read_google_sheet_text(url: str, interactive: bool = False) -> str:
+def read_google_sheet_text(url: str, interactive: bool = False, sheet_name: str = "") -> str:
     spreadsheet_id = spreadsheet_id_from_url(url)
     if not spreadsheet_id:
         raise ValueError("Use a Google Sheets URL for this rules or payout source.")
@@ -50,16 +50,22 @@ def read_google_sheet_text(url: str, interactive: bool = False) -> str:
         access_token,
     )
     lines: list[str] = []
+    found_sheet = False
     for sheet in metadata.get("sheets") or []:
         title = str(((sheet or {}).get("properties") or {}).get("title") or "").strip()
         if not title:
             continue
+        if sheet_name and title.lower() != sheet_name.lower():
+            continue
+        found_sheet = True
         values = read_sheet_values(spreadsheet_id, title, access_token)
         lines.append(f"# {title}")
         for row in values:
             cells = [str(cell).strip() for cell in row if str(cell).strip()]
             if cells:
                 lines.append(" ".join(cells))
+    if sheet_name and not found_sheet:
+        raise ValueError(f"Google Sheet does not contain a tab named {sheet_name}.")
     return "\n".join(lines)
 
 

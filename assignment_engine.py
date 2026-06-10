@@ -204,10 +204,11 @@ def read_structured_source_text(source: dict[str, Any], base_dir: Path, interact
     kind = str(source.get("kind") or "").strip()
     path_value = source.get("path") or source.get("file")
     url = str(source.get("url") or "").strip()
+    sheet_name = str(source.get("sheet_name") or source.get("sheet") or "").strip()
     if kind == "google_sheet" and url:
         path = path_from_source_value(path_value, base_dir) if path_value else None
         try:
-            return read_google_sheet_text(url, interactive=interactive_google)
+            return read_google_sheet_text(url, interactive=interactive_google, sheet_name=sheet_name)
         except GoogleSheetsAuthError:
             if not path or not path.exists():
                 raise
@@ -217,14 +218,18 @@ def read_structured_source_text(source: dict[str, Any], base_dir: Path, interact
         try:
             if path:
                 materialize_google_sheet_url_to_path(url, path)
-                return read_workbook_text(path)
+                return read_workbook_text(path, sheet_name=sheet_name)
             output_dir = base_dir / "ASSIGNMENT RULES" / "SHEET EXPORTS"
             exported = materialize_google_sheet_url(url, output_dir, str(source.get("name") or "google-sheet"), unique=False)
-            return read_workbook_text(exported)
+            return read_workbook_text(exported, sheet_name=sheet_name)
         except Exception:
             if path and path.exists():
-                return read_workbook_text(path)
+                return read_workbook_text(path, sheet_name=sheet_name)
             raise
+    if sheet_name and path_value:
+        path = path_from_source_value(path_value, base_dir)
+        if path.suffix.lower() in {".xlsx", ".xlsm"}:
+            return read_workbook_text(path, sheet_name=sheet_name)
     return read_source_text(path_value or url or source.get("doc_id"), base_dir, interactive_google=interactive_google)
 
 
@@ -387,16 +392,20 @@ def google_sheet_csv_url(url: str) -> str:
     return f"https://docs.google.com/spreadsheets/d/{match.group(1)}/export?format=csv&gid={gid}"
 
 
-def read_workbook_text(path: Path) -> str:
+def read_workbook_text(path: Path, sheet_name: str = "") -> str:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         lines: list[str] = []
         for sheet in workbook.worksheets:
+            if sheet_name and sheet.title.lower() != sheet_name.lower():
+                continue
             lines.append(f"# {sheet.title}")
             for row in sheet.iter_rows(values_only=True):
                 cells = [str(cell).strip() for cell in row if cell not in (None, "")]
                 if cells:
                     lines.append(" ".join(cells))
+        if sheet_name and not lines:
+            raise ValueError(f"Workbook does not contain a sheet named {sheet_name}.")
         return "\n".join(lines)
     finally:
         workbook.close()
@@ -533,7 +542,17 @@ def parse_payouts(text: str) -> list[PayoutTier]:
             tiers.append(PayoutTier(parse_money(range_match.group(1)) or 0, parse_money(range_match.group(2)), rate))
             continue
         min_match = re.search(r"(?:over|above|min(?:imum)?)\s+\$?\s*([\d,.]+k?)", line, re.I)
-        tiers.append(PayoutTier(parse_money(min_match.group(1)) or 0 if min_match else 0, None, rate))
+        if min_match:
+            tiers.append(PayoutTier(parse_money(min_match.group(1)) or 0, None, rate))
+            continue
+        column_numbers = payout_row_numbers(line)
+        if len(column_numbers) >= 2:
+            tiers.append(PayoutTier(column_numbers[0], column_numbers[1], rate))
+            continue
+        if len(column_numbers) == 1:
+            tiers.append(PayoutTier(column_numbers[0], None, rate))
+            continue
+        tiers.append(PayoutTier(0, None, rate))
     return sorted(tiers, key=lambda tier: tier.min_price, reverse=True)
 
 
@@ -555,6 +574,16 @@ def parse_payout_json(payload: Any) -> list[PayoutTier]:
             rate=rate,
         ))
     return sorted(tiers, key=lambda tier: tier.min_price, reverse=True)
+
+
+def payout_row_numbers(line: str) -> list[float]:
+    text = re.sub(r"\d+(?:\.\d+)?\s*%", " ", str(line or ""))
+    numbers: list[float] = []
+    for match in re.finditer(r"\$?\s*([\d,.]+k?)", text, re.I):
+        number = parse_money(match.group(1))
+        if number is not None:
+            numbers.append(number)
+    return numbers
 
 
 def source_lines(text: str) -> list[str]:
