@@ -296,7 +296,9 @@ def append_company_sheet_rows(directory: Path, rows: list[Any], source_lookup: d
 def company_weekly_sheet_path(directory: Path, company: str, today: date | None = None) -> Path:
     start = week_start(today or date.today())
     safe_company = safe_filename(company) or "Company"
-    return directory / f"{safe_company} WEEK OF {start:%Y-%m-%d}.xlsx"
+    company_dir = directory / safe_company
+    company_dir.mkdir(parents=True, exist_ok=True)
+    return company_dir / f"{safe_company} WEEK OF {start:%Y-%m-%d}.xlsx"
 
 
 def week_start(day: date) -> date:

@@ -20,5 +20,6 @@ class WorkbookRow:
     cy_value: float | None = None
     best_company: str = ""
     estimated_payout: float | None = None
+    company_pile: bool = False
     status: str = "Ready"
     notes: str = ""

@@ -206,6 +206,7 @@ RECEIVE_COLUMNS = (
     "best_company",
     "estimated_payout",
     "status",
+    "company_pile",
 )
 
 REVIEW_COLUMNS = DISPLAY_COLUMNS
@@ -237,6 +238,7 @@ HEADINGS = {
     "best_company": "Best Company",
     "estimated_payout": "Est. Payout",
     "status": "Status",
+    "company_pile": "Company Pile",
 }
 
 COLUMN_WIDTHS = {
@@ -253,6 +255,7 @@ COLUMN_WIDTHS = {
     "best_company": 130,
     "estimated_payout": 100,
     "status": 160,
+    "company_pile": 105,
 }
 
 
@@ -326,6 +329,7 @@ class CardPipelineApp(tk.Tk):
         self.assignment_recommendation_running = False
         self.assignment_recommendation_after_id: str | None = None
         self.assignment_config_status = tk.StringVar(value=self._assignment_config_status())
+        self._ensure_company_sheet_folders()
         self.received_sheet_paths: dict[str, Path] = {}
         self.selected_received_sheet = tk.StringVar()
         self.working_sheet_paths: dict[str, Path] = {}
@@ -2120,15 +2124,17 @@ class CardPipelineApp(tk.Tk):
         files_updated = int(result.get("files_updated") or 0)
         certs_marked = len(result.get("certs_marked") or set())
         company_rows_added = 0
+        company_rows_missing_company = 0
         if rows_marked:
             company_rows = [
                 row
                 for row in self.review_rows
-                if scan_to_cert(row.cert_number) in result.get("certs_marked", set())
+                if row.company_pile and scan_to_cert(row.cert_number) in result.get("certs_marked", set())
             ]
             self._apply_recommendations_to_rows(company_rows)
             eligible_company_rows = [row for row in company_rows if str(row.best_company or "").strip()]
-            if eligible_company_rows and self._confirm_company_sheet_append(eligible_company_rows):
+            company_rows_missing_company = len(company_rows) - len(eligible_company_rows)
+            if eligible_company_rows:
                 company_result = append_company_sheet_rows(
                     COMPANY_SHEETS_DIR,
                     eligible_company_rows,
@@ -2157,6 +2163,8 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Moved {len(moved_received)} fully received sheet(s) to RECEIVED SHEETS.")
         if company_rows_added:
             self.status_var.set(f"Added {company_rows_added} card(s) to weekly company sheet(s).")
+        elif company_rows_missing_company:
+            self.status_var.set(f"{company_rows_missing_company} checked company pile card(s) had no Best Company.")
         self.refresh_home()
         if errors:
             messagebox.showwarning("Some sheets were skipped", "\n".join(errors[:8]))
@@ -2171,49 +2179,18 @@ class CardPipelineApp(tk.Tk):
             row.best_company = recommendation.company
             row.estimated_payout = recommendation.payout
 
-    def _confirm_company_sheet_append(self, rows: list[WorkbookRow]) -> bool:
-        companies = sorted({str(row.best_company or "").strip() for row in rows if str(row.best_company or "").strip()})
-        popup = tk.Toplevel(self)
-        popup.title("Company Pile")
-        popup.configure(bg="#1f1f1f")
-        popup.transient(self)
-        popup.grab_set()
-        popup.resizable(False, False)
+    def _ensure_company_sheet_folders(self) -> None:
+        try:
+            COMPANY_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+            for company in self.assignment_engine.companies:
+                folder_name = self._safe_company_folder_name(company.name)
+                if folder_name:
+                    (COMPANY_SHEETS_DIR / folder_name).mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
 
-        confirmed = tk.BooleanVar(value=False)
-        result = {"ok": False}
-
-        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
-        frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="Company Sheet Update", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, sticky="w", pady=(0, 8))
-        ttk.Label(
-            frame,
-            text=f"{len(rows)} received card(s) have company assignments: {', '.join(companies[:4])}{'...' if len(companies) > 4 else ''}",
-            style="Muted.TLabel",
-            wraplength=520,
-        ).grid(row=1, column=0, sticky="w", pady=(0, 12))
-        ttk.Checkbutton(
-            frame,
-            text="I physically put these cards in their company piles. Add them to weekly company sheets.",
-            variable=confirmed,
-            style="Panel.TCheckbutton",
-        ).grid(row=2, column=0, sticky="w", pady=(0, 14))
-
-        buttons = ttk.Frame(frame, style="Panel.TFrame")
-        buttons.grid(row=3, column=0, sticky="e")
-
-        def finish(ok: bool) -> None:
-            result["ok"] = ok and bool(confirmed.get())
-            popup.destroy()
-
-        ttk.Button(buttons, text="Skip", command=lambda: finish(False), style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(buttons, text="Continue", command=lambda: finish(True), style="Primary.TButton").pack(side=tk.LEFT)
-        popup.update_idletasks()
-        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
-        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
-        popup.geometry(f"+{x}+{y}")
-        self.wait_window(popup)
-        return bool(result["ok"])
+    def _safe_company_folder_name(self, name: str) -> str:
+        return re.sub(r"[<>:\"/\\|?*]+", " ", str(name or "")).strip()[:140].strip()
 
     def _arm_review_scanner(self) -> None:
         if self.review_mode.get() != "Automatic Receive" or self.review_scan_entry is None:
@@ -2580,6 +2557,7 @@ class CardPipelineApp(tk.Tk):
 
     def reload_assignment_rules(self) -> None:
         self.assignment_engine = AssignmentEngine.load()
+        self._ensure_company_sheet_folders()
         self.assignment_config_status.set(self._assignment_config_status())
         self._refresh_table(schedule_recommendations=True)
         self.review_status.set("Assignment rules reloaded.")
@@ -2684,6 +2662,8 @@ class CardPipelineApp(tk.Tk):
             return format_money(row.estimated_payout)
         if column == "status":
             return row.status
+        if column == "company_pile":
+            return "[x]" if row.company_pile else "[ ]"
         return ""
 
     def _delete_selected_table_rows(self, event) -> str | None:
@@ -2768,10 +2748,29 @@ class CardPipelineApp(tk.Tk):
     def _handle_table_click(self, event):
         tree = event.widget
         row_id = tree.identify_row(event.y)
+        column_id = tree.identify_column(event.x)
         if self._is_receive_tree(tree) and row_id == ADD_REVIEW_ROW_IID:
             self.add_manual_review_row()
             return "break"
+        if self._is_receive_tree(tree) and row_id and column_id:
+            column_index = int(column_id.replace("#", "")) - 1
+            columns = self._tree_columns(tree)
+            if 0 <= column_index < len(columns) and columns[column_index] == "company_pile":
+                self._toggle_company_pile(row_id)
+                return "break"
         return None
+
+    def _toggle_company_pile(self, row_id: str) -> None:
+        if not str(row_id).isdigit():
+            return
+        excel_row = int(row_id)
+        for row in self.review_rows:
+            if row.excel_row != excel_row:
+                continue
+            row.company_pile = not row.company_pile
+            self._refresh_table()
+            self.review_status.set("Company pile checked." if row.company_pile else "Company pile unchecked.")
+            return
 
     def _begin_cell_edit(self, event) -> None:
         tree = event.widget
