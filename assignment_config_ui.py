@@ -35,8 +35,8 @@ class AssignmentRulesDialog(tk.Toplevel):
     def __init__(self, parent: tk.Tk, pipeline_root: Path, on_saved: Callable[[], None]) -> None:
         super().__init__(parent)
         self.title("Assignment Rules")
-        self.geometry("1320x820")
-        self.minsize(1160, 720)
+        self.geometry("1380x920")
+        self.minsize(1240, 860)
         self.transient(parent)
         self.configure(bg="#121212")
         self.on_saved = on_saved
@@ -160,31 +160,13 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.manual_rule_panel = ttk.Frame(self.body, style="AssignPanel.TFrame", padding=12)
         self.manual_rule_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         self.manual_rule_panel.columnconfigure(0, weight=1)
-        self.manual_rule_panel.rowconfigure(2, weight=1)
         rule_header = ttk.Frame(self.manual_rule_panel, style="AssignPanel.TFrame")
         rule_header.grid(row=0, column=0, sticky="ew")
         ttk.Label(rule_header, text="Manual Rule Builder", style="AssignTitle.TLabel").pack(side=tk.LEFT)
         ttk.Button(rule_header, text="Add Rule", command=self._add_rule_row, style="AssignSoft.TButton").pack(side=tk.RIGHT)
         ttk.Label(self.manual_rule_panel, text="Used when Rule Source is Manual rules.", style="AssignMuted.TLabel").grid(row=1, column=0, sticky=tk.W, pady=(3, 8))
-        self.rules_canvas = tk.Canvas(self.manual_rule_panel, height=420, highlightthickness=0, bg="#1f1f1f")
-        self.rules_canvas.grid(row=2, column=0, sticky="nsew")
-        rules_scroll = ttk.Scrollbar(self.manual_rule_panel, orient=tk.VERTICAL, command=self.rules_canvas.yview)
-        rules_scroll.grid(row=2, column=1, sticky="ns")
-        self.rules_canvas.configure(yscrollcommand=rules_scroll.set)
-        self.rules_frame = ttk.Frame(self.rules_canvas, style="AssignPanel.TFrame")
-        self.rules_window = self.rules_canvas.create_window((0, 0), window=self.rules_frame, anchor="nw")
-        self.rules_frame.bind("<Configure>", lambda _event: self.rules_canvas.configure(scrollregion=self.rules_canvas.bbox("all")))
-        self.rules_canvas.bind("<Configure>", lambda event: self.rules_canvas.itemconfigure(self.rules_window, width=event.width))
-
-        self.linked_rule_panel = ttk.Frame(self.body, style="AssignPanel.TFrame", padding=18)
-        self.linked_rule_panel.columnconfigure(0, weight=1)
-        ttk.Label(self.linked_rule_panel, text="Linked Rule Source", style="AssignTitle.TLabel").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(
-            self.linked_rule_panel,
-            text="Choose or preview the rule file above. Manual rule controls are hidden while a Keep or Sheets source is selected.",
-            style="AssignMuted.TLabel",
-            wraplength=760,
-        ).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.rules_frame = ttk.Frame(self.manual_rule_panel, style="AssignPanel.TFrame")
+        self.rules_frame.grid(row=2, column=0, sticky="new")
 
         self.right_panel = ttk.Frame(self.body, style="Assign.TFrame")
         self.right_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
@@ -245,18 +227,20 @@ class AssignmentRulesDialog(tk.Toplevel):
 
     def _sync_source_visibility(self) -> None:
         rule_linked = self.rule_source_mode.get() != "manual"
+        manual_rule_payouts = self.rule_source_mode.get() == "manual" and self.payout_source_mode.get() == "manual"
         payout_linked = self.payout_source_mode.get() == "file"
         self.rule_path_entry.configure(state=tk.NORMAL if rule_linked else tk.DISABLED)
         self.payout_path_entry.configure(state=tk.NORMAL if payout_linked else tk.DISABLED)
         if rule_linked:
             self.manual_rule_panel.grid_remove()
-            self.linked_rule_panel.grid_remove()
         else:
-            self.linked_rule_panel.grid_remove()
-            self.manual_rule_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        if payout_linked:
+            self.manual_rule_panel.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        if payout_linked or manual_rule_payouts:
+            self.right_panel.grid_remove()
             self.payout_panel.grid_remove()
         else:
+            self.right_panel.grid(row=0, column=0 if rule_linked else 1, columnspan=2 if rule_linked else 1, sticky="nsew", padx=(0 if rule_linked else 8, 0))
+            self.manual_rule_panel.grid_remove()
             self.payout_panel.grid(row=0, column=0, sticky="nsew")
 
     def _reset_preview_status(self) -> None:
@@ -303,6 +287,8 @@ class AssignmentRulesDialog(tk.Toplevel):
         payout_payload = self._load_json_source(company.get("payout") or company.get("payout_source") or company.get("payoutSource"))
         self._set_rule_rows(rules_payload.get("rules") if isinstance(rules_payload, dict) else [])
         self._set_payout_rows(payout_payload.get("tiers") if isinstance(payout_payload, dict) else [])
+        if self.rule_source_mode.get() == "manual" and self.payout_source_mode.get() == "manual":
+            self._apply_payout_tiers_to_rule_rows(payout_payload.get("tiers") if isinstance(payout_payload, dict) else [])
         self._sync_source_visibility()
         self._reset_preview_status()
         self.status.set(f"Editing {company.get('name') or 'company'}.")
@@ -414,11 +400,16 @@ class AssignmentRulesDialog(tk.Toplevel):
         frame.pack(fill=tk.X, pady=(0, 10))
         frame.columnconfigure(0, weight=1)
 
+        card_header = ttk.Frame(frame, style="AssignPanel.TFrame")
+        card_header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(card_header, text="Rule Details", style="Assign.TLabel").pack(side=tk.LEFT)
+        ttk.Button(card_header, text="Remove Rule", command=lambda: self._remove_rule_row(frame), style="AssignSoft.TButton").pack(side=tk.RIGHT)
+
         sports = set(data.get("sports") or split_values(data.get("sport")) if data else [])
         sport_vars = {sport: tk.BooleanVar(value=sport in sports) for sport in SPORT_OPTIONS}
-        ttk.Label(frame, text="Sport", style="Assign.TLabel").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(frame, text="Sport", style="Assign.TLabel").grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
         sport_frame = ttk.Frame(frame, style="AssignPanel.TFrame")
-        sport_frame.grid(row=1, column=0, sticky="ew", pady=(6, 12))
+        sport_frame.grid(row=2, column=0, sticky="ew", pady=(6, 12))
         sport_frame.columnconfigure(0, weight=1)
         sport_frame.columnconfigure(1, weight=1)
         for option_index, sport in enumerate(SPORT_OPTIONS):
@@ -432,22 +423,26 @@ class AssignmentRulesDialog(tk.Toplevel):
             ).grid(row=row, column=col, sticky=tk.W, padx=(0, 18), pady=2)
 
         price_frame = ttk.Frame(frame, style="AssignPanel.TFrame")
-        price_frame.grid(row=2, column=0, sticky="ew")
+        price_frame.grid(row=3, column=0, sticky="ew")
         price_frame.columnconfigure(1, weight=1)
         price_frame.columnconfigure(3, weight=1)
+        price_frame.columnconfigure(5, weight=1)
         price_ranges = data.get("priceRanges") if data else None
         first_range = price_ranges[0] if isinstance(price_ranges, list) and price_ranges else {}
         min_var = tk.StringVar(value=str(first_range.get("min") or ""))
         max_var = tk.StringVar(value=str(first_range.get("max") or ""))
-        ttk.Label(price_frame, text="Price Ranges", style="Assign.TLabel").grid(row=0, column=0, columnspan=5, sticky=tk.W, pady=(0, 6))
+        payout_value = (data or {}).get("payout") or (data or {}).get("rate") or first_range.get("payout") or first_range.get("rate") or ""
+        payout_var = tk.StringVar(value=str(payout_value))
+        ttk.Label(price_frame, text="Price Range & Payout", style="Assign.TLabel").grid(row=0, column=0, columnspan=6, sticky=tk.W, pady=(0, 6))
         ttk.Label(price_frame, text="Min", style="Assign.TLabel").grid(row=1, column=0, sticky=tk.W, padx=(0, 6))
         ttk.Entry(price_frame, textvariable=min_var, width=12, style="Assign.TEntry").grid(row=1, column=1, sticky=tk.W)
         ttk.Label(price_frame, text="Max", style="Assign.TLabel").grid(row=1, column=2, sticky=tk.W, padx=(14, 6))
         ttk.Entry(price_frame, textvariable=max_var, width=12, style="Assign.TEntry").grid(row=1, column=3, sticky=tk.W)
-        ttk.Button(price_frame, text="Remove Rule", command=lambda: self._remove_rule_row(frame), style="AssignSoft.TButton").grid(row=1, column=4, sticky=tk.E)
+        ttk.Label(price_frame, text="Payout", style="Assign.TLabel").grid(row=1, column=4, sticky=tk.W, padx=(14, 6))
+        ttk.Entry(price_frame, textvariable=payout_var, width=12, style="Assign.TEntry").grid(row=1, column=5, sticky=tk.W)
 
         grades_frame = ttk.Frame(frame, style="AssignPanel.TFrame")
-        grades_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        grades_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
         grades_frame.columnconfigure(0, minsize=62)
         grades_frame.columnconfigure(1, minsize=92)
         grades_frame.columnconfigure(2, minsize=86)
@@ -470,13 +465,19 @@ class AssignmentRulesDialog(tk.Toplevel):
             ttk.Entry(grades_frame, textvariable=max_grade, width=8, style="Assign.TEntry").grid(row=grade_index, column=3, sticky=tk.W, pady=3)
             grade_vars[company] = {"allowed": allowed, "min": min_grade, "max": max_grade}
 
-        self.rule_rows.append({"frame": frame, "sports": sport_vars, "min": min_var, "max": max_var, "grades": grade_vars})
+        self.rule_rows.append({"frame": frame, "sports": sport_vars, "min": min_var, "max": max_var, "payout": payout_var, "grades": grade_vars})
+        self._renumber_rule_rows()
 
     def _remove_rule_row(self, frame: ttk.Frame) -> None:
         self.rule_rows = [row for row in self.rule_rows if row["frame"] is not frame]
         frame.destroy()
         if not self.rule_rows:
             self._add_rule_row()
+        self._renumber_rule_rows()
+
+    def _renumber_rule_rows(self) -> None:
+        for index, row in enumerate(self.rule_rows, start=1):
+            row["frame"].configure(text=f"Rule {index}")
 
     def _set_payout_rows(self, tiers: Any) -> None:
         for child in self.payout_frame.winfo_children():
@@ -487,6 +488,30 @@ class AssignmentRulesDialog(tk.Toplevel):
             return
         for tier in tiers:
             self._add_payout_row(tier if isinstance(tier, dict) else None)
+
+    def _apply_payout_tiers_to_rule_rows(self, tiers: Any) -> None:
+        if not isinstance(tiers, list):
+            return
+        unused_tiers = [tier for tier in tiers if isinstance(tier, dict)]
+        for row in self.rule_rows:
+            if row["payout"].get().strip():
+                continue
+            row_min = row["min"].get().strip()
+            row_max = row["max"].get().strip()
+            match = next(
+                (
+                    tier
+                    for tier in unused_tiers
+                    if str(tier.get("min") or "").strip() == row_min and str(tier.get("max") or "").strip() == row_max
+                ),
+                None,
+            )
+            if match is None and unused_tiers:
+                match = unused_tiers[0]
+            if match is None:
+                continue
+            row["payout"].set(str(match.get("rate") or ""))
+            unused_tiers.remove(match)
 
     def _add_payout_row(self, data: dict[str, Any] | None = None) -> None:
         row_index = len(self.payout_rows)
@@ -633,6 +658,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         return {
             "sports": [sport for sport, var in row["sports"].items() if var.get()],
             "priceRanges": [{"min": row["min"].get().strip(), "max": row["max"].get().strip()}],
+            "payout": row["payout"].get().strip(),
             "grades": {
                 company: {
                     "allowed": values["allowed"].get(),
@@ -644,6 +670,9 @@ class AssignmentRulesDialog(tk.Toplevel):
         }
 
     def _payout_payload(self) -> dict[str, Any]:
+        manual_rule_tiers = self._manual_rule_payout_tiers()
+        if manual_rule_tiers:
+            return {"tiers": manual_rule_tiers}
         return {
             "tiers": [
                 {"min": row["min"].get().strip(), "max": row["max"].get().strip(), "rate": row["rate"].get().strip()}
@@ -651,6 +680,15 @@ class AssignmentRulesDialog(tk.Toplevel):
                 if row["rate"].get().strip()
             ]
         }
+
+    def _manual_rule_payout_tiers(self) -> list[dict[str, str]]:
+        if self.rule_source_mode.get() != "manual" or self.payout_source_mode.get() != "manual":
+            return []
+        return [
+            {"min": row["min"].get().strip(), "max": row["max"].get().strip(), "rate": row["payout"].get().strip()}
+            for row in self.rule_rows
+            if row["payout"].get().strip()
+        ]
 
 
 def open_assignment_rules_dialog(parent: tk.Tk, pipeline_root: Path, on_saved: Callable[[], None]) -> None:
