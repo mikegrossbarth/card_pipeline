@@ -331,7 +331,7 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_markers: dict[str, dict[str, object]] = self._load_sheet_markers()
         self.home_selected_sheet_key = ""
         self.payout_person_var = tk.StringVar()
-        self.payout_status_var = tk.StringVar(value="No unpaid received sheets loaded.")
+        self.payout_status_var = tk.StringVar(value="No unpaid sheets loaded.")
         self.payout_detail_keys: dict[str, str] = {}
 
         self._build_ui()
@@ -813,12 +813,12 @@ class CardPipelineApp(tk.Tk):
 
         detail_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 12))
         detail_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        ttk.Label(detail_panel, text="Unpaid Received Sheets", style="Panel.TLabel").pack(anchor=tk.W)
+        ttk.Label(detail_panel, text="Unpaid Sheets", style="Panel.TLabel").pack(anchor=tk.W)
         self.payout_detail_tree = self._build_home_tree(
             detail_panel,
-            columns=("sheet", "person", "cards", "received", "volume", "status"),
-            headings={"sheet": "Sheet", "person": "Person", "cards": "Cards", "received": "Received", "volume": "Balance", "status": "Status"},
-            widths={"sheet": 300, "person": 160, "cards": 80, "received": 95, "volume": 130, "status": 140},
+            columns=("sheet", "stage", "person", "cards", "received", "volume", "status"),
+            headings={"sheet": "Sheet", "stage": "Stage", "person": "Person", "cards": "Cards", "received": "Received", "volume": "Balance", "status": "Status"},
+            widths={"sheet": 280, "stage": 90, "person": 150, "cards": 80, "received": 95, "volume": 130, "status": 140},
             height=18,
         )
         self.payout_detail_tree.configure(selectmode="extended")
@@ -1113,7 +1113,7 @@ class CardPipelineApp(tk.Tk):
         balances: dict[str, dict[str, float | int]] = {}
         detail_count = 0
         filter_person = self.payout_person_var.get().strip().lower()
-        for item in self._unpaid_received_sheet_items():
+        for item in self._unpaid_payout_sheet_items():
             person = item["person"] or "Unassigned"
             if filter_person and filter_person not in person.lower():
                 continue
@@ -1129,11 +1129,12 @@ class CardPipelineApp(tk.Tk):
                 iid=iid,
                 values=(
                     item["name"],
+                    item["stage"],
                     item["person"],
                     item["row_count"],
                     f"{item['received_count']}/{item['row_count']}",
                     format_money(float(item["purchase_total"])),
-                    "Unpaid",
+                    item["status"],
                 ),
             )
             detail_count += 1
@@ -1153,29 +1154,43 @@ class CardPipelineApp(tk.Tk):
         total_balance = sum(float(values["balance"]) for values in balances.values())
         filter_label = self.payout_person_var.get().strip()
         suffix = f" | Filter: {filter_label}" if filter_label else ""
-        self.payout_status_var.set(f"{detail_count} unpaid received sheet(s) | Active balance: {format_money(total_balance)}{suffix}")
+        self.payout_status_var.set(f"{detail_count} unpaid sheet(s) | Active balance: {format_money(total_balance)}{suffix}")
 
-    def _unpaid_received_sheet_items(self) -> list[dict[str, object]]:
+    def _unpaid_payout_sheet_items(self) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
-        for name in self.home_sheet_paths.get("Received", {}):
-            key = self._home_sheet_key("Received", name)
-            marker = self.home_sheet_markers.get(key, {})
-            summary = self.home_sheet_summaries.get(key, {})
-            all_received = bool(marker.get("all_received") or summary.get("all_received") or summary.get("row_count"))
-            paid = bool(marker.get("paid"))
-            if paid or not all_received:
-                continue
-            items.append(
-                {
-                    "key": key,
-                    "name": name,
-                    "person": str(marker.get("assigned_person") or "").strip(),
-                    "row_count": int(summary.get("row_count") or 0),
-                    "received_count": int(summary.get("received_count") or summary.get("row_count") or 0),
-                    "purchase_total": float(summary.get("purchase_total") or 0.0),
-                }
-            )
+        for stage in ("Incoming", "Received"):
+            for name in self.home_sheet_paths.get(stage, {}):
+                key = self._home_sheet_key(stage, name)
+                marker = self.home_sheet_markers.get(key, {})
+                summary = self.home_sheet_summaries.get(key, {})
+                if bool(marker.get("paid")):
+                    continue
+                row_count = int(summary.get("row_count") or 0)
+                received_count = int(summary.get("received_count") or 0)
+                if stage == "Received":
+                    received_count = int(summary.get("received_count") or row_count)
+                status = self._payout_sheet_status(stage, marker, summary)
+                items.append(
+                    {
+                        "key": key,
+                        "stage": stage,
+                        "name": name,
+                        "person": str(marker.get("assigned_person") or "").strip(),
+                        "row_count": row_count,
+                        "received_count": received_count,
+                        "purchase_total": float(summary.get("purchase_total") or 0.0),
+                        "status": status,
+                    }
+                )
         return items
+
+    def _payout_sheet_status(self, stage: str, marker: dict[str, object], summary: dict[str, object]) -> str:
+        received_count = int(summary.get("received_count") or 0)
+        if stage == "Received" or marker.get("all_received") or summary.get("all_received"):
+            return "Unpaid"
+        if received_count:
+            return "Partially Received"
+        return "Unreceived"
 
     def _known_assigned_people(self) -> list[str]:
         people = {
@@ -1228,7 +1243,7 @@ class CardPipelineApp(tk.Tk):
         if not keys:
             return
         key = keys[0]
-        _kind, name = self._split_home_sheet_key(key)
+        kind, name = self._split_home_sheet_key(key)
         marker = self.home_sheet_markers.get(key, {})
         summary = self.home_sheet_summaries.get(key, {})
         paid_var = tk.BooleanVar(value=bool(marker.get("paid")))
@@ -1244,7 +1259,7 @@ class CardPipelineApp(tk.Tk):
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text=name, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
-        ttk.Label(frame, text=f"Balance: {format_money(float(summary.get('purchase_total') or 0.0))}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        ttk.Label(frame, text=f"{kind} | Balance: {format_money(float(summary.get('purchase_total') or 0.0))}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
         ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
         person_combo.grid(row=2, column=1, sticky="ew", pady=(0, 10))
@@ -1267,9 +1282,11 @@ class CardPipelineApp(tk.Tk):
 
     def save_payout_sheet_marker(self, key: str, person: str, paid: bool, popup: tk.Toplevel | None = None) -> None:
         marker = dict(self.home_sheet_markers.get(key, {}))
+        kind, _name = self._split_home_sheet_key(key)
+        summary = self.home_sheet_summaries.get(key, {})
         marker["assigned_person"] = person.strip()
         marker["paid"] = bool(paid)
-        marker["all_received"] = True
+        marker["all_received"] = bool(marker.get("all_received") or summary.get("all_received") or kind == "Received")
         marker["tracking_number"] = str(marker.get("tracking_number") or "")
         self.home_sheet_markers[key] = marker
         self._save_sheet_markers()
