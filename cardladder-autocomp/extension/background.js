@@ -262,7 +262,24 @@ async function cancelRun() {
 async function lookupRowWithRetries(tabId, row) {
   const pageResult = await submitRowWithGrader(tabId, row);
 
-  if (["error", "invalid_cert", "no_results"].includes(pageResult?.status)) return pageResult;
+  if (["error", "invalid_cert"].includes(pageResult?.status)) return pageResult;
+  if (pageResult?.status === "no_results") {
+    if (pageResult?.ocr?.profileTitle) return pageResult;
+    const noResultsDomResult = await captureValueFromDom(tabId, row, pageResult);
+    if (noResultsDomResult?.ocr?.profileTitle) {
+      return {
+        ...pageResult,
+        ocr: {
+          ...(pageResult.ocr || {}),
+          ...(noResultsDomResult.ocr || {}),
+          comps: [],
+        },
+        pageUrl: pageResult.pageUrl || noResultsDomResult.pageUrl || "",
+        capturedAt: noResultsDomResult.capturedAt || pageResult.capturedAt || new Date().toISOString(),
+      };
+    }
+    return pageResult;
+  }
 
   const domResult = await captureValueFromDom(tabId, row, pageResult);
   if (["invalid_cert", "no_results"].includes(domResult?.status)) return domResult;
