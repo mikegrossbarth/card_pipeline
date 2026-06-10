@@ -531,12 +531,14 @@ class CardPipelineApp(tk.Tk):
         self.receive_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.review_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.payouts_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
+        self.profit_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.tabs.add(self.home_tab, text="Home")
         self.tabs.add(self.intake_tab, text="Create")
         self.tabs.add(self.comp_tab, text="Comp")
         self.tabs.add(self.receive_tab, text="Receive")
         self.tabs.add(self.review_tab, text="Assignment")
-        self.tabs.add(self.payouts_tab, text="PAYOUTS/PROFITS")
+        self.tabs.add(self.payouts_tab, text="Payouts/Tabs")
+        self.tabs.add(self.profit_tab, text="Profit")
         self.row_trees: list[ttk.Treeview] = []
 
         self._build_home_tab(palette)
@@ -673,6 +675,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(review_bottom, text="Clear Assignment Rows", command=self.clear_review_rows, style="Soft.TButton").pack(side=tk.RIGHT)
         self._show_review_mode()
         self._build_payouts_tab()
+        self._build_profit_tab()
 
         bottom = ttk.Frame(self, style="App.TFrame", padding=(16, 0, 16, 14))
         bottom.pack(fill=tk.X)
@@ -788,15 +791,13 @@ class CardPipelineApp(tk.Tk):
     def _build_payouts_tab(self) -> None:
         controls = ttk.Frame(self.payouts_tab, style="Panel.TFrame", padding=(16, 12))
         controls.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(controls, text="Assigned Person", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(controls, text="Filter by Assigned Person", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
         self.payout_person_combo = ttk.Combobox(controls, textvariable=self.payout_person_var, width=30)
         self.payout_person_combo.grid(row=0, column=1, sticky="w", padx=(8, 10))
-        self._bind_person_autocomplete(self.payout_person_combo)
-        ttk.Button(controls, text="Save Person to Selected", command=self.save_payout_person_for_selected, style="Primary.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
-        ttk.Button(controls, text="Mark Selected Paid", command=self.mark_selected_payouts_paid, style="Soft.TButton").grid(row=0, column=3, sticky="w", padx=(0, 8))
-        ttk.Button(controls, text="Refresh", command=self.refresh_payouts_tab, style="Soft.TButton").grid(row=0, column=4, sticky="w")
-        controls.columnconfigure(5, weight=1)
-        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        self._bind_person_autocomplete(self.payout_person_combo, refresh_callback=self.refresh_payouts_tab)
+        self.payout_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_payouts_tab(), add="+")
+        controls.columnconfigure(2, weight=1)
+        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
         body = ttk.Frame(self.payouts_tab, style="App.TFrame")
         body.pack(fill=tk.BOTH, expand=True)
@@ -822,7 +823,13 @@ class CardPipelineApp(tk.Tk):
             height=18,
         )
         self.payout_detail_tree.configure(selectmode="extended")
-        self.payout_detail_tree.bind("<<TreeviewSelect>>", lambda _event: self._load_selected_payout_person())
+        self.payout_detail_tree.bind("<ButtonRelease-1>", self.open_payout_marker_editor)
+
+    def _build_profit_tab(self) -> None:
+        panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(16, 12))
+        panel.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(panel, text="Profit", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).pack(anchor=tk.W)
+        ttk.Label(panel, text="Profit calculations will live here.", style="Muted.TLabel").pack(anchor=tk.W, pady=(8, 0))
 
     def choose_working_folder(self) -> None:
         selected = filedialog.askdirectory(
@@ -1105,8 +1112,11 @@ class CardPipelineApp(tk.Tk):
 
         balances: dict[str, dict[str, float | int]] = {}
         detail_count = 0
+        filter_person = self.payout_person_var.get().strip().lower()
         for item in self._unpaid_received_sheet_items():
             person = item["person"] or "Unassigned"
+            if filter_person and filter_person not in person.lower():
+                continue
             balance = balances.setdefault(person, {"sheets": 0, "cards": 0, "balance": 0.0})
             balance["sheets"] = int(balance["sheets"]) + 1
             balance["cards"] = int(balance["cards"]) + int(item["row_count"])
@@ -1141,7 +1151,9 @@ class CardPipelineApp(tk.Tk):
             )
 
         total_balance = sum(float(values["balance"]) for values in balances.values())
-        self.payout_status_var.set(f"{detail_count} unpaid received sheet(s) | Active balance: {format_money(total_balance)}")
+        filter_label = self.payout_person_var.get().strip()
+        suffix = f" | Filter: {filter_label}" if filter_label else ""
+        self.payout_status_var.set(f"{detail_count} unpaid received sheet(s) | Active balance: {format_money(total_balance)}{suffix}")
 
     def _unpaid_received_sheet_items(self) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
@@ -1181,11 +1193,11 @@ class CardPipelineApp(tk.Tk):
         if hasattr(self, "payout_person_combo"):
             self.payout_person_combo["values"] = people
 
-    def _bind_person_autocomplete(self, combo: ttk.Combobox) -> None:
+    def _bind_person_autocomplete(self, combo: ttk.Combobox, refresh_callback=None) -> None:
         combo["values"] = self._known_assigned_people()
-        combo.bind("<KeyRelease>", lambda event, widget=combo: self._filter_person_combo(widget, event), add="+")
+        combo.bind("<KeyRelease>", lambda event, widget=combo: self._filter_person_combo(widget, event, refresh_callback=refresh_callback), add="+")
 
-    def _filter_person_combo(self, combo: ttk.Combobox, event) -> None:
+    def _filter_person_combo(self, combo: ttk.Combobox, event, refresh_callback=None) -> None:
         if event.keysym in {"Up", "Down", "Left", "Right", "Return", "KP_Enter", "Escape", "Tab"}:
             return
         typed = combo.get()
@@ -1198,54 +1210,73 @@ class CardPipelineApp(tk.Tk):
                 combo.event_generate("<Down>")
             except tk.TclError:
                 pass
+        if refresh_callback:
+            refresh_callback()
 
     def _selected_payout_keys(self) -> list[str]:
         if not hasattr(self, "payout_detail_tree"):
             return []
         return [self.payout_detail_keys.get(iid, "") for iid in self.payout_detail_tree.selection() if self.payout_detail_keys.get(iid)]
 
-    def _load_selected_payout_person(self) -> None:
+    def open_payout_marker_editor(self, event=None) -> None:
+        if event is not None:
+            row_id = self.payout_detail_tree.identify_row(event.y)
+            if not row_id:
+                return
+            self.payout_detail_tree.selection_set(row_id)
         keys = self._selected_payout_keys()
         if not keys:
             return
-        marker = self.home_sheet_markers.get(keys[0], {})
-        self.payout_person_var.set(str(marker.get("assigned_person") or "").strip())
+        key = keys[0]
+        _kind, name = self._split_home_sheet_key(key)
+        marker = self.home_sheet_markers.get(key, {})
+        summary = self.home_sheet_summaries.get(key, {})
+        paid_var = tk.BooleanVar(value=bool(marker.get("paid")))
+        person_var = tk.StringVar(value=str(marker.get("assigned_person") or "").strip())
 
-    def save_payout_person_for_selected(self) -> None:
-        keys = self._selected_payout_keys()
-        if not keys:
-            messagebox.showinfo("Choose sheet", "Choose one or more unpaid received sheets first.")
-            return
-        person = self.payout_person_var.get().strip()
-        if not person:
-            messagebox.showinfo("Person required", "Type or choose an assigned person first.")
-            return
-        for key in keys:
-            marker = dict(self.home_sheet_markers.get(key, {}))
-            marker["assigned_person"] = person
-            marker["paid"] = bool(marker.get("paid"))
-            marker["tracking_number"] = str(marker.get("tracking_number") or "")
-            marker["all_received"] = True
-            self.home_sheet_markers[key] = marker
+        popup = tk.Toplevel(self)
+        popup.title("Payout Sheet")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=name, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text=f"Balance: {format_money(float(summary.get('purchase_total') or 0.0))}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
+        person_combo.grid(row=2, column=1, sticky="ew", pady=(0, 10))
+        self._bind_person_autocomplete(person_combo)
+        ttk.Checkbutton(frame, text="Paid", variable=paid_var, style="Panel.TCheckbutton").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            buttons,
+            text="Save",
+            command=lambda: self.save_payout_sheet_marker(key, person_var.get().strip(), bool(paid_var.get()), popup),
+            style="Primary.TButton",
+        ).pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+
+    def save_payout_sheet_marker(self, key: str, person: str, paid: bool, popup: tk.Toplevel | None = None) -> None:
+        marker = dict(self.home_sheet_markers.get(key, {}))
+        marker["assigned_person"] = person.strip()
+        marker["paid"] = bool(paid)
+        marker["all_received"] = True
+        marker["tracking_number"] = str(marker.get("tracking_number") or "")
+        self.home_sheet_markers[key] = marker
         self._save_sheet_markers()
         self.refresh_home()
-        self.status_var.set(f"Assigned {len(keys)} sheet(s) to {person}.")
-
-    def mark_selected_payouts_paid(self) -> None:
-        keys = self._selected_payout_keys()
-        if not keys:
-            messagebox.showinfo("Choose sheet", "Choose one or more unpaid received sheets first.")
-            return
-        for key in keys:
-            marker = dict(self.home_sheet_markers.get(key, {}))
-            marker["paid"] = True
-            marker["all_received"] = True
-            marker["assigned_person"] = str(marker.get("assigned_person") or "").strip()
-            marker["tracking_number"] = str(marker.get("tracking_number") or "")
-            self.home_sheet_markers[key] = marker
-        self._save_sheet_markers()
-        self.refresh_home()
-        self.status_var.set(f"Marked {len(keys)} sheet(s) paid.")
+        if popup is not None:
+            popup.destroy()
+        self.status_var.set(f"Updated payout marker for {self._split_home_sheet_key(key)[1]}.")
 
     def _load_home_selected_marker(self) -> None:
         if not hasattr(self, "home_sheet_list"):
