@@ -182,16 +182,6 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.right_panel.rowconfigure(1, weight=1)
         self.payout_panel = self._build_payout_panel(self.right_panel)
         self.payout_panel.grid(row=0, column=0, sticky="ew")
-        self.linked_payout_panel = ttk.Frame(self.right_panel, style="AssignPanel.TFrame", padding=12)
-        ttk.Label(self.linked_payout_panel, text="Linked Payout Source", style="AssignTitle.TLabel").pack(anchor=tk.W)
-        ttk.Label(
-            self.linked_payout_panel,
-            text="Manual payout tiers are hidden while a local payout file is selected.",
-            style="AssignMuted.TLabel",
-            wraplength=320,
-        ).pack(anchor=tk.W, pady=(4, 0))
-        self.blocks_panel = self._build_blocks_panel(self.right_panel)
-        self.blocks_panel.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
 
         footer = ttk.Frame(shell, style="Assign.TFrame")
         footer.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
@@ -238,16 +228,6 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_frame.pack(fill=tk.X)
         return frame
 
-    def _build_blocks_panel(self, parent: ttk.Frame) -> ttk.Frame:
-        frame = ttk.Frame(parent, style="AssignPanel.TFrame", padding=12)
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(2, weight=1)
-        ttk.Label(frame, text="Block / Never-Buy Rules", style="AssignTitle.TLabel").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(frame, text="One per line. Applies with manual rules.", style="AssignMuted.TLabel").grid(row=1, column=0, sticky=tk.W, pady=(3, 8))
-        self.blocks_text = tk.Text(frame, height=8, wrap=tk.WORD, bg="#2a2a2a", fg="#ffffff", insertbackground="#ffffff", relief=tk.FLAT, borderwidth=0)
-        self.blocks_text.grid(row=2, column=0, sticky="nsew")
-        return frame
-
     def _sync_source_visibility(self) -> None:
         rule_linked = self.rule_source_mode.get() != "manual"
         payout_linked = self.payout_source_mode.get() == "file"
@@ -255,17 +235,13 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_path_entry.configure(state=tk.NORMAL if payout_linked else tk.DISABLED)
         if rule_linked:
             self.manual_rule_panel.grid_remove()
-            self.blocks_panel.grid_remove()
             self.linked_rule_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         else:
             self.linked_rule_panel.grid_remove()
             self.manual_rule_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-            self.blocks_panel.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         if payout_linked:
             self.payout_panel.grid_remove()
-            self.linked_payout_panel.grid(row=0, column=0, sticky="ew")
         else:
-            self.linked_payout_panel.grid_remove()
             self.payout_panel.grid(row=0, column=0, sticky="ew")
 
     def _load_config(self) -> list[dict[str, Any]]:
@@ -302,7 +278,6 @@ class AssignmentRulesDialog(tk.Toplevel):
         rules_payload = self._load_json_source(company.get("rules") or company.get("rules_source") or company.get("rulesSource"))
         payout_payload = self._load_json_source(company.get("payout") or company.get("payout_source") or company.get("payoutSource"))
         self._set_rule_rows(rules_payload.get("rules") if isinstance(rules_payload, dict) else [])
-        self._set_blocks(rules_payload.get("blocks") if isinstance(rules_payload, dict) else [])
         self._set_payout_rows(payout_payload.get("tiers") if isinstance(payout_payload, dict) else [])
         self._sync_source_visibility()
         self.status.set(f"Editing {company.get('name') or 'company'}.")
@@ -324,7 +299,6 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_source_mode.set("manual")
         self.payout_source_path.set("")
         self._set_rule_rows([])
-        self._set_blocks([])
         self._set_payout_rows([])
         self._sync_source_visibility()
         self.status.set("New company ready.")
@@ -467,11 +441,6 @@ class AssignmentRulesDialog(tk.Toplevel):
         if not self.rule_rows:
             self._add_rule_row()
 
-    def _set_blocks(self, blocks: Any) -> None:
-        self.blocks_text.delete("1.0", tk.END)
-        if isinstance(blocks, list):
-            self.blocks_text.insert("1.0", "\n".join(str(block) for block in blocks))
-
     def _set_payout_rows(self, tiers: Any) -> None:
         for child in self.payout_frame.winfo_children():
             child.destroy()
@@ -561,7 +530,7 @@ class AssignmentRulesDialog(tk.Toplevel):
     def _rules_payload(self) -> dict[str, Any]:
         return {
             "rules": [self._rule_payload(row) for row in self.rule_rows],
-            "blocks": [line.strip() for line in self.blocks_text.get("1.0", tk.END).splitlines() if line.strip()],
+            "blocks": [],
         }
 
     def _rule_payload(self, row: dict[str, Any]) -> dict[str, Any]:
