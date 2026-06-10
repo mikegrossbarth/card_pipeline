@@ -498,12 +498,12 @@ class AssignmentRulesDialog(tk.Toplevel):
         max_var = tk.StringVar(value=str(first_range.get("max") or ""))
         payout_value = (data or {}).get("payout") or (data or {}).get("rate") or first_range.get("payout") or first_range.get("rate") or ""
         payout_var = tk.StringVar(value=str(payout_value))
-        ttk.Label(price_frame, text="Price Range & Payout", style="Assign.TLabel").grid(row=0, column=0, columnspan=6, sticky=tk.W, pady=(0, 6))
+        ttk.Label(price_frame, text="Price Range & Payout Percentage", style="Assign.TLabel").grid(row=0, column=0, columnspan=6, sticky=tk.W, pady=(0, 6))
         ttk.Label(price_frame, text="Min", style="Assign.TLabel").grid(row=1, column=0, sticky=tk.W, padx=(0, 6))
         ttk.Entry(price_frame, textvariable=min_var, width=12, style="Assign.TEntry").grid(row=1, column=1, sticky=tk.W)
         ttk.Label(price_frame, text="Max", style="Assign.TLabel").grid(row=1, column=2, sticky=tk.W, padx=(14, 6))
         ttk.Entry(price_frame, textvariable=max_var, width=12, style="Assign.TEntry").grid(row=1, column=3, sticky=tk.W)
-        ttk.Label(price_frame, text="Payout", style="Assign.TLabel").grid(row=1, column=4, sticky=tk.W, padx=(14, 6))
+        ttk.Label(price_frame, text="Payout Percentage", style="Assign.TLabel").grid(row=1, column=4, sticky=tk.W, padx=(14, 6))
         ttk.Entry(price_frame, textvariable=payout_var, width=12, style="Assign.TEntry").grid(row=1, column=5, sticky=tk.W)
 
         grades_frame = ttk.Frame(frame, style="AssignPanel.TFrame")
