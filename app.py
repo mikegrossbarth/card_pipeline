@@ -284,7 +284,7 @@ class CardPipelineApp(tk.Tk):
         self.selected_received_sheet = tk.StringVar()
         self.working_sheet_paths: dict[str, Path] = {}
         self.home_sheet_kind = tk.StringVar(value="Incoming")
-        self.home_sheet_paths: dict[str, dict[str, Path]] = {"Incoming": {}, "Working": {}}
+        self.home_sheet_paths: dict[str, dict[str, Path]] = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries: dict[str, dict[str, object]] = {}
         self.home_sheet_markers: dict[str, dict[str, object]] = self._load_sheet_markers()
         self.home_selected_sheet_key = ""
@@ -642,9 +642,11 @@ class CardPipelineApp(tk.Tk):
         self.home_incoming_tab.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.home_working_tab = self._build_home_tab_button(toggle_row, "Working", lambda: self._set_home_sheet_kind("Working"))
         self.home_working_tab.grid(row=0, column=1, sticky="ew", padx=(0, 4))
+        self.home_received_tab = self._build_home_tab_button(toggle_row, "Received", lambda: self._set_home_sheet_kind("Received"))
+        self.home_received_tab.grid(row=0, column=2, sticky="ew", padx=(0, 4))
         self.home_edit_markers_tab = self._build_home_tab_button(toggle_row, "Edit Markers", self.open_sheet_marker_editor)
-        self.home_edit_markers_tab.grid(row=0, column=2, sticky="ew")
-        for col in range(3):
+        self.home_edit_markers_tab.grid(row=0, column=3, sticky="ew")
+        for col in range(4):
             toggle_row.columnconfigure(col, weight=1, uniform="home_tabs")
         self.home_sheet_list = tk.Listbox(
             sheet_panel,
@@ -752,19 +754,21 @@ class CardPipelineApp(tk.Tk):
         if not hasattr(self, "home_incoming_tab") or not hasattr(self, "home_working_tab"):
             return
         palette = self.home_tab_palette
-        incoming_active = self.home_sheet_kind.get() == "Incoming"
+        active_kind = self.home_sheet_kind.get()
         active = {"bg": palette["panel_high"], "fg": palette["text"], "activebackground": palette["panel_high"], "activeforeground": palette["text"]}
         inactive = {"bg": palette["soft_button"], "fg": palette["muted"], "activebackground": palette["soft_button_hover"], "activeforeground": palette["text"]}
-        self.home_incoming_tab.configure(**(active if incoming_active else inactive))
-        self.home_working_tab.configure(**(inactive if incoming_active else active))
+        self.home_incoming_tab.configure(**(active if active_kind == "Incoming" else inactive))
+        self.home_working_tab.configure(**(active if active_kind == "Working" else inactive))
+        if hasattr(self, "home_received_tab"):
+            self.home_received_tab.configure(**(active if active_kind == "Received" else inactive))
         if hasattr(self, "home_edit_markers_tab"):
             self.home_edit_markers_tab.configure(**inactive)
 
     def refresh_home(self) -> None:
-        self.home_sheet_paths = {"Incoming": {}, "Working": {}}
+        self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries = {}
         errors: list[str] = []
-        for kind, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR)):
+        for kind, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR), ("Received", RECEIVED_SHEETS_DIR)):
             try:
                 directory.mkdir(parents=True, exist_ok=True)
                 paths = sorted(directory.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
@@ -799,7 +803,7 @@ class CardPipelineApp(tk.Tk):
             "received_paths": {},
             "incoming_index": {},
             "incoming_path_count": 0,
-            "home_paths": {"Incoming": {}, "Working": {}},
+            "home_paths": {"Incoming": {}, "Working": {}, "Received": {}},
             "home_summaries": {},
             "errors": [],
         }
@@ -819,8 +823,10 @@ class CardPipelineApp(tk.Tk):
             RECEIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
             received_paths = sorted(RECEIVED_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
             payload["received_paths"] = {path.name: path for path in received_paths}
+            payload["home_paths"]["Received"] = {path.name: path for path in received_paths}
         except Exception as error:
             errors.append(f"Received: {error}")
+            received_paths = []
 
         try:
             INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -855,7 +861,7 @@ class CardPipelineApp(tk.Tk):
                 }
         payload["incoming_index"] = index
 
-        for kind, paths in (("Incoming", incoming_paths), ("Working", working_paths)):
+        for kind, paths in (("Incoming", incoming_paths), ("Working", working_paths), ("Received", received_paths)):
             for path in paths:
                 key = self._home_sheet_key(kind, path.name)
                 try:
@@ -890,7 +896,7 @@ class CardPipelineApp(tk.Tk):
         self._match_all_review_rows()
         self.review_status.set(f"Indexed {len(self.incoming_cert_index)} cert(s) from {int(payload.get('incoming_path_count') or 0)} incoming sheet(s).")
 
-        self.home_sheet_paths = dict(payload.get("home_paths") or {"Incoming": {}, "Working": {}})
+        self.home_sheet_paths = dict(payload.get("home_paths") or {"Incoming": {}, "Working": {}, "Received": {}})
         self.home_sheet_summaries = dict(payload.get("home_summaries") or {})
         self._refresh_home_sheet_list()
         self._refresh_home_metrics()
@@ -1039,7 +1045,16 @@ class CardPipelineApp(tk.Tk):
         key = self.home_selected_sheet_key
         moved = False
         try:
-            if marker["all_received"]:
+            selected_kind, _selected_name = self._split_home_sheet_key(key)
+            if selected_kind == "Received" and not marker["all_received"]:
+                moved_key = self._move_received_sheet_to_incoming(key)
+                if moved_key:
+                    self.home_sheet_markers.pop(key, None)
+                    key = moved_key
+                    self.home_selected_sheet_key = key
+                    self.home_sheet_kind.set("Incoming")
+                    moved = True
+            elif marker["all_received"]:
                 moved_key = self._move_sheet_to_received(key)
                 if moved_key:
                     self.home_sheet_markers.pop(key, None)
@@ -1102,6 +1117,20 @@ class CardPipelineApp(tk.Tk):
             raise FileExistsError(f"Received sheet already exists: {destination.name}")
         shutil.move(str(source), str(destination))
         return self._home_sheet_key("Received", destination.name)
+
+    def _move_received_sheet_to_incoming(self, key: str) -> str:
+        kind, name = self._split_home_sheet_key(key)
+        if kind != "Received" or not name:
+            return ""
+        source = self._sheet_path_for_stage(kind, name)
+        if not source.exists():
+            raise FileNotFoundError(f"Received sheet not found: {source}")
+        INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        destination = INCOMING_SHEETS_DIR / source.name
+        if destination.exists():
+            raise FileExistsError(f"Incoming sheet already exists: {destination.name}")
+        shutil.move(str(source), str(destination))
+        return self._home_sheet_key("Incoming", destination.name)
 
     def _sheet_path_for_stage(self, kind: str, name: str) -> Path:
         if kind == "Working":
