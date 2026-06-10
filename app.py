@@ -332,6 +332,7 @@ class CardPipelineApp(tk.Tk):
         self.home_selected_sheet_key = ""
         self.payout_person_var = tk.StringVar()
         self.payout_status_var = tk.StringVar(value="No unpaid sheets loaded.")
+        self.payout_summary_people: dict[str, str] = {}
         self.payout_detail_keys: dict[str, str] = {}
 
         self._build_ui()
@@ -810,6 +811,7 @@ class CardPipelineApp(tk.Tk):
             widths={"person": 220, "sheets": 80, "cards": 80, "balance": 130},
             height=18,
         )
+        self.payout_summary_tree.bind("<ButtonRelease-1>", self.mark_payout_person_paid)
 
         detail_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 12))
         detail_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -1108,6 +1110,7 @@ class CardPipelineApp(tk.Tk):
         self._refresh_person_combo_values()
         self.payout_summary_tree.delete(*self.payout_summary_tree.get_children())
         self.payout_detail_tree.delete(*self.payout_detail_tree.get_children())
+        self.payout_summary_people = {}
         self.payout_detail_keys = {}
 
         balances: dict[str, dict[str, float | int]] = {}
@@ -1140,10 +1143,13 @@ class CardPipelineApp(tk.Tk):
             )
             detail_count += 1
 
-        for person, values in sorted(balances.items(), key=lambda pair: (-float(pair[1]["balance"]), pair[0].lower())):
+        for index, (person, values) in enumerate(sorted(balances.items(), key=lambda pair: (-float(pair[1]["balance"]), pair[0].lower()))):
+            iid = f"payout-summary:{index}"
+            self.payout_summary_people[iid] = person
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
+                iid=iid,
                 values=(
                     person,
                     int(values["sheets"]),
@@ -1233,6 +1239,48 @@ class CardPipelineApp(tk.Tk):
         if not hasattr(self, "payout_detail_tree"):
             return []
         return [self.payout_detail_keys.get(iid, "") for iid in self.payout_detail_tree.selection() if self.payout_detail_keys.get(iid)]
+
+    def mark_payout_person_paid(self, event=None) -> None:
+        if event is not None:
+            row_id = self.payout_summary_tree.identify_row(event.y)
+            if not row_id:
+                return
+            self.payout_summary_tree.selection_set(row_id)
+        selected = self.payout_summary_tree.selection()
+        if not selected:
+            return
+        person = self.payout_summary_people.get(selected[0])
+        if not person:
+            return
+        matching_items = [
+            item
+            for item in self._payout_sheet_items()
+            if not item["paid"] and (item["person"] or "Unassigned") == person
+        ]
+        if not matching_items:
+            self.payout_status_var.set(f"No unpaid sheets found for {person}.")
+            return
+        total_balance = sum(float(item["purchase_total"]) for item in matching_items)
+        total_cards = sum(int(item["row_count"]) for item in matching_items)
+        confirmed = messagebox.askyesno(
+            "Mark paid",
+            f"Mark {len(matching_items)} sheet(s), {total_cards} card(s), and {format_money(total_balance)} paid for {person}?",
+        )
+        if not confirmed:
+            return
+        for item in matching_items:
+            key = str(item["key"])
+            kind, _name = self._split_home_sheet_key(key)
+            marker = dict(self.home_sheet_markers.get(key, {}))
+            summary = self.home_sheet_summaries.get(key, {})
+            marker["assigned_person"] = str(item["person"] or "").strip()
+            marker["paid"] = True
+            marker["all_received"] = bool(marker.get("all_received") or summary.get("all_received") or kind == "Received")
+            marker["tracking_number"] = str(marker.get("tracking_number") or "")
+            self.home_sheet_markers[key] = marker
+        self._save_sheet_markers()
+        self.refresh_home()
+        self.status_var.set(f"Marked {len(matching_items)} sheet(s) paid for {person}: {format_money(total_balance)}.")
 
     def open_payout_marker_editor(self, event=None) -> None:
         if event is not None:
