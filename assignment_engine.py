@@ -38,6 +38,7 @@ class CompanyRules:
     ranges: list[AssignmentRule] = field(default_factory=list)
     blocks: list[AssignmentRule] = field(default_factory=list)
     grade_rules: dict[str, GradeRule] = field(default_factory=dict)
+    rule_groups: list["CompanyRules"] = field(default_factory=list)
     accept_all: bool = False
 
 
@@ -129,10 +130,18 @@ def card_row_text(row: Any, source_value: float) -> str:
 
 
 def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -> bool:
-    if not rules.accept_all and not (rules.include or rules.exclude or rules.ranges or rules.blocks or rules.grade_rules):
+    if not rules.accept_all and not (rules.include or rules.exclude or rules.ranges or rules.blocks or rules.grade_rules or rules.rule_groups):
         return False
     haystack = clean_text(text)
     grade_company, grade = parse_grade(text, grader)
+
+    for rule in rules.blocks:
+        if rule_matches(rule, haystack, price):
+            return False
+    if any(term_matches(term, haystack) for term in rules.exclude):
+        return False
+    if rules.rule_groups:
+        return any(company_accepts(group, text, price, grader) for group in rules.rule_groups)
 
     if rules.grade_rules:
         grade_rule = rules.grade_rules.get(clean_text(grade_company))
@@ -143,11 +152,6 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
         if grade is not None and grade_rule.max_grade is not None and grade > grade_rule.max_grade:
             return False
 
-    for rule in rules.blocks:
-        if rule_matches(rule, haystack, price):
-            return False
-    if any(term_matches(term, haystack) for term in rules.exclude):
-        return False
     if rules.include and not any(term_matches(term, haystack) for term in rules.include):
         return False
     if rules.ranges:
@@ -287,7 +291,39 @@ def parse_rule_dict(payload: dict[str, Any], accept_all: bool = False) -> Compan
                     min_grade=to_number(grade_payload.get("min")),
                     max_grade=to_number(grade_payload.get("max")),
                 )
+    custom_rules = payload.get("rules") or payload.get("customRules") or []
+    if isinstance(custom_rules, list):
+        rules.rule_groups.extend(parse_custom_rule_group(item) for item in custom_rules if isinstance(item, dict))
+        rules.rule_groups = [group for group in rules.rule_groups if group.include or group.ranges or group.grade_rules or group.accept_all]
     return rules
+
+
+def parse_custom_rule_group(payload: dict[str, Any]) -> CompanyRules:
+    group = CompanyRules()
+    sports = split_values(payload.get("sports") or payload.get("sport"))
+    if payload.get("sportOther"):
+        sports.append(str(payload.get("sportOther")).strip())
+    group.include.extend(sport for sport in sports if sport and sport != "custom")
+    price_ranges = payload.get("priceRanges") or payload.get("ranges") or []
+    if isinstance(price_ranges, list):
+        for price_range in price_ranges:
+            if not isinstance(price_range, dict):
+                continue
+            min_price = to_number(price_range.get("min") or price_range.get("minPrice"))
+            max_price = to_number(price_range.get("max") or price_range.get("maxPrice"))
+            if min_price is None and max_price is None:
+                continue
+            group.ranges.append(AssignmentRule(min_price=min_price, max_price=max_price))
+    grades = payload.get("grades") or {}
+    if isinstance(grades, dict):
+        for company, grade_payload in grades.items():
+            if isinstance(grade_payload, dict):
+                group.grade_rules[clean_text(company)] = GradeRule(
+                    allowed=grade_payload.get("allowed") is not False,
+                    min_grade=to_number(grade_payload.get("min")),
+                    max_grade=to_number(grade_payload.get("max")),
+                )
+    return group
 
 
 def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:

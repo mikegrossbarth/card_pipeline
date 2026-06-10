@@ -31,6 +31,7 @@ from bridge_server import (  # noqa: E402
 )
 from workbook_io import WorkbookRow  # noqa: E402
 from assignment_engine import AssignmentEngine  # noqa: E402
+from assignment_config_ui import open_assignment_rules_dialog  # noqa: E402
 
 from intake_io import (  # noqa: E402
     build_card_title,
@@ -599,7 +600,7 @@ class CardPipelineApp(tk.Tk):
         self.received_sheet_combo.grid(row=0, column=3, sticky="ew", padx=(8, 8))
         ttk.Button(review_controls, text="Load", command=self.load_selected_received_sheet_for_review, style="Primary.TButton").grid(row=0, column=4, sticky="w", padx=(0, 8))
         ttk.Button(review_controls, text="Refresh", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=5, sticky="w")
-        ttk.Button(review_controls, text="Reload Assignment Rules", command=self.reload_assignment_rules, style="Soft.TButton").grid(row=0, column=6, sticky="w", padx=(8, 0))
+        ttk.Button(review_controls, text="Assignment Rules", command=self.open_assignment_rules, style="Soft.TButton").grid(row=0, column=6, sticky="w", padx=(8, 0))
         review_controls.columnconfigure(3, weight=1)
         ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=7, sticky="w", pady=(10, 0))
         ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
@@ -2123,6 +2124,9 @@ class CardPipelineApp(tk.Tk):
         self._refresh_table()
         self.review_status.set("Assignment rules reloaded.")
         self.status_var.set("Assignment rules reloaded.")
+
+    def open_assignment_rules(self) -> None:
+        open_assignment_rules_dialog(self, CARD_PIPELINE_DIR, self.reload_assignment_rules)
 
     def _assignment_config_status(self) -> str:
         if self.assignment_engine.error:

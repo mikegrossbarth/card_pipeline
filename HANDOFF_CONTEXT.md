@@ -61,7 +61,7 @@ Sheet movement rules:
 
 ## Assignment Company Recommendations
 
-Assignment supports local company recommendation config through `assignment_companies.json` (ignored by git; example file is `assignment_companies.example.json`).
+Assignment supports local company recommendation config through `assignment_companies.json` (ignored by git; example file is `assignment_companies.example.json`). The Assignment tab has an `Assignment Rules` button that opens a local manager for creating companies plus their generated rule and payout files.
 
 For each company, configure:
 
@@ -70,7 +70,9 @@ For each company, configure:
 - `payout` or `payout_source`
 - optional `accept_all` and `rate` fallback
 
-The app reads local `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, and `.xlsm` files, including synced Google Drive paths such as `G:\My Drive\...`. Native `.gsheet` shortcuts are recognized and converted to Google Sheets CSV export URLs when accessible. Private Google Keep notes are not directly readable by desktop Python without a browser/OAuth bridge; for now Keep-backed rules should be copied/exported to a synced local text file. The Assignment tab has `Reload Assignment Rules` so local rule/payout edits can be picked up without restarting.
+The app reads local `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, and `.xlsm` files, including synced Google Drive paths such as `G:\My Drive\...`. Native `.gsheet` shortcuts are recognized and converted to Google Sheets CSV export URLs when accessible. Private Google Keep notes are not directly readable by desktop Python without a browser/OAuth bridge; for now Keep-backed rules should be copied/exported to a synced local text file.
+
+The built-in manager writes custom-filter-style JSON under `<pipeline root>\ASSIGNMENT RULES`, using the Sheet Filtering Tool concepts of sports, value ranges, PSA/BGS/SGC/CGC grade allow/ranges, block rules, and payout tiers. This is copied into L.U.C.A.S as standalone Python/Tk code; runtime does not depend on the Chrome extension folder.
 
 Recommendation value uses Card Ladder comps average first, then Card Ladder value. A company must accept the card by rules and have a matching payout tier/rate; the highest estimated payout wins.
 
