@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import html
 import json
 import re
 import unicodedata
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,18 +12,19 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = ROOT / "assignment_player_sport_data.js"
-SOURCE_URL = "https://www.marvel.com/comics/characters"
-SOURCE_NAME = "Marvel.com comics characters A-Z"
+SOURCE_URL = "https://disney.fandom.com/wiki/Category:Disney_characters"
+API_URL = "https://disney.fandom.com/api.php"
+SOURCE_NAME = "Disney Wiki Disney characters category"
 
 
 def main() -> None:
     data = load_data()
-    names = fetch_marvel_names()
+    names = fetch_disney_names()
     players: dict[str, dict[str, Any]] = data.setdefault("players", {})
     for name in sorted(names, key=str.lower):
         key = player_key(name)
         if key:
-            players[key] = {"sport": "marvel", "displayName": name}
+            players[key] = {"sport": "disney", "displayName": name}
 
     sources = [
         source
@@ -32,59 +33,60 @@ def main() -> None:
     ]
     sources.append({
         "name": SOURCE_NAME,
-        "sport": "marvel",
+        "sport": "disney",
         "url": SOURCE_URL,
         "count": len(names),
     })
     data["sources"] = sources
     data["generatedAt"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     write_data(data)
-    print(f"Imported {len(names)} Marvel character names from {SOURCE_URL}")
+    print(f"Imported {len(names)} Disney character names from {SOURCE_URL}")
 
 
-def fetch_marvel_names() -> set[str]:
-    request = urllib.request.Request(SOURCE_URL, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(request, timeout=45) as response:
-        raw = response.read().decode("utf-8", "ignore")
+def fetch_disney_names() -> set[str]:
     names: set[str] = set()
-    for match in re.finditer(r'<a\b[^>]*href=["\']([^"\']*/characters/[^"\']*)["\'][^>]*>(.*?)</a>', raw, re.I | re.S):
-        href = html.unescape(match.group(1))
-        label = clean_label(match.group(2))
-        if useful_name(label):
-            names.add(label)
-            continue
-        fallback = name_from_href(href)
-        if useful_name(fallback):
-            names.add(fallback)
-    return names
+    cmcontinue = ""
+    while True:
+        params = {
+            "action": "query",
+            "list": "categorymembers",
+            "cmtitle": "Category:Disney characters",
+            "cmnamespace": "0",
+            "cmlimit": "500",
+            "format": "json",
+        }
+        if cmcontinue:
+            params["cmcontinue"] = cmcontinue
+        url = f"{API_URL}?{urllib.parse.urlencode(params)}"
+        payload = fetch_json(url)
+        for item in payload.get("query", {}).get("categorymembers", []):
+            title = clean_title(item.get("title", ""))
+            if useful_name(title):
+                names.add(title)
+        cmcontinue = payload.get("continue", {}).get("cmcontinue", "")
+        if not cmcontinue:
+            return names
 
 
-def clean_label(value: str) -> str:
-    text = re.sub(r"<[^>]+>", " ", value)
-    text = html.unescape(text)
-    text = re.sub(r"\s+", " ", text).strip()
+def fetch_json(url: str) -> dict[str, Any]:
+    request = urllib.request.Request(url, headers={"User-Agent": "CardPipeline/1.0"})
+    with urllib.request.urlopen(request, timeout=45) as response:
+        return json.loads(response.read().decode("utf-8", "ignore"))
+
+
+def clean_title(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"\s+", " ", text)
     return text
-
-
-def name_from_href(href: str) -> str:
-    slug = href.rstrip("/").split("/")[-1]
-    slug = re.sub(r"^\d+-", "", slug)
-    return " ".join(part.capitalize() for part in slug.replace("-", " ").split())
 
 
 def useful_name(value: str) -> bool:
     text = str(value or "").strip()
     lowered = text.lower()
-    if len(text) < 2 or len(text) > 90:
+    if len(text) < 2 or len(text) > 120:
         return False
-    blocked = {
-        "characters",
-        "comics",
-        "load more",
-        "marvel unlimited",
-        "search all characters",
-    }
-    return lowered not in blocked
+    blocked_prefixes = ("category:", "file:", "template:", "disney wiki:")
+    return not lowered.startswith(blocked_prefixes)
 
 
 def load_data() -> dict[str, Any]:
