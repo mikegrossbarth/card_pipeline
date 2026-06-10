@@ -80,7 +80,7 @@ Supported local source files include `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, an
 }
 ```
 
-The Assignment Rules manager supports three rule sources: manual rules, a local Google Keep export/text file, or a local synced Google Sheets/workbook file from Google Drive. Payouts can be manual tiers or a local payout file. Native Google Sheets shortcuts (`.gsheet`) are recognized and converted to CSV export URLs when the sheet is accessible to the app, but the preferred path is the file already synced into `G:\My Drive\...`. The built-in manager uses the same basic custom-filter shape as the Sheet Filtering Tool: sports, value ranges, grade-company allow/block settings, block rules, and payout tiers.
+The Assignment Rules manager supports three rule sources: manual rules, a local Google Keep export/text file, or a local synced Google Sheets/workbook file from Google Drive. Payouts can be manual tiers or a local payout file. Native Google Sheets shortcuts (`.gsheet`) contain only shortcut metadata, not local sheet rows; L.U.C.A.S can try exportable shortcuts, but the reliable path is choosing a synced/exported `.xlsx` or `.csv` from `G:\My Drive\...`. The built-in manager uses the same basic custom-filter shape as the Sheet Filtering Tool: sports, value ranges, grade-company allow/block settings, block rules, and payout tiers.
 
 ## Included Photo Tool
 

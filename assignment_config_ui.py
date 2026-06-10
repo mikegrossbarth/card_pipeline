@@ -346,6 +346,11 @@ class AssignmentRulesDialog(tk.Toplevel):
             self.preview_status.set(f"Could not read source: {error}")
             return
         lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            self.preview_status.set(
+                f"No rows found in {Path(path).name}. If this is a native Google Sheet shortcut, choose a synced/exported .xlsx or .csv file instead."
+            )
+            return
         self.preview_status.set(f"Read {len(lines)} non-empty line(s) from {Path(path).name}.")
 
     def _set_rule_rows(self, rules: Any) -> None:

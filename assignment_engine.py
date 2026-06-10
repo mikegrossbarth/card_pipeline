@@ -171,7 +171,7 @@ def payout_for_value(tiers: list[PayoutTier], value: float) -> float | None:
 
 def read_source_text(source: Any, base_dir: Path) -> str:
     if isinstance(source, dict):
-        return read_source_text(source.get("path") or source.get("file") or source.get("url"), base_dir)
+        return read_source_text(source.get("path") or source.get("file") or source.get("url") or source.get("doc_id"), base_dir)
     raw = str(source or "").strip()
     if not raw:
         return ""
@@ -183,21 +183,50 @@ def read_source_text(source: Any, base_dir: Path) -> str:
     if not path.exists():
         return ""
     if path.suffix.lower() == ".gsheet":
-        try:
-            shortcut = json.loads(path.read_text(encoding="utf-8-sig"))
-            return read_source_text(shortcut.get("url"), base_dir)
-        except Exception:
-            return ""
+        return read_gsheet_shortcut_text(path)
     if path.suffix.lower() in {".xlsx", ".xlsm"}:
         return read_workbook_text(path)
     return path.read_text(encoding="utf-8-sig")
+
+
+def read_gsheet_shortcut_text(path: Path) -> str:
+    shortcut = json.loads(path.read_text(encoding="utf-8-sig"))
+    url = gsheet_shortcut_url(shortcut)
+    if not url:
+        raise ValueError(
+            "This .gsheet shortcut does not contain readable sheet data. Choose a synced/exported .xlsx or .csv copy from Google Drive."
+        )
+    text = read_url_text(url)
+    if not text.strip():
+        raise ValueError(
+            "Google returned no CSV rows for this .gsheet shortcut. Export or sync the sheet as .xlsx/.csv and choose that file."
+        )
+    return text
+
+
+def gsheet_shortcut_url(shortcut: dict[str, Any]) -> str:
+    url = str(shortcut.get("url") or "").strip()
+    if url:
+        return url
+    doc_id = str(shortcut.get("doc_id") or "").strip()
+    resource_id = str(shortcut.get("resource_id") or "").strip()
+    if not doc_id and resource_id.startswith("spreadsheet:"):
+        doc_id = resource_id.split(":", 1)[1].strip()
+    if doc_id:
+        return f"https://docs.google.com/spreadsheets/d/{doc_id}/edit"
+    return ""
 
 
 def read_url_text(url: str) -> str:
     request_url = google_sheet_csv_url(url) or url
     with urllib.request.urlopen(request_url, timeout=20) as response:
         data = response.read()
-    return data.decode("utf-8-sig", errors="replace")
+    text = data.decode("utf-8-sig", errors="replace")
+    if re.search(r"^\s*<!doctype html|<html[\s>]", text, re.I):
+        raise ValueError(
+            "Google returned a web page instead of sheet rows. Choose a synced/exported .xlsx or .csv file from your Drive folder."
+        )
+    return text
 
 
 def google_sheet_csv_url(url: str) -> str:
