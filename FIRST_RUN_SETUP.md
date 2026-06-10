@@ -14,6 +14,7 @@ For a complete L.U.C.A.S setup, the computer needs:
 - a local data folder with `WORKING SHEETS`, `INCOMING SHEETS`, and `RECEIVED SHEETS`
 - a Card Ladder account and Chrome extension setup for comping
 - a Google AI Studio API key for Photo OCR and screenshot OCR fallback
+- Google billing and spend controls for Google API calls
 - Google OAuth credentials for Google Sheets rules or payout sheets
 - Google Drive for desktop
 - company assignment rules and payout files configured inside the app
@@ -31,6 +32,7 @@ This guide treats the full workflow as required. Setup is not complete until eve
 | Card Ladder account | comping cards with Card Ladder | Yes |
 | Card Ladder Chrome extension | automated comp runs | Yes |
 | `GOOGLE_API_KEY` | Photo OCR and Card Ladder screenshot OCR fallback | Yes |
+| Google billing and spend controls | paid Gemini API calls, payment method, and cost alerts | Yes |
 | Google OAuth Client ID/Secret | reading Google Sheets rule/payout files | Yes |
 | Google Drive for desktop | synced Drive folders and Google Sheets shortcuts | Yes |
 | assignment companies | best company and estimated payout | Yes |
@@ -190,7 +192,111 @@ This key is used for:
 
 If this key is missing, setup is incomplete. Photo OCR and Card Ladder screenshot OCR fallback will not work.
 
-## Step 9: Set Up Card Ladder
+## Step 9: Set Up Google Billing, Payment, And Spend Controls
+
+L.U.C.A.S uses the Gemini API for Photo OCR and Card Ladder screenshot OCR fallback. Those calls can use paid Google API capacity, so the Google account must have billing, payment, and spending controls set up before real use.
+
+Use the same Google account and project that created the `GOOGLE_API_KEY`.
+
+### Set Up Billing In Google AI Studio
+
+1. Open the official Google AI Studio API keys page:
+
+```text
+https://aistudio.google.com/app/apikey
+```
+
+2. Find the project connected to the L.U.C.A.S API key.
+3. In the billing column, click `Set up billing`.
+4. Follow Google's prompts to select or create a Cloud Billing account.
+5. Add or confirm the payment method.
+6. If Google asks for prepaid credits, add the required minimum credit amount. Google's Gemini billing docs currently describe this as a minimum of `$10` or the equivalent in another currency.
+7. Return to the AI Studio billing page and confirm the project no longer says `Set up billing`, `Set up Prepay`, or `No credits`.
+
+Google's billing guide says upgrading to a paid tier means linking a billing account and, where required, prepaying credits. It also says the Gemini API only serves paid-tier requests when the billing/prepay state is valid.
+
+Official references:
+
+- [Gemini API billing](https://ai.google.dev/gemini-api/docs/billing)
+- [Google Cloud Billing account management](https://docs.cloud.google.com/billing/docs/how-to/manage-billing-account)
+
+### Add A Payment Method
+
+1. Open Google Cloud Console:
+
+```text
+https://console.cloud.google.com/billing
+```
+
+2. Select the Cloud Billing account used by the L.U.C.A.S project.
+3. Open `Payment method`.
+4. Add a valid card, debit card, or bank account.
+5. Confirm the billing account is active.
+
+Google notes that projects not linked to an active Cloud Billing account cannot use Google Cloud services, even some services that are otherwise free.
+
+### Set A Monthly Spend Cap
+
+1. Open the AI Studio spend page:
+
+```text
+https://aistudio.google.com/app/spend
+```
+
+2. Select the L.U.C.A.S project.
+3. Find `Monthly spend cap`.
+4. Click `Edit spend cap`.
+5. Set a cap appropriate for the user.
+6. Save.
+
+Start conservative. A practical first cap is usually enough to cover testing and normal OCR volume, then increase later after real usage is understood.
+
+Google's Gemini billing docs say project-level spend caps are available in AI Studio, but there can be a short billing-processing delay. That means a cap helps reduce surprise costs, but it is not a perfect instant shutoff.
+
+### Create A Billing Budget Alert
+
+1. Open Google Cloud Billing:
+
+```text
+https://console.cloud.google.com/billing
+```
+
+2. Select the billing account.
+3. Open `Budgets & alerts`.
+4. Create a budget for the L.U.C.A.S project.
+5. Add alert thresholds, for example:
+
+```text
+50%
+75%
+90%
+100%
+```
+
+6. Make sure the owner or operator's email receives billing alerts.
+
+Budget alerts do not replace spend caps. They are warning lights so the user knows costs are moving.
+
+### Secure The Gemini API Key
+
+Treat the Gemini API key like a password.
+
+1. Keep it only in `.env`.
+2. Do not paste it into chats, spreadsheets, screenshots, Git commits, or shared docs.
+3. Do not commit `.env`.
+4. In Google AI Studio, prefer a current auth key.
+5. Restrict keys where Google provides a restriction option.
+6. If the key may have leaked, create a new key, update `.env`, then disable the old key.
+
+Google's API-key docs warn that leaked keys can consume quota, create unexpected billing charges, and access private resources. They also recommend billing alerts and API-key restrictions.
+
+Official reference:
+
+- [Gemini API key security](https://ai.google.dev/gemini-api/docs/api-key)
+
+After finishing this section, restart L.U.C.A.S so `.env` and the active Google API key are loaded cleanly.
+
+## Step 10: Set Up Card Ladder
 
 Card Ladder comping needs:
 
@@ -229,7 +335,7 @@ If comping does not start, check:
 - L.U.C.A.S is running
 - the Comp tab says the Card Ladder bridge is running
 
-## Step 10: Set Up Google Sheets Access
+## Step 11: Set Up Google Sheets Access
 
 Google Sheets access is part of the complete setup because company rules and payout files may live in Google Sheets.
 
@@ -264,7 +370,7 @@ lucas_google_sheets_token.json
 
 That token file is local and should not be committed to Git.
 
-## Step 11: Set Up Google Drive For Desktop
+## Step 12: Set Up Google Drive For Desktop
 
 Google Drive for desktop is required for the standard team setup because the pipeline folders and source files can live in synced Drive folders.
 
@@ -280,7 +386,7 @@ Native Google Sheets files may appear as `.gsheet` shortcuts. If L.U.C.A.S canno
 
 For the easiest rule and payout setup, use synced `.xlsx` or `.csv` files when possible.
 
-## Step 12: Set Up Assignment Companies
+## Step 13: Set Up Assignment Companies
 
 Assignment recommendations need company rules and payout rates.
 
@@ -311,7 +417,7 @@ assignment_companies.json
 
 That file is local and should not be committed unless you intentionally want to share it.
 
-## Step 13: Check The Full Workflow
+## Step 14: Check The Full Workflow
 
 After setup, test the app in this order:
 
@@ -409,6 +515,11 @@ Use this as the final handoff checklist:
 - [ ] L.U.C.A.S opens
 - [ ] `Working Folder` points to `WORKING SHEETS`
 - [ ] `GOOGLE_API_KEY` is added
+- [ ] Google AI Studio billing is connected to the API key project
+- [ ] Google Cloud payment method is active
+- [ ] Gemini monthly spend cap is set
+- [ ] Google Cloud budget alerts are set
+- [ ] Gemini API key is secured and stored only in `.env`
 - [ ] Card Ladder extension is loaded
 - [ ] user is logged into Card Ladder in Chrome
 - [ ] Google OAuth credentials are added

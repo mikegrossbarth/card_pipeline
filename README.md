@@ -13,7 +13,8 @@ For a click-by-click setup walkthrough for a brand-new user, start with [FIRST_R
 3. Double-click `install_dependencies.bat`. If Python 3.11 or newer is missing, the installer tries to install Python 3.11 with Windows Package Manager (`winget`) before creating the app environment.
 4. Open `.env`, which the installer creates from `.env.example`.
 5. Add `GOOGLE_API_KEY`, `GOOGLE_SHEETS_OAUTH_CLIENT_ID`, `GOOGLE_SHEETS_OAUTH_CLIENT_SECRET`, and `LUCAS_WORKING_SHEETS_DIR` in `.env`.
-6. Launch with `Run Card Pipeline.vbs` for the no-console app, or `Run Card Pipeline.bat` if you want to see console output.
+6. Complete Google billing, payment method, spend cap, and budget alert setup from `FIRST_RUN_SETUP.md`.
+7. Launch with `Run Card Pipeline.vbs` for the no-console app, or `Run Card Pipeline.bat` if you want to see console output.
 
 If automatic Python install is not available on that computer, install Python 3.11 or newer from python.org, include Tcl/Tk support, and check `Add python.exe to PATH`, then run `install_dependencies.bat` again.
 
