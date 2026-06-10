@@ -18,6 +18,132 @@ from google_sheets_import import GoogleSheetsAuthError, read_google_sheet_text
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "assignment_companies.json"
+CATEGORY_ALIASES = {
+    "football": ["football", "nfl"],
+    "soccer": ["soccer", "futbol", "premier league", "uefa", "fifa"],
+    "baseball": ["baseball", "mlb"],
+    "basketball": ["basketball", "b-ball", "bball", "nba"],
+    "hockey": ["hockey", "nhl"],
+    "wnba": ["wnba"],
+    "pokemon": ["pokemon", "poke"],
+    "one piece": ["one piece", "onepiece", "one_piece", "1 piece"],
+    "ufc": ["ufc"],
+}
+PLAYER_SPORT_HINTS = {
+    "victor wembanyama": "basketball",
+    "stephen curry": "basketball",
+    "steph curry": "basketball",
+    "nikola jokic": "basketball",
+    "luka doncic": "basketball",
+    "giannis antetokounmpo": "basketball",
+    "anthony edwards": "basketball",
+    "kevin durant": "basketball",
+    "ja morant": "basketball",
+    "jayson tatum": "basketball",
+    "shai gilgeous alexander": "basketball",
+    "lebron james": "basketball",
+    "michael jordan": "basketball",
+    "kobe bryant": "basketball",
+    "larry bird": "basketball",
+    "magic johnson": "basketball",
+    "kareem abdul jabbar": "basketball",
+    "kareem abdul-jabbar": "basketball",
+    "shaquille o'neal": "basketball",
+    "tim duncan": "basketball",
+    "wilt chamberlain": "basketball",
+    "jerry west": "basketball",
+    "tom brady": "football",
+    "patrick mahomes": "football",
+    "cj stroud": "football",
+    "joe montana": "football",
+    "jerry rice": "football",
+    "barry sanders": "football",
+    "peyton manning": "football",
+    "dan marino": "football",
+    "walter payton": "football",
+    "randy moss": "football",
+    "john elway": "football",
+    "emmitt smith": "football",
+    "deion sanders": "football",
+    "aaron donald": "football",
+    "shohei ohtani": "baseball",
+    "shoehi ohtani": "baseball",
+    "mike trout": "baseball",
+    "aaron judge": "baseball",
+    "babe ruth": "baseball",
+    "mickey mantle": "baseball",
+    "lou gehrig": "baseball",
+    "lou gherig": "baseball",
+    "hank aaron": "baseball",
+    "ken griffey jr": "baseball",
+    "willie mays": "baseball",
+    "sandy koufax": "baseball",
+    "nolan ryan": "baseball",
+    "randy johnson": "baseball",
+    "ichiro suzuki": "baseball",
+    "cal ripken jr": "baseball",
+    "roberto clemente": "baseball",
+    "jackie robinson": "baseball",
+    "clayton kershaw": "baseball",
+    "mookie betts": "baseball",
+    "lionel messi": "soccer",
+    "cristiano ronaldo": "soccer",
+    "erling haaland": "soccer",
+    "connor bedard": "hockey",
+    "wayne gretzky": "hockey",
+}
+GOAT_PAYOUT_PLAYERS = {
+    "tom brady",
+    "stephen curry",
+    "steph curry",
+    "michael jordan",
+    "lebron james",
+    "kobe bryant",
+    "lionel messi",
+    "cristiano ronaldo",
+    "shohei ohtani",
+    "shoehi ohtani",
+    "patrick mahomes",
+    "joe montana",
+    "jerry rice",
+    "barry sanders",
+    "peyton manning",
+    "dan marino",
+    "walter payton",
+    "randy moss",
+    "john elway",
+    "emmitt smith",
+    "deion sanders",
+    "aaron donald",
+    "babe ruth",
+    "mickey mantle",
+    "lou gehrig",
+    "lou gherig",
+    "hank aaron",
+    "ken griffey jr",
+    "willie mays",
+    "sandy koufax",
+    "nolan ryan",
+    "randy johnson",
+    "ichiro suzuki",
+    "cal ripken jr",
+    "roberto clemente",
+    "jackie robinson",
+    "aaron judge",
+    "clayton kershaw",
+    "mike trout",
+    "mookie betts",
+    "larry bird",
+    "magic johnson",
+    "kareem abdul jabbar",
+    "kareem abdul-jabbar",
+    "shaquille o'neal",
+    "tim duncan",
+    "wilt chamberlain",
+    "jerry west",
+    "kevin durant",
+    "nikola jokic",
+}
 
 
 @dataclass
@@ -51,6 +177,7 @@ class PayoutTier:
     min_price: float = 0
     max_price: float | None = None
     rate: float = 0
+    matcher: str = ""
 
 
 @dataclass
@@ -95,7 +222,7 @@ class AssignmentEngine:
         for company in self.companies:
             if not company_accepts(company.rules, card_text, source_value, str(getattr(row, "grader", "") or "")):
                 continue
-            payout = payout_for_value(company.payout_tiers, source_value)
+            payout = payout_for_value(company.payout_tiers, source_value, card_text)
             if payout is None:
                 continue
             candidates.append(AssignmentRecommendation(company.name, round(payout, 2), source_value))
@@ -163,11 +290,14 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
     return True
 
 
-def payout_for_value(tiers: list[PayoutTier], value: float) -> float | None:
+def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "") -> float | None:
+    haystack = clean_text(text)
     for tier in tiers:
         if value < tier.min_price:
             continue
         if tier.max_price is not None and value > tier.max_price:
+            continue
+        if tier.matcher and not payout_category_matches(tier.matcher, haystack):
             continue
         return value * tier.rate
     return None
@@ -534,6 +664,10 @@ def parse_payouts(text: str) -> list[PayoutTier]:
 
     tiers: list[PayoutTier] = []
     for line in source_lines(stripped):
+        table_tier = parse_payout_table_line(line)
+        if table_tier:
+            tiers.append(table_tier)
+            continue
         rate = parse_rate(line)
         if rate is None:
             continue
@@ -572,8 +706,41 @@ def parse_payout_json(payload: Any) -> list[PayoutTier]:
             min_price=to_number(item.get("min") or item.get("minPrice")) or 0,
             max_price=to_number(item.get("max") or item.get("maxPrice")),
             rate=rate,
+            matcher=str(item.get("matcher") or item.get("category") or item.get("sport") or "").strip(),
         ))
     return sorted(tiers, key=lambda tier: tier.min_price, reverse=True)
+
+
+def parse_payout_table_line(line: str) -> PayoutTier | None:
+    text = str(line or "").strip()
+    if not text or re.search(r"\bcategory\b|\bvalue range\b|\bpayout\b", text, re.I):
+        return None
+    range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|â€“|â€”)\s*\$?\s*([\d,.]+k?)", text, re.I)
+    if not range_match:
+        return None
+    before = text[:range_match.start()].strip(" -:|")
+    after = text[range_match.end():].strip()
+    rate = parse_payout_table_rate(after)
+    if rate is None:
+        return None
+    return PayoutTier(
+        min_price=parse_money(range_match.group(1)) or 0,
+        max_price=parse_money(range_match.group(2)),
+        rate=rate,
+        matcher=normalize_payout_category(before),
+    )
+
+
+def parse_payout_table_rate(value: Any) -> float | None:
+    text = str(value or "").strip()
+    percent_match = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
+    if percent_match:
+        return float(percent_match.group(1)) / 100
+    number_match = re.search(r"\b(\d+(?:\.\d+)?)\b", text)
+    if not number_match:
+        return None
+    number = float(number_match.group(1))
+    return number / 100 if number > 2 else number
 
 
 def payout_row_numbers(line: str) -> list[float]:
@@ -586,6 +753,161 @@ def payout_row_numbers(line: str) -> list[float]:
     return numbers
 
 
+def normalize_payout_category(value: Any) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    text = re.sub(r"^\*+", "", text).strip()
+    replacements = {
+        "kabooms": "Kaboom",
+        "downtowns": "Downtown",
+        "mangas": "Manga",
+        "color blasts": "Color Blast",
+    }
+    return replacements.get(text.lower(), text)
+
+
+def payout_category_matches(category: str, haystack: str) -> bool:
+    expected = clean_rule_text(category)
+    if not expected:
+        return True
+    value = parse_card_for_matching(haystack)
+    if expected in {"goats", "8 main goats"}:
+        return any(player_matches_value(player, value) for player in GOAT_PAYOUT_PLAYERS)
+    return (
+        matcher_matches_text(category, haystack)
+        or player_matches_value(category, value)
+        or sport_label_matches_value(category, value, haystack)
+    )
+
+
+def parse_card_for_matching(text: str) -> dict[str, Any]:
+    raw = str(text or "")
+    player_matches = find_known_player_sports(raw)
+    player = player_matches[0]["playerName"] if player_matches else ""
+    sport = infer_sport(raw, player)
+    return {
+        "text": raw,
+        "playerName": player,
+        "sport": sport,
+        "sportCorrelations": player_matches,
+    }
+
+
+def infer_sport(raw: str, player_name: str = "") -> str:
+    haystack = clean_rule_text(raw)
+    for sport, aliases in CATEGORY_ALIASES.items():
+        if any(text_contains_clean_term(haystack, alias) for alias in aliases):
+            return sport
+    return PLAYER_SPORT_HINTS.get(clean_rule_text(player_name), "")
+
+
+def find_known_player_sports(raw: str) -> list[dict[str, str]]:
+    haystack = f" {clean_rule_text(raw)} "
+    seen: set[str] = set()
+    matches: list[dict[str, str]] = []
+    for player in sorted(PLAYER_SPORT_HINTS, key=len, reverse=True):
+        key = clean_rule_text(player)
+        if f" {key} " not in haystack:
+            continue
+        if any(player_name_contains(existing["key"], key) for existing in matches):
+            continue
+        sport = PLAYER_SPORT_HINTS[player]
+        unique_key = f"{key}:{sport}"
+        if unique_key in seen:
+            continue
+        seen.add(unique_key)
+        matches.append({"key": key, "playerName": player, "sport": sport})
+    return matches
+
+
+def player_name_contains(longer_player: str, shorter_player: str) -> bool:
+    longer = clean_rule_text(longer_player)
+    shorter = clean_rule_text(shorter_player)
+    return longer != shorter and shorter in longer
+
+
+def matcher_matches_text(matcher: str, haystack: str) -> bool:
+    cleaned = clean_rule_text(matcher)
+    aliases = aliases_for(cleaned)
+    if len(aliases) > 1:
+        return any(text_contains_clean_term(haystack, alias) for alias in aliases)
+    terms = [term for term in cleaned.split() if len(term) >= 2]
+    return all(text_contains_clean_term(haystack, term) for term in terms) if terms else True
+
+
+def player_matches_value(expected_player: str, value: dict[str, Any]) -> bool:
+    expected = clean_rule_text(expected_player)
+    if not expected:
+        return False
+    parsed_player = clean_rule_text(value.get("playerName") or "")
+    if parsed_player and parsed_player == expected:
+        return True
+    return any(
+        clean_rule_text(correlation.get("playerName") or "") == expected
+        or clean_rule_text(correlation.get("key") or "") == expected
+        for correlation in value.get("sportCorrelations") or []
+    )
+
+
+def sport_label_matches_value(expected_sport: str, value: dict[str, Any], haystack: str) -> bool:
+    if not canonical_sport_label(expected_sport):
+        return False
+    return sport_matches_value(expected_sport, value, haystack)
+
+
+def sport_matches_value(expected_sport: str, value: dict[str, Any], haystack: str) -> bool:
+    expected = clean_rule_text(expected_sport)
+    parsed_sport = clean_rule_text(value.get("sport") or "")
+    parsed_player = clean_rule_text(value.get("playerName") or "")
+    if parsed_player and parsed_player == expected:
+        return True
+    if player_matches_value(expected_sport, value):
+        return True
+    if parsed_sport and (parsed_sport == expected or any(clean_rule_text(alias) == parsed_sport for alias in aliases_for(expected))):
+        return True
+    if any(
+        clean_rule_text(correlation.get("sport") or "") == expected
+        or any(clean_rule_text(alias) == clean_rule_text(correlation.get("sport") or "") for alias in aliases_for(expected))
+        for correlation in value.get("sportCorrelations") or []
+    ):
+        return True
+    return matcher_matches_text(expected_sport, haystack)
+
+
+def canonical_sport_label(value: str) -> str:
+    key = clean_rule_text(value)
+    if not key:
+        return ""
+    for sport, aliases in CATEGORY_ALIASES.items():
+        if clean_rule_text(sport) == key or any(clean_rule_text(alias) == key for alias in aliases):
+            return sport
+    return ""
+
+
+def aliases_for(value: str) -> list[str]:
+    key = clean_rule_text(value)
+    for sport, aliases in CATEGORY_ALIASES.items():
+        if clean_rule_text(sport) == key or any(clean_rule_text(alias) == key for alias in aliases):
+            return aliases
+    return [key]
+
+
+def text_contains_clean_term(haystack: str, term: str) -> bool:
+    cleaned_haystack = f" {clean_rule_text(haystack)} "
+    cleaned_term = clean_rule_text(term)
+    if not cleaned_term:
+        return False
+    return re.search(rf"\s{re.escape(cleaned_term)}s?(?=\s)", cleaned_haystack) is not None
+
+
+def clean_rule_text(value: Any) -> str:
+    text = str(value or "").lower()
+    text = re.sub(r"[\u0300-\u036f]", "", text)
+    text = re.sub(r"\b(fill|bid|range|buy|pay|up to|acceptable|target|min|max|price)\b", " ", text)
+    text = re.sub(r"[:|,;()[\]{}]+", " ", text)
+    text = re.sub(r"[^a-z0-9/.' -]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def source_lines(text: str) -> list[str]:
     rows: list[str] = []
     for raw_line in str(text or "").splitlines():
@@ -593,7 +915,8 @@ def source_lines(text: str) -> list[str]:
         if not line or line.startswith("#"):
             continue
         try:
-            parsed = next(csv.reader([line]))
+            csv_line = re.sub(r"(?<=\d),(?=\d{3}\b)", "", line)
+            parsed = next(csv.reader([csv_line]))
             line = " ".join(cell.strip() for cell in parsed if cell.strip())
         except Exception:
             pass
@@ -624,7 +947,14 @@ def term_matches(term: str, haystack: str) -> bool:
     options = [words]
     alias_text = " ".join(words)
     options.extend(alias.split() for alias in aliases.get(alias_text, []))
-    return any(all(re.search(rf"\b{re.escape(word)}s?\b", haystack) for word in option) for option in options)
+    return any(all(word_matches(word, haystack) for word in option) for option in options)
+
+
+def word_matches(word: str, haystack: str) -> bool:
+    candidates = {word}
+    if len(word) > 3 and word.endswith("s"):
+        candidates.add(word[:-1])
+    return any(re.search(rf"\b{re.escape(candidate)}s?\b", haystack) for candidate in candidates)
 
 
 def parse_grade(text: str, fallback_grader: str = "") -> tuple[str, float | None]:
