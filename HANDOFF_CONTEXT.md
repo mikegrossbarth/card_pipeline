@@ -2,6 +2,16 @@
 
 L.U.C.A.S means Lot Upload, Comping & Assignment System.
 
+## Current State
+
+- Repo: `C:\Users\User\Documents\Codex\2026-06-04\card_pipeline`
+- Branch: `main`
+- Remote: `https://github.com/mikegrossbarth/card_pipeline.git`
+- Current UI tabs: `Home`, `Intake`, `Comp`, `Assignment`.
+- The old visible `Review` workflow has been renamed to `Assignment`; most internal Python names still use `review_*` intentionally to avoid churn.
+- The Home header button is `Working Folder`. Users choose their actual `WORKING SHEETS` folder, and L.U.C.A.S uses that folder's parent for `INCOMING SHEETS`, `RECEIVED SHEETS`, and `sheet_markers.json`.
+- Latest feature commit before this handoff update: `0814ff1 Configure pipeline from working folder`.
+
 ## Project Layout
 
 - `app.py`: main Tkinter desktop app.
@@ -40,6 +50,15 @@ The selected working folder is used directly. Its parent contains:
 
 Sheet marker data is stored in `sheet_markers.json` inside the configured sheet root.
 
+Home supports sheet markers for `Paid`, `Tracking Number`, `All Received`, and `Assigned Person`.
+
+Sheet movement rules:
+
+- Marking a Working sheet as `Paid` moves it to `INCOMING SHEETS`.
+- Marking any Working or Incoming sheet as `All Received` moves it to `RECEIVED SHEETS`.
+- Home has a `Received` tab. Select a received sheet, open `Edit Markers`, uncheck `All Received`, and save to move it back to `INCOMING SHEETS`.
+- Fully received sheets are also moved to `RECEIVED SHEETS` automatically after receive marking when all rows have been received.
+
 ## Card Ladder
 
 Card Ladder automation requires Chrome, the unpacked extension, and a logged-in Card Ladder account.
@@ -48,9 +67,42 @@ Load the extension from `cardladder-autocomp\extension` using `chrome://extensio
 
 The bridge binds to the first open port from `8765` through `8772`. The extension manifest includes host permissions for that full local range. The Comp tab's `Stop Run` button sets a bridge cancellation flag; the extension checks that flag between rows.
 
+Comping behavior notes:
+
+- `Empty Comps Only` skips rows that already have comp data or intentional terminal statuses like `invalid_cert`.
+- `Recomp All` queues all eligible rows.
+- Card Ladder no-comp/no-results paths should still capture and write the Card Ladder profile/card description when the page provides one.
+- Invalid certs clear stale Card Ladder/card data and mark the row `Card Ladder invalid cert`.
+- BGS/Beckett OCR now rejects subgrades such as Centering, Corners, Edges, Surface, Auto, and Autograph as the slab grade. If only subgrades are readable, grade should be blank.
+- Date weighted comping uses recent comp behavior already implemented in `comp_engine\bridge_server.py`; be careful changing comp math because accuracy regressions were a major recent concern.
+
+## Recent Commits
+
+- `0814ff1 Configure pipeline from working folder`
+- `5f7806e Rename review workflow to assignment`
+- `754086d Allow received sheets to return to incoming`
+- `bea5d8f Keep Card Ladder titles when comps are missing`
+- `a1a5d1c Guard BGS OCR against subgrades`
+- `5e0dda4 Harden release setup and Card Ladder bridge`
+
+## Verification Notes
+
+Use the Codex bundled Python for syntax-only checks when needed:
+
+`C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m py_compile app.py`
+
+The bundled Codex Python can import/compile the app but cannot create the Tk window because its Tcl/Tk files are incomplete. Full GUI smoke tests should use the project `.venv` or a normal python.org Windows Python install with Tkinter.
+
+Useful checks used recently:
+
+- `python -m py_compile app.py`
+- `node --check cardladder-autocomp\extension\content.js`
+- Temp-folder helper tests for sheet movement and working-folder normalization.
+
 ## Notes For Future Work
 
 - Keep machine-specific folders out of source. Use `.env`, `lucas_settings.json`, or the `Working Folder` button.
 - Do not commit `.env`, `.venv`, `work`, `outputs`, or generated debug screenshots.
 - Rows with `invalid_cert` are intentional non-empty statuses and should be skipped by empty-comps-only comp runs.
 - The Card Ladder extension is plain unpacked Chrome extension code. There is no Node/npm build step for normal install.
+- Be conservative with Card Ladder comp extraction. The current mechanism was repaired to avoid stale-page bleed and missed/no-comp description loss; prefer targeted fixes over rewrites.
