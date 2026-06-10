@@ -1481,6 +1481,7 @@ class CardPipelineApp(tk.Tk):
             return
         self.refresh_working_sheets()
         self.refresh_received_sheets()
+        self.refresh_incoming_index()
         self.refresh_home()
         if popup is not None:
             popup.destroy()
