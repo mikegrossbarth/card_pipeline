@@ -20,9 +20,11 @@ L.U.C.A.S is a desktop workflow app for intake, receiving, working-sheet trackin
 ```env
 GOOGLE_API_KEY=your_google_ai_studio_key
 LUCAS_WORKING_SHEETS_DIR=G:\My Drive\CARD_PIPELINE\WORKING SHEETS
+GOOGLE_SHEETS_OAUTH_CLIENT_ID=your_desktop_oauth_client_id
+GOOGLE_SHEETS_OAUTH_CLIENT_SECRET=your_desktop_oauth_client_secret
 ```
 
-`GOOGLE_API_KEY` can be created or copied from Google AI Studio's API key page. `LUCAS_WORKING_SHEETS_DIR` is optional because the same folder can be selected with the in-app `Working Folder` button. `LUCAS_PIPELINE_DIR` is still supported for older setups that point at the parent pipeline folder.
+`GOOGLE_API_KEY` can be created or copied from Google AI Studio's API key page. `LUCAS_WORKING_SHEETS_DIR` is optional because the same folder can be selected with the in-app `Working Folder` button. `LUCAS_PIPELINE_DIR` is still supported for older setups that point at the parent pipeline folder. `GOOGLE_SHEETS_OAUTH_CLIENT_ID` and `GOOGLE_SHEETS_OAUTH_CLIENT_SECRET` are optional unless Assignment Rules needs to read private Google Sheets files; use a Google Cloud OAuth client with application type `Desktop app`.
 
 ## Data Folder
 
@@ -80,7 +82,7 @@ Supported local source files include `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, an
 }
 ```
 
-The Assignment Rules manager supports three rule sources: manual rules, a local Google Keep export/text file, or a local synced Google Sheets/workbook file from Google Drive. Payouts can be manual tiers or a local payout file. When a native Google Sheets shortcut (`.gsheet`) is selected, L.U.C.A.S tries to export it to a local `.xlsx` copy under `ASSIGNMENT RULES\SHEET EXPORTS` and then reads that workbook. If Google Drive exposes the shortcut as an unreadable placeholder, the app asks for the Google Sheet URL and exports from that URL instead. Saved Google Sheet URL sources are refreshed into the cached `.xlsx` each time L.U.C.A.S loads assignment rules. The built-in manager uses the same basic custom-filter shape as the Sheet Filtering Tool: sports, value ranges, grade-company allow/block settings, block rules, and payout tiers.
+The Assignment Rules manager supports three rule sources: manual rules, a local Google Keep export/text file, or a local synced Google Sheets/workbook file from Google Drive. Payouts can be manual tiers or a local payout file. When a native Google Sheets shortcut (`.gsheet`) is selected, L.U.C.A.S stores the sheet URL and reads it through the Google Sheets API, matching the authenticated approach used by the Sheet Filtering Tool extension. Click `Connect Google` once in Assignment Rules to create the local token cache. If Google Drive exposes the shortcut as an unreadable placeholder, the app asks for the Google Sheet URL and then reads that same live sheet through the authenticated connection. Saved Google Sheet URL sources are refreshed from Google Sheets each time L.U.C.A.S loads assignment rules, with any cached local workbook path used only as a fallback. The built-in manager uses the same basic custom-filter shape as the Sheet Filtering Tool: sports, value ranges, grade-company allow/block settings, block rules, and payout tiers.
 
 ## Included Photo Tool
 

@@ -11,11 +11,11 @@ from assignment_engine import (
     CONFIG_PATH,
     gsheet_shortcut_url,
     load_gsheet_shortcut,
-    materialize_google_sheet_url,
-    materialize_gsheet_shortcut,
     normalize_source_value,
     read_source_text,
+    safe_filename,
 )
+from google_sheets_import import authorize_google_sheets
 
 
 GRADE_COMPANIES = ("psa", "bgs", "sgc", "cgc")
@@ -211,7 +211,12 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.rule_path_entry = ttk.Entry(path_row, textvariable=self.rule_source_path, style="Assign.TEntry")
         self.rule_path_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         ttk.Button(path_row, text="Browse", command=self._browse_rule_source, style="AssignSoft.TButton").grid(row=0, column=1)
-        ttk.Button(frame, text="Preview Source", command=self._preview_rule_source, style="AssignSoft.TButton").grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        actions = ttk.Frame(frame, style="AssignPanel.TFrame")
+        actions.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        actions.columnconfigure(0, weight=1)
+        actions.columnconfigure(1, weight=1)
+        ttk.Button(actions, text="Preview Source", command=self._preview_rule_source, style="AssignSoft.TButton").grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ttk.Button(actions, text="Connect Google", command=self._connect_google, style="AssignSoft.TButton").grid(row=0, column=1, sticky="ew", padx=(4, 0))
         ttk.Label(frame, textvariable=self.preview_status, style="AssignMuted.TLabel", wraplength=420).grid(row=5, column=0, sticky="ew", pady=(8, 0))
         return frame
 
@@ -372,7 +377,7 @@ class AssignmentRulesDialog(tk.Toplevel):
             else:
                 self.rule_materialized_source = None
                 self.rule_source_path.set(source)
-            text = read_source_text(source, self.config_path.parent)
+            text = read_source_text(source, self.config_path.parent, interactive_google=True)
         except Exception as error:
             self.preview_status.set(f"Could not read source: {error}")
             return
@@ -568,20 +573,21 @@ class AssignmentRulesDialog(tk.Toplevel):
             shortcut = load_gsheet_shortcut(path)
             source_url = gsheet_shortcut_url(shortcut)
             source_name = str(shortcut.get("name") or source_name)
-            exported = materialize_gsheet_shortcut(path, export_dir)
         except Exception as error:
             url = simpledialog.askstring(
                 "Google Sheet URL",
                 (
                     "Google Drive did not expose this .gsheet shortcut as a readable local file.\n\n"
-                    "Paste the Google Sheet URL and L.U.C.A.S will export a local XLSX copy."
+                    "Paste the Google Sheet URL and L.U.C.A.S will read it with the authenticated Google Sheets connection."
                 ),
                 parent=self,
             )
             if not url:
                 raise error
             source_url = url.strip()
-            exported = materialize_google_sheet_url(source_url, export_dir, source_name, unique=False)
+        if not source_url:
+            raise ValueError("This .gsheet shortcut does not contain a Google Sheet URL or document id.")
+        exported = export_dir / f"{safe_filename(source_name)}.xlsx"
         source = {
             "kind": "google_sheet",
             "url": source_url,
@@ -594,6 +600,14 @@ class AssignmentRulesDialog(tk.Toplevel):
         else:
             self.rule_materialized_source = source
         return source
+
+    def _connect_google(self) -> None:
+        try:
+            authorize_google_sheets(interactive=True)
+        except Exception as error:
+            messagebox.showerror("Connect Google", str(error))
+            return
+        self.preview_status.set("Google Sheets connected. Preview the source to read the live sheet.")
 
     def _save_and_reload(self) -> None:
         if self._save_company():

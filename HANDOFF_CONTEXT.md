@@ -29,6 +29,7 @@ Python must be a normal Python 3.11+ install with Tkinter available. The Windows
 Copy `.env.example` to `.env` for local configuration:
 
 - `GOOGLE_API_KEY`: required for Photo OCR and Card Ladder screenshot OCR fallback.
+- `GOOGLE_SHEETS_OAUTH_CLIENT_ID` and `GOOGLE_SHEETS_OAUTH_CLIENT_SECRET`: optional unless Assignment Rules must read private Google Sheets rule/payout files. Use a Google Cloud OAuth client with application type `Desktop app`.
 - `LUCAS_WORKING_SHEETS_DIR`: optional preconfigured working-sheets folder. Users can also set this in-app with `Working Folder`.
 - `LUCAS_PIPELINE_DIR`: legacy optional preconfigured sheet root for setups that keep the default folder names under one parent.
 
@@ -70,7 +71,7 @@ For each company, configure:
 - `payout` or `payout_source`
 - optional `accept_all` and `rate` fallback
 
-The app reads local `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, and `.xlsm` files, including synced Google Drive paths such as `G:\My Drive\...`. The manager exposes three rule source modes: manual rules, Google Keep local file, and Google Sheets local file. Google Keep means a local synced/exported text/markdown file. Google Sheets can be a local `.xlsx`/`.csv` or a native `.gsheet` shortcut. When `.gsheet` is selected, L.U.C.A.S exports it to a cached `.xlsx` under `<pipeline root>\ASSIGNMENT RULES\SHEET EXPORTS`, stores both the Google Sheet URL and local workbook path, then reads the workbook. Saved Google Sheet URL sources refresh the cached workbook each time assignment rules load, falling back to the last cached workbook if refresh fails. The shortcut reader supports common metadata (`url`, `doc_id`, `resource_id`). If Google Drive exposes the shortcut as an unreadable placeholder, the manager asks for the Google Sheet URL and exports from that URL instead.
+The app reads local `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, and `.xlsm` files, including synced Google Drive paths such as `G:\My Drive\...`. The manager exposes three rule source modes: manual rules, Google Keep local file, and Google Sheets local file. Google Keep means a local synced/exported text/markdown file. Google Sheets can be a local `.xlsx`/`.csv` or a native `.gsheet` shortcut. When `.gsheet` is selected, L.U.C.A.S stores the Google Sheet URL plus a local cache path and reads the live workbook through the Google Sheets API using a desktop OAuth token cached in `lucas_google_sheets_token.json` (ignored by git). Saved Google Sheet URL sources refresh from the live Google Sheet each time assignment rules load; the local workbook path is retained as fallback only. The shortcut reader supports common metadata (`url`, `doc_id`, `resource_id`). If Google Drive exposes the shortcut as an unreadable placeholder, the manager asks for the Google Sheet URL and reads that URL through the authenticated connection.
 
 The built-in manager writes manual custom-filter-style JSON under `<pipeline root>\ASSIGNMENT RULES`, using the Sheet Filtering Tool concepts of sports, value ranges, PSA/BGS/SGC/CGC grade allow/ranges, block rules, and payout tiers. It can also link an external local rule file and a local payout file to the same company. This is copied into L.U.C.A.S as standalone Python/Tk code; runtime does not depend on the Chrome extension folder.
 

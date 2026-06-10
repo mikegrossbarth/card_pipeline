@@ -13,6 +13,8 @@ from typing import Any
 
 from openpyxl import load_workbook
 
+from google_sheets_import import GoogleSheetsAuthError, read_google_sheet_text
+
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "assignment_companies.json"
@@ -171,9 +173,9 @@ def payout_for_value(tiers: list[PayoutTier], value: float) -> float | None:
     return None
 
 
-def read_source_text(source: Any, base_dir: Path) -> str:
+def read_source_text(source: Any, base_dir: Path, interactive_google: bool = False) -> str:
     if isinstance(source, dict):
-        return read_structured_source_text(source, base_dir)
+        return read_structured_source_text(source, base_dir, interactive_google=interactive_google)
     raw = normalize_source_value(source)
     if not raw:
         return ""
@@ -198,12 +200,20 @@ def read_source_text(source: Any, base_dir: Path) -> str:
         raise ValueError(f"Could not open local source path: {raw}") from error
 
 
-def read_structured_source_text(source: dict[str, Any], base_dir: Path) -> str:
+def read_structured_source_text(source: dict[str, Any], base_dir: Path, interactive_google: bool = False) -> str:
     kind = str(source.get("kind") or "").strip()
     path_value = source.get("path") or source.get("file")
     url = str(source.get("url") or "").strip()
     if kind == "google_sheet" and url:
         path = path_from_source_value(path_value, base_dir) if path_value else None
+        try:
+            return read_google_sheet_text(url, interactive=interactive_google)
+        except GoogleSheetsAuthError:
+            if not path or not path.exists():
+                raise
+        except Exception:
+            if not path or not path.exists():
+                raise
         try:
             if path:
                 materialize_google_sheet_url_to_path(url, path)
@@ -215,7 +225,7 @@ def read_structured_source_text(source: dict[str, Any], base_dir: Path) -> str:
             if path and path.exists():
                 return read_workbook_text(path)
             raise
-    return read_source_text(path_value or url or source.get("doc_id"), base_dir)
+    return read_source_text(path_value or url or source.get("doc_id"), base_dir, interactive_google=interactive_google)
 
 
 def path_from_source_value(value: Any, base_dir: Path) -> Path:
