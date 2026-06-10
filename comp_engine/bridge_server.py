@@ -17,8 +17,8 @@ from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
 
 BRIDGE_VERSION = "2026-06-01-cardladder-result-log-v3"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-10-no-results-ocr-fallback-v2"
-EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.3"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-10-no-results-ocr-fallback-v3"
+EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 COMP_STRATEGY_AVERAGE = "average_last_5"
 COMP_STRATEGY_HIGH = "highest_last_5"

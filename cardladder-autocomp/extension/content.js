@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-10-no-results-profile-v1";
+const CARDLADDER_CONTENT_VERSION = "2026-06-10-no-results-profile-v2";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -141,9 +141,9 @@ async function submitPreparedCertModal(row) {
   await submitSearch();
   const resultState = await waitForResultsPage(row, beforeUrl, beforeSignature);
   if (["invalid_cert", "no_results"].includes(resultState.status)) {
-    const text = document.body.innerText || "";
-    const profile = resultState.status === "no_results" ? extractProfileFromText(text) : { title: "", grader: "", grade: "" };
-    const resultCount = resultState.status === "no_results" ? extractResultCount(text) : null;
+    const noResultsDetails = resultState.status === "no_results"
+      ? await waitForNoResultsProfileDetails()
+      : { profile: { title: "", grader: "", grade: "" }, resultCount: null, evidence: "" };
     return {
       ...row,
       value: null,
@@ -153,12 +153,12 @@ async function submitPreparedCertModal(row) {
         ok: false,
         value: null,
         labelSeen: false,
-        profileTitle: profile.title,
-        profileGrader: profile.grader,
-        profileGrade: profile.grade,
-        resultCount,
+        profileTitle: noResultsDetails.profile.title,
+        profileGrader: noResultsDetails.profile.grader,
+        profileGrade: noResultsDetails.profile.grade,
+        resultCount: noResultsDetails.resultCount,
         comps: [],
-        evidence: resultState.reason,
+        evidence: noResultsDetails.evidence || resultState.reason,
         debugImage: "",
       },
       pageUrl: location.href,
@@ -181,6 +181,28 @@ async function submitPreparedCertModal(row) {
     status: "submitted",
     pageUrl: location.href,
     capturedAt: new Date().toISOString(),
+  };
+}
+
+async function waitForNoResultsProfileDetails() {
+  let lastText = "";
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    lastText = document.body.innerText || "";
+    const profile = extractProfileFromText(lastText);
+    const resultCount = extractResultCount(lastText);
+    if (profile.title) {
+      return {
+        profile,
+        resultCount,
+        evidence: `Extracted Card Ladder profile after no-results settle attempt ${attempt + 1}.`,
+      };
+    }
+    await sleep(300);
+  }
+  return {
+    profile: extractProfileFromText(lastText),
+    resultCount: extractResultCount(lastText),
+    evidence: "Card Ladder showed no matching results before a profile title appeared.",
   };
 }
 
