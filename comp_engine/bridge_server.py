@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import socket
 import threading
@@ -141,7 +140,6 @@ class BridgeState:
                 return
             row.card_ladder_value = None
             row.card_ladder_comps_average = None
-            row.card_ladder_comp_confidence = ""
             row.card_ladder_comps = ""
             row.card_ladder_screenshot = ""
             row.status = "Card Ladder partial capture"
@@ -151,7 +149,6 @@ class BridgeState:
             row.card_title = ""
             row.card_ladder_value = None
             row.card_ladder_comps_average = None
-            row.card_ladder_comp_confidence = ""
             row.card_ladder_comps = ""
             row.card_ladder_screenshot = ""
             row.status = "Card Ladder invalid cert"
@@ -160,7 +157,6 @@ class BridgeState:
         if profile_title:
             row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
         row.card_ladder_comps_average = comp_price(comps, self.comp_strategy)
-        row.card_ladder_comp_confidence = comp_confidence(comps)
         row.card_ladder_comps = format_comps(comps, self.comp_strategy)
         row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
         if result_status == "no_results":
@@ -387,40 +383,6 @@ def comp_values(comps: list[dict]) -> list[float]:
     comps = dedupe_comps(comps)
     values = [parse_value(comp.get("price")) for comp in comps[:5] if isinstance(comp, dict)]
     return [value for value in values if value is not None]
-
-
-def comp_confidence(comps: list[dict]) -> str:
-    comps = dedupe_comps(comps)
-    values = comp_values(comps)
-    count = len(values)
-    if not count:
-        return "Low (0)"
-    mean = sum(values) / count
-    if mean <= 0:
-        return "Low (0)"
-    variance = sum((value - mean) ** 2 for value in values) / count
-    stddev = math.sqrt(variance)
-    coefficient = stddev / mean
-    score = 100 - (coefficient * 260)
-    if count < 5:
-        score -= (5 - count) * 10
-
-    newest_date = newest_comp_date(comps)
-    if newest_date is None:
-        score -= 20
-    else:
-        days_old = max(0, (datetime.now() - newest_date).days)
-        if days_old > 30:
-            score -= min(35, 12 + (days_old - 30) * 0.5)
-
-    score = max(0, min(100, round(score)))
-    if score >= 75:
-        label = "High"
-    elif score >= 50:
-        label = "Medium"
-    else:
-        label = "Low"
-    return f"{label} ({score})"
 
 
 def newest_comp_date(comps: list[dict]) -> datetime | None:

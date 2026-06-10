@@ -62,7 +62,7 @@ Enter a title, then click `Save as Working Sheet`. Working sheets are saved to t
 
 Use the `Comp` tab for Card Ladder comping. Select a saved sheet, choose the comp method and run scope, then click `Run All Comps`.
 
-The app stores Card Ladder value, comps, confidence, and status in the active workbook output. Rows marked `invalid_cert` are skipped by empty-comps-only runs.
+The app stores Card Ladder value, comps, assignment, payout, and status in the active workbook output. Rows marked `invalid_cert` are skipped by empty-comps-only runs.
 
 Use `Stop Run` to request cancellation of an active Card Ladder run. The Chrome extension checks this signal between rows and stops before starting the next card.
 

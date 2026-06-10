@@ -75,7 +75,6 @@ COMPS_AVERAGE_HEADERS = (
     "compsaverage",
     "compaverage",
 )
-COMP_CONFIDENCE_HEADERS = ("compconfidence", "cardladdercompconfidence", "clconfidence", "confidence")
 COMP_DETAILS_HEADERS = ("cardladdercompdetails", "compdetails", "cardladdercompsdetail", "compsdetails")
 BEST_COMPANY_HEADERS = ("bestcompany", "assignedcompany", "companyassignment")
 ESTIMATED_PAYOUT_HEADERS = ("estimatedpayout", "estpayout", "payout")
@@ -89,7 +88,6 @@ SIMPLE_HEADER_ALIASES = (
     + PURCHASE_PRICE_HEADERS
     + CARD_LADDER_VALUE_HEADERS
     + COMPS_AVERAGE_HEADERS
-    + COMP_CONFIDENCE_HEADERS
     + BEST_COMPANY_HEADERS
     + ESTIMATED_PAYOUT_HEADERS
 )
@@ -110,7 +108,6 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
             purchase_price = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 3))
             card_ladder_value = parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, None))
             comps_average = parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, None))
-            comp_confidence = clean_part(_cell_by_header(sheet, row_index, headers, COMP_CONFIDENCE_HEADERS, None))
             comp_details = clean_part(_cell_by_header(sheet, row_index, headers, COMP_DETAILS_HEADERS, None))
             best_company = clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, None))
             estimated_payout = parse_money(_cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, None))
@@ -128,7 +125,6 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
                     "purchase_price": purchase_price,
                     "card_ladder_value": card_ladder_value,
                     "card_ladder_comps_average": comps_average,
-                    "card_ladder_comp_confidence": comp_confidence,
                     "card_ladder_comps": comp_details,
                     "best_company": best_company,
                     "estimated_payout": estimated_payout,
@@ -227,7 +223,6 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         "Purchase Price",
         "Card Ladder Value",
         "Comps",
-        "Comp Confidence",
         "Card Ladder Comp Details",
         "Card Ladder Screenshot",
         "Best Company",
@@ -245,7 +240,6 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
                 row.existing_value,
                 row.card_ladder_value,
                 row.card_ladder_comps_average,
-                row.card_ladder_comp_confidence,
                 row.card_ladder_comps,
                 row.card_ladder_screenshot,
                 row.best_company,
@@ -262,7 +256,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         cell.font = header_font
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    widths = [18, 22, 62, 16, 18, 14, 18, 58, 42, 18, 18, 20, 38]
+    widths = [18, 22, 62, 16, 18, 14, 58, 42, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[chr(64 + index)].width = width
     workbook.save(path)
@@ -316,7 +310,6 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
         "Purchase Price",
         "Card Ladder Value",
         "Comps",
-        "Comp Confidence",
         "Best Company",
         "Estimated Payout",
         "Status",
@@ -351,7 +344,6 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
                 getattr(row, "existing_value", None),
                 getattr(row, "card_ladder_value", None),
                 getattr(row, "card_ladder_comps_average", None),
-                getattr(row, "card_ladder_comp_confidence", ""),
                 getattr(row, "best_company", ""),
                 getattr(row, "estimated_payout", None),
                 getattr(row, "status", ""),
@@ -387,7 +379,7 @@ def style_company_sheet_header(sheet) -> None:
         cell.fill = header_fill
         cell.font = header_font
     sheet.freeze_panes = "A2"
-    widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 18, 18, 18, 20, 38]
+    widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
 

@@ -13,7 +13,6 @@ class WorkbookRow:
     existing_value: Any = None
     card_ladder_value: float | None = None
     card_ladder_comps_average: float | None = None
-    card_ladder_comp_confidence: str = ""
     card_ladder_comps: str = ""
     card_ladder_screenshot: str = ""
     alt_value: float | None = None

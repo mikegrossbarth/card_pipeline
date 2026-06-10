@@ -23,7 +23,6 @@ from bridge_server import (  # noqa: E402
     COMP_STRATEGY_STALE_NEWEST,
     BridgeServer,
     BridgeState,
-    comp_confidence,
     comp_price,
     format_comps,
     parse_formatted_comps,
@@ -157,7 +156,6 @@ DISPLAY_COLUMNS = (
     "purchase_price",
     "card_ladder_value",
     "card_ladder_comps_average",
-    "card_ladder_comp_confidence",
     "best_company",
     "estimated_payout",
     "status",
@@ -172,7 +170,6 @@ INTAKE_COLUMNS = (
     "purchase_price",
     "card_ladder_value",
     "card_ladder_comps_average",
-    "card_ladder_comp_confidence",
     "status",
 )
 
@@ -185,7 +182,6 @@ COMP_COLUMNS = (
     "purchase_price",
     "card_ladder_value",
     "card_ladder_comps_average",
-    "card_ladder_comp_confidence",
     "best_company",
     "estimated_payout",
     "status",
@@ -202,7 +198,6 @@ RECEIVE_COLUMNS = (
     "purchase_price",
     "card_ladder_value",
     "card_ladder_comps_average",
-    "card_ladder_comp_confidence",
     "best_company",
     "estimated_payout",
     "status",
@@ -221,7 +216,6 @@ EDITABLE_COLUMNS = {
     "purchase_price",
     "card_ladder_value",
     "card_ladder_comps_average",
-    "card_ladder_comp_confidence",
 }
 
 HEADINGS = {
@@ -234,7 +228,6 @@ HEADINGS = {
     "purchase_price": "Purchase",
     "card_ladder_value": "Card Ladder",
     "card_ladder_comps_average": "Comps",
-    "card_ladder_comp_confidence": "Comp Confidence",
     "best_company": "Best Company",
     "estimated_payout": "Est. Payout",
     "status": "Status",
@@ -251,7 +244,6 @@ COLUMN_WIDTHS = {
     "purchase_price": 90,
     "card_ladder_value": 100,
     "card_ladder_comps_average": 100,
-    "card_ladder_comp_confidence": 140,
     "best_company": 130,
     "estimated_payout": 100,
     "status": 160,
@@ -995,7 +987,6 @@ class CardPipelineApp(tk.Tk):
                     "purchase_price": row.get("purchase_price"),
                     "card_ladder_value": row.get("card_ladder_value"),
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
-                    "card_ladder_comp_confidence": row.get("card_ladder_comp_confidence") or "",
                     "card_ladder_comps": row.get("card_ladder_comps") or "",
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
@@ -1767,7 +1758,7 @@ class CardPipelineApp(tk.Tk):
             "card_title": title,
             "purchase_price": None,
             "source": f"Photo: {path.name}",
-            "notes": clean_part(card.get("position") or card.get("confidence") or ""),
+            "notes": clean_part(card.get("position") or ""),
         }
 
     def _photo_card_has_inventory(self, card: dict) -> bool:
@@ -1806,7 +1797,6 @@ class CardPipelineApp(tk.Tk):
                     "purchase_price": row.get("purchase_price"),
                     "card_ladder_value": row.get("card_ladder_value"),
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
-                    "card_ladder_comp_confidence": row.get("card_ladder_comp_confidence") or "",
                     "card_ladder_comps": row.get("card_ladder_comps") or "",
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
@@ -1864,7 +1854,6 @@ class CardPipelineApp(tk.Tk):
                     "purchase_price": row.get("purchase_price"),
                     "card_ladder_value": row.get("card_ladder_value"),
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
-                    "card_ladder_comp_confidence": row.get("card_ladder_comp_confidence") or "",
                     "card_ladder_comps": row.get("card_ladder_comps") or "",
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
@@ -2016,7 +2005,6 @@ class CardPipelineApp(tk.Tk):
             purchase_price = row.get("purchase_price") if row.get("purchase_price") is not None else match.get("purchase_price")
             card_ladder_value = row.get("card_ladder_value") if row.get("card_ladder_value") is not None else match.get("card_ladder_value")
             comps_average = row.get("card_ladder_comps_average") if row.get("card_ladder_comps_average") is not None else match.get("card_ladder_comps_average")
-            comp_confidence = str(row.get("card_ladder_comp_confidence") or match.get("card_ladder_comp_confidence") or "")
             comp_details = str(row.get("card_ladder_comps") or match.get("card_ladder_comps") or "")
             best_company = str(row.get("best_company") or match.get("best_company") or "").strip()
             estimated_payout = row.get("estimated_payout") if row.get("estimated_payout") is not None else match.get("estimated_payout")
@@ -2032,7 +2020,6 @@ class CardPipelineApp(tk.Tk):
                     existing_value=purchase_price,
                     card_ladder_value=card_ladder_value,
                     card_ladder_comps_average=comps_average,
-                    card_ladder_comp_confidence=comp_confidence,
                     card_ladder_comps=comp_details,
                     best_company=best_company,
                     estimated_payout=estimated_payout,
@@ -2065,8 +2052,6 @@ class CardPipelineApp(tk.Tk):
                     row.card_ladder_value = match.get("card_ladder_value")
                 if row.card_ladder_comps_average is None and match.get("card_ladder_comps_average") is not None:
                     row.card_ladder_comps_average = match.get("card_ladder_comps_average")
-                if not row.card_ladder_comp_confidence and match.get("card_ladder_comp_confidence"):
-                    row.card_ladder_comp_confidence = str(match.get("card_ladder_comp_confidence") or "")
                 if not row.card_ladder_comps and match.get("card_ladder_comps"):
                     row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
                 if not row.best_company and match.get("best_company"):
@@ -2275,7 +2260,6 @@ class CardPipelineApp(tk.Tk):
                 if not comps:
                     continue
                 row.card_ladder_comps_average = comp_price(comps, strategy)
-                row.card_ladder_comp_confidence = comp_confidence(comps)
                 row.card_ladder_comps = format_comps(comps, strategy)
                 updated += 1
         if updated:
@@ -2388,7 +2372,6 @@ class CardPipelineApp(tk.Tk):
                     existing_value=row.get("purchase_price"),
                     card_ladder_value=row.get("card_ladder_value"),
                     card_ladder_comps_average=row.get("card_ladder_comps_average"),
-                    card_ladder_comp_confidence=str(row.get("card_ladder_comp_confidence") or ""),
                     card_ladder_comps=str(row.get("card_ladder_comps") or ""),
                     best_company=str(row.get("best_company") or ""),
                     estimated_payout=row.get("estimated_payout"),
@@ -2654,8 +2637,6 @@ class CardPipelineApp(tk.Tk):
             return format_money(row.card_ladder_value)
         if column == "card_ladder_comps_average":
             return format_money(row.card_ladder_comps_average)
-        if column == "card_ladder_comp_confidence":
-            return row.card_ladder_comp_confidence
         if column == "best_company":
             return row.best_company
         if column == "estimated_payout":
@@ -2888,8 +2869,6 @@ class CardPipelineApp(tk.Tk):
                 row.card_ladder_value = self._parse_money_text(clean_value)
             elif column == "card_ladder_comps_average":
                 row.card_ladder_comps_average = self._parse_money_text(clean_value)
-            elif column == "card_ladder_comp_confidence":
-                row.card_ladder_comp_confidence = clean_value
             row.status = "Ready" if row.cert_number and row.grader else "Needs setup"
             if self._is_review_row_tree(tree) and column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert:
                 match = self._incoming_match(row.cert_number)
@@ -2904,8 +2883,6 @@ class CardPipelineApp(tk.Tk):
                         row.card_ladder_value = match.get("card_ladder_value")
                     if row.card_ladder_comps_average is None and match.get("card_ladder_comps_average") is not None:
                         row.card_ladder_comps_average = match.get("card_ladder_comps_average")
-                    if not row.card_ladder_comp_confidence and match.get("card_ladder_comp_confidence"):
-                        row.card_ladder_comp_confidence = str(match.get("card_ladder_comp_confidence") or "")
                     if not row.card_ladder_comps and match.get("card_ladder_comps"):
                         row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
                 elif row.cert_number:
