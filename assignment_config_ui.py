@@ -9,6 +9,8 @@ from typing import Any, Callable
 
 from assignment_engine import (
     CONFIG_PATH,
+    gsheet_shortcut_url,
+    load_gsheet_shortcut,
     materialize_google_sheet_url,
     materialize_gsheet_shortcut,
     normalize_source_value,
@@ -53,6 +55,8 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_source_path = tk.StringVar()
         self.status = tk.StringVar(value="Create or edit a company, then save.")
         self.preview_status = tk.StringVar(value="No source file selected.")
+        self.rule_materialized_source: dict[str, Any] | None = None
+        self.payout_materialized_source: dict[str, Any] | None = None
 
         self._configure_styles()
         self._build_ui()
@@ -278,9 +282,11 @@ class AssignmentRulesDialog(tk.Toplevel):
         company = self.companies[index]
         self.company_name.set(str(company.get("name") or ""))
         self.rule_source_mode.set(str(company.get("rules_source_kind") or source_kind_for_path(company.get("rules"))))
-        self.rule_source_path.set(str(company.get("rules") or ""))
+        self.rule_source_path.set(display_source_path(company.get("rules")))
+        self.rule_materialized_source = company.get("rules") if isinstance(company.get("rules"), dict) else None
         self.payout_source_mode.set(str(company.get("payout_source_kind") or ("file" if company.get("payout") and not is_generated_payout_path(company.get("payout")) else "manual")))
-        self.payout_source_path.set(str(company.get("payout") or ""))
+        self.payout_source_path.set(display_source_path(company.get("payout")))
+        self.payout_materialized_source = company.get("payout") if isinstance(company.get("payout"), dict) else None
         rules_payload = self._load_json_source(company.get("rules") or company.get("rules_source") or company.get("rulesSource"))
         payout_payload = self._load_json_source(company.get("payout") or company.get("payout_source") or company.get("payoutSource"))
         self._set_rule_rows(rules_payload.get("rules") if isinstance(rules_payload, dict) else [])
@@ -304,6 +310,8 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.rule_source_path.set("")
         self.payout_source_mode.set("manual")
         self.payout_source_path.set("")
+        self.rule_materialized_source = None
+        self.payout_materialized_source = None
         self._set_rule_rows([])
         self._set_payout_rows([])
         self._sync_source_visibility()
@@ -334,6 +342,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         )
         if path:
             self.rule_source_path.set(path)
+            self.rule_materialized_source = None
             self._preview_rule_source()
 
     def _browse_payout_source(self) -> None:
@@ -348,6 +357,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         )
         if path:
             self.payout_source_path.set(path)
+            self.payout_materialized_source = None
 
     def _preview_rule_source(self) -> None:
         path = self.rule_source_path.get().strip()
@@ -355,9 +365,14 @@ class AssignmentRulesDialog(tk.Toplevel):
             self.preview_status.set("No source file selected.")
             return
         try:
-            path = self._materialize_source_if_needed(path)
-            self.rule_source_path.set(path)
-            text = read_source_text(path, self.config_path.parent)
+            source = self._materialize_source_if_needed(path)
+            if isinstance(source, dict):
+                self.rule_materialized_source = source
+                self.rule_source_path.set(str(source.get("path") or ""))
+            else:
+                self.rule_materialized_source = None
+                self.rule_source_path.set(source)
+            text = read_source_text(source, self.config_path.parent)
         except Exception as error:
             self.preview_status.set(f"Could not read source: {error}")
             return
@@ -529,7 +544,7 @@ class AssignmentRulesDialog(tk.Toplevel):
                 messagebox.showinfo("Payout source", "Choose the local payout file before saving.")
                 return ""
             try:
-                return self._materialize_source_if_needed(path)
+                return self._materialize_source_if_needed(path, is_payout=True)
             except Exception as error:
                 messagebox.showerror("Payout source", f"Could not prepare payout source: {error}")
                 return ""
@@ -538,13 +553,21 @@ class AssignmentRulesDialog(tk.Toplevel):
         payout_path.write_text(json.dumps(self._payout_payload(), indent=2), encoding="utf-8")
         return str(payout_path)
 
-    def _materialize_source_if_needed(self, path_text: str) -> str:
+    def _materialize_source_if_needed(self, path_text: str, is_payout: bool = False) -> str | dict[str, Any]:
         normalized = normalize_source_value(path_text)
+        cached = self.payout_materialized_source if is_payout else self.rule_materialized_source
+        if isinstance(cached, dict) and normalize_source_value(cached.get("path")) == normalized:
+            return cached
         path = Path(normalized).expanduser()
         if path.suffix.lower() != ".gsheet":
             return normalized
         export_dir = self.rules_dir / "SHEET EXPORTS"
+        source_url = ""
+        source_name = path.stem or "google-sheet"
         try:
+            shortcut = load_gsheet_shortcut(path)
+            source_url = gsheet_shortcut_url(shortcut)
+            source_name = str(shortcut.get("name") or source_name)
             exported = materialize_gsheet_shortcut(path, export_dir)
         except Exception as error:
             url = simpledialog.askstring(
@@ -557,8 +580,20 @@ class AssignmentRulesDialog(tk.Toplevel):
             )
             if not url:
                 raise error
-            exported = materialize_google_sheet_url(url.strip(), export_dir, path.stem or "google-sheet")
-        return str(exported)
+            source_url = url.strip()
+            exported = materialize_google_sheet_url(source_url, export_dir, source_name, unique=False)
+        source = {
+            "kind": "google_sheet",
+            "url": source_url,
+            "path": str(exported),
+            "name": source_name,
+            "refresh_on_load": True,
+        }
+        if is_payout:
+            self.payout_materialized_source = source
+        else:
+            self.rule_materialized_source = source
+        return source
 
     def _save_and_reload(self) -> None:
         if self._save_company():
@@ -602,6 +637,10 @@ def open_assignment_rules_dialog(parent: tk.Tk, pipeline_root: Path, on_saved: C
 
 
 def source_kind_for_path(value: Any) -> str:
+    if isinstance(value, dict):
+        if value.get("kind") == "google_sheet":
+            return "sheet_file"
+        value = value.get("path") or value.get("file") or value.get("url")
     path = str(value or "").lower()
     if not path:
         return "manual"
@@ -617,7 +656,15 @@ def is_generated_rules_path(value: Any) -> bool:
 
 
 def is_generated_payout_path(value: Any) -> bool:
+    if isinstance(value, dict):
+        value = value.get("path") or value.get("file") or value.get("url")
     return str(value or "").lower().endswith("-payout.json")
+
+
+def display_source_path(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("path") or value.get("file") or value.get("url") or "")
+    return str(value or "")
 
 
 def safe_stem(value: str) -> str:

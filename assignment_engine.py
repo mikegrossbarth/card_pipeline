@@ -172,7 +172,7 @@ def payout_for_value(tiers: list[PayoutTier], value: float) -> float | None:
 
 def read_source_text(source: Any, base_dir: Path) -> str:
     if isinstance(source, dict):
-        return read_source_text(source.get("path") or source.get("file") or source.get("url") or source.get("doc_id"), base_dir)
+        return read_structured_source_text(source, base_dir)
     raw = normalize_source_value(source)
     if not raw:
         return ""
@@ -195,6 +195,32 @@ def read_source_text(source: Any, base_dir: Path) -> str:
         return path.read_text(encoding="utf-8-sig")
     except OSError as error:
         raise ValueError(f"Could not open local source path: {raw}") from error
+
+
+def read_structured_source_text(source: dict[str, Any], base_dir: Path) -> str:
+    kind = str(source.get("kind") or "").strip()
+    path_value = source.get("path") or source.get("file")
+    url = str(source.get("url") or "").strip()
+    if kind == "google_sheet" and url:
+        path = path_from_source_value(path_value, base_dir) if path_value else None
+        try:
+            if path:
+                materialize_google_sheet_url_to_path(url, path)
+                return read_workbook_text(path)
+            output_dir = base_dir / "ASSIGNMENT RULES" / "SHEET EXPORTS"
+            exported = materialize_google_sheet_url(url, output_dir, str(source.get("name") or "google-sheet"), unique=False)
+            return read_workbook_text(exported)
+        except Exception:
+            if path and path.exists():
+                return read_workbook_text(path)
+            raise
+    return read_source_text(path_value or url or source.get("doc_id"), base_dir)
+
+
+def path_from_source_value(value: Any, base_dir: Path) -> Path:
+    raw = normalize_source_value(value)
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else base_dir / path
 
 
 def normalize_source_value(source: Any) -> str:
@@ -252,12 +278,19 @@ def materialize_gsheet_shortcut(path: Path, output_dir: Path) -> Path:
     return materialize_google_sheet_url(url, output_dir, str(shortcut.get("name") or path.stem or "google-sheet"))
 
 
-def materialize_google_sheet_url(url: str, output_dir: Path, name: str = "google-sheet") -> Path:
+def materialize_google_sheet_url(url: str, output_dir: Path, name: str = "google-sheet", unique: bool = True) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = safe_filename(name)
-    output_path = unique_export_path(output_dir / f"{stem}.xlsx")
-    download_google_sheet_xlsx(url, output_path)
+    output_path = output_dir / f"{stem}.xlsx"
+    if unique:
+        output_path = unique_export_path(output_path)
+    materialize_google_sheet_url_to_path(url, output_path)
     return output_path
+
+
+def materialize_google_sheet_url_to_path(url: str, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    download_google_sheet_xlsx(url, output_path)
 
 
 def download_google_sheet_xlsx(url: str, output_path: Path) -> None:
