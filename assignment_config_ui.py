@@ -204,7 +204,7 @@ class AssignmentRulesDialog(tk.Toplevel):
     def _build_rule_source_panel(self, parent: ttk.Frame) -> ttk.Frame:
         frame = ttk.LabelFrame(parent, text="Rule Source", style="Assign.TLabelframe", padding=10)
         for row, (value, label) in enumerate(RULE_SOURCE_LABELS.items()):
-            ttk.Radiobutton(frame, text=label, value=value, variable=self.rule_source_mode, command=self._sync_source_visibility, style="Assign.TRadiobutton").grid(row=row, column=0, sticky=tk.W)
+            ttk.Radiobutton(frame, text=label, value=value, variable=self.rule_source_mode, command=self._on_source_mode_change, style="Assign.TRadiobutton").grid(row=row, column=0, sticky=tk.W)
         path_row = ttk.Frame(frame, style="AssignPanel.TFrame")
         path_row.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         path_row.columnconfigure(0, weight=1)
@@ -223,7 +223,7 @@ class AssignmentRulesDialog(tk.Toplevel):
     def _build_payout_source_panel(self, parent: ttk.Frame) -> ttk.Frame:
         frame = ttk.LabelFrame(parent, text="Payout Source", style="Assign.TLabelframe", padding=10)
         for row, (value, label) in enumerate(PAYOUT_SOURCE_LABELS.items()):
-            ttk.Radiobutton(frame, text=label, value=value, variable=self.payout_source_mode, command=self._sync_source_visibility, style="Assign.TRadiobutton").grid(row=row, column=0, sticky=tk.W)
+            ttk.Radiobutton(frame, text=label, value=value, variable=self.payout_source_mode, command=self._on_source_mode_change, style="Assign.TRadiobutton").grid(row=row, column=0, sticky=tk.W)
         path_row = ttk.Frame(frame, style="AssignPanel.TFrame")
         path_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         path_row.columnconfigure(0, weight=1)
@@ -258,6 +258,13 @@ class AssignmentRulesDialog(tk.Toplevel):
             self.payout_panel.grid_remove()
         else:
             self.payout_panel.grid(row=0, column=0, sticky="ew")
+
+    def _reset_preview_status(self) -> None:
+        self.preview_status.set("No source file selected.")
+
+    def _on_source_mode_change(self) -> None:
+        self._reset_preview_status()
+        self._sync_source_visibility()
 
     def _load_config(self) -> list[dict[str, Any]]:
         if not self.config_path.exists():
@@ -297,6 +304,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self._set_rule_rows(rules_payload.get("rules") if isinstance(rules_payload, dict) else [])
         self._set_payout_rows(payout_payload.get("tiers") if isinstance(payout_payload, dict) else [])
         self._sync_source_visibility()
+        self._reset_preview_status()
         self.status.set(f"Editing {company.get('name') or 'company'}.")
 
     def _load_json_source(self, source: Any) -> dict[str, Any]:
@@ -317,6 +325,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_source_path.set("")
         self.rule_materialized_source = None
         self.payout_materialized_source = None
+        self._reset_preview_status()
         self._set_rule_rows([])
         self._set_payout_rows([])
         self._sync_source_visibility()
