@@ -7,7 +7,7 @@ L.U.C.A.S means Lot Upload, Comping & Assignment System.
 - `app.py`: main Tkinter desktop app.
 - `comp_engine`: workbook IO, Card Ladder bridge, comp math, and screenshot OCR fallback.
 - `cardladder-autocomp\extension`: Chrome extension for Card Ladder automation.
-- `photo_tool`: bundled photo OCR helper used by Intake and Review.
+- `photo_tool`: bundled photo OCR helper used by Intake and Assignment.
 - `assets`: app logo and visual assets.
 
 ## Runtime Setup

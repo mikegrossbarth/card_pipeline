@@ -2,7 +2,7 @@
 
 Lot Upload, Comping & Assignment System.
 
-L.U.C.A.S is a desktop workflow app for intake, receiving, working-sheet tracking, Card Ladder comping, and review routing.
+L.U.C.A.S is a desktop workflow app for intake, receiving, working-sheet tracking, Card Ladder comping, and assignment routing.
 
 ## Install
 
@@ -64,9 +64,9 @@ The app stores Card Ladder value, comps, confidence, and status in the active wo
 
 Use `Stop Run` to request cancellation of an active Card Ladder run. The Chrome extension checks this signal between rows and stops before starting the next card.
 
-## Review
+## Assignment
 
-Use the `Review` tab for receiving and source matching. Reviewed cards are checked against sheets in `INCOMING SHEETS`, marked received when matched, and can be loaded from `RECEIVED SHEETS` for follow-up review.
+Use the `Assignment` tab for receiving and source matching. Assignment rows are checked against sheets in `INCOMING SHEETS`, marked received when matched, and can be loaded from `RECEIVED SHEETS` for follow-up assignment work.
 
 ## Included Photo Tool
 
