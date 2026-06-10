@@ -211,14 +211,20 @@ def normalize_source_value(source: Any) -> str:
 
 def load_gsheet_shortcut(path: Path) -> dict[str, Any]:
     try:
-        shortcut = json.loads(path.read_text(encoding="utf-8-sig"))
+        raw = path.read_bytes()
     except OSError as error:
         raise ValueError(
-            "Could not open this .gsheet shortcut locally. Choose a synced/exported .xlsx or .csv copy from Google Drive."
+            f"Could not open this .gsheet shortcut locally: {path}. Google Drive may be exposing it as an unreadable placeholder."
+        ) from error
+    try:
+        shortcut = json.loads(raw.decode("utf-8-sig"))
+    except UnicodeDecodeError as error:
+        raise ValueError(
+            f"This .gsheet shortcut is not UTF-8 JSON: {path}. Paste the Google Sheet URL so L.U.C.A.S can export it."
         ) from error
     except json.JSONDecodeError as error:
         raise ValueError(
-            "This .gsheet file is not readable shortcut JSON. Choose a synced/exported .xlsx or .csv copy from Google Drive."
+            f"This .gsheet file is not readable shortcut JSON: {path}. Paste the Google Sheet URL so L.U.C.A.S can export it."
         ) from error
     return shortcut
 
@@ -243,8 +249,12 @@ def materialize_gsheet_shortcut(path: Path, output_dir: Path) -> Path:
     url = gsheet_shortcut_url(shortcut)
     if not url:
         raise ValueError("This .gsheet shortcut does not contain a Google Sheet URL or document id.")
+    return materialize_google_sheet_url(url, output_dir, str(shortcut.get("name") or path.stem or "google-sheet"))
+
+
+def materialize_google_sheet_url(url: str, output_dir: Path, name: str = "google-sheet") -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    stem = safe_filename(str(shortcut.get("name") or path.stem or "google-sheet"))
+    stem = safe_filename(name)
     output_path = unique_export_path(output_dir / f"{stem}.xlsx")
     download_google_sheet_xlsx(url, output_path)
     return output_path

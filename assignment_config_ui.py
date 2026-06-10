@@ -4,10 +4,16 @@ import json
 import re
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any, Callable
 
-from assignment_engine import CONFIG_PATH, materialize_gsheet_shortcut, normalize_source_value, read_source_text
+from assignment_engine import (
+    CONFIG_PATH,
+    materialize_google_sheet_url,
+    materialize_gsheet_shortcut,
+    normalize_source_value,
+    read_source_text,
+)
 
 
 GRADE_COMPANIES = ("psa", "bgs", "sgc", "cgc")
@@ -538,7 +544,20 @@ class AssignmentRulesDialog(tk.Toplevel):
         if path.suffix.lower() != ".gsheet":
             return normalized
         export_dir = self.rules_dir / "SHEET EXPORTS"
-        exported = materialize_gsheet_shortcut(path, export_dir)
+        try:
+            exported = materialize_gsheet_shortcut(path, export_dir)
+        except Exception as error:
+            url = simpledialog.askstring(
+                "Google Sheet URL",
+                (
+                    "Google Drive did not expose this .gsheet shortcut as a readable local file.\n\n"
+                    "Paste the Google Sheet URL and L.U.C.A.S will export a local XLSX copy."
+                ),
+                parent=self,
+            )
+            if not url:
+                raise error
+            exported = materialize_google_sheet_url(url.strip(), export_dir, path.stem or "google-sheet")
         return str(exported)
 
     def _save_and_reload(self) -> None:
