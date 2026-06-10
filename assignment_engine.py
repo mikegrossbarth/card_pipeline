@@ -548,6 +548,7 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
 
 def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "") -> float | None:
     haystack = clean_text(text)
+    payouts: list[float] = []
     for tier in tiers:
         if value < tier.min_price:
             continue
@@ -555,8 +556,8 @@ def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "") -> f
             continue
         if tier.matcher and not payout_category_matches(tier.matcher, haystack):
             continue
-        return value * tier.rate
-    return None
+        payouts.append(value * tier.rate)
+    return max(payouts) if payouts else None
 
 
 def read_source_text(source: Any, base_dir: Path, interactive_google: bool = False) -> str:
