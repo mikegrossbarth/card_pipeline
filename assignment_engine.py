@@ -4,6 +4,7 @@ import csv
 import json
 import os
 import re
+import unicodedata
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -18,6 +19,7 @@ from google_sheets_import import GoogleSheetsAuthError, read_google_sheet_tabs, 
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "assignment_companies.json"
+PLAYER_SPORT_DATA_PATH = ROOT / "assignment_player_sport_data.js"
 CATEGORY_ALIASES = {
     "football": ["football", "nfl"],
     "soccer": ["soccer", "futbol", "premier league", "uefa", "fifa"],
@@ -91,6 +93,147 @@ PLAYER_SPORT_HINTS = {
     "erling haaland": "soccer",
     "connor bedard": "hockey",
     "wayne gretzky": "hockey",
+    "aja wilson": "wnba",
+    "a'ja wilson": "wnba",
+    "caitlin clark": "wnba",
+    "angel reese": "wnba",
+    "sabrina ionescu": "wnba",
+    "breanna stewart": "wnba",
+    "diana taurasi": "wnba",
+    "sue bird": "wnba",
+    "candace parker": "wnba",
+    "napheesa collier": "wnba",
+    "kelsey plum": "wnba",
+    "aliyah boston": "wnba",
+    "paige bueckers": "wnba",
+    "skylar diggins": "wnba",
+    "elena delle donne": "wnba",
+    "brittney griner": "wnba",
+    "maya moore": "wnba",
+    "lisa leslie": "wnba",
+    "sheryl swoopes": "wnba",
+}
+PLAYER_DISPLAY_NAMES: dict[str, str] = {}
+PLAYER_TEAM_HINTS: dict[str, list[str]] = {}
+PARTIAL_PLAYER_HINTS: dict[str, dict[str, str]] = {}
+PARTIAL_PLAYER_TOKEN_OVERRIDES = {
+    "judge": "aaron judge",
+}
+SORTED_PLAYER_KEYS: list[str] = []
+DISTINCTIVE_FIRST_NAMES = {
+    "lebron",
+    "kareem",
+    "magic",
+    "kobe",
+    "shaquille",
+    "hakeem",
+    "giannis",
+    "nikola",
+    "dwyane",
+    "kawhi",
+    "dirk",
+    "dolph",
+    "manu",
+    "shai",
+    "peyton",
+    "emmitt",
+    "ladainian",
+    "deion",
+    "shoeless",
+    "ichiro",
+    "satchel",
+    "jimmie",
+    "yogi",
+    "honus",
+    "pedro",
+}
+AMBIGUOUS_PARTIAL_TOKENS = {
+    "john",
+    "joe",
+    "bob",
+    "jim",
+    "mike",
+    "steve",
+    "david",
+    "chris",
+    "paul",
+    "james",
+    "thomas",
+    "johnson",
+    "brown",
+    "white",
+    "green",
+    "young",
+    "rose",
+    "king",
+    "hill",
+    "bell",
+    "reed",
+    "allen",
+    "george",
+    "parker",
+    "wilson",
+    "martinez",
+    "robinson",
+    "jackson",
+    "orange",
+    "purple",
+    "blue",
+    "red",
+    "gold",
+    "silver",
+    "black",
+}
+PRODUCT_WORDS = {
+    "topps",
+    "bowman",
+    "chrome",
+    "sapphire",
+    "finest",
+    "heritage",
+    "stadium",
+    "club",
+    "panini",
+    "donruss",
+    "optic",
+    "prizm",
+    "select",
+    "mosaic",
+    "contenders",
+    "national",
+    "treasures",
+    "flawless",
+    "immaculate",
+    "obsidian",
+    "revolution",
+    "absolute",
+    "elite",
+    "upper",
+    "deck",
+    "sp",
+    "young",
+    "guns",
+    "pokemon",
+    "one",
+    "piece",
+    "orange",
+    "purple",
+    "blue",
+    "red",
+    "green",
+    "gold",
+    "silver",
+    "black",
+    "white",
+    "pink",
+    "aqua",
+    "teal",
+    "bronze",
+    "vinyl",
+    "wave",
+    "shimmer",
+    "choice",
+    "auto",
 }
 GOAT_PAYOUT_PLAYERS = {
     "tom brady",
@@ -144,6 +287,94 @@ GOAT_PAYOUT_PLAYERS = {
     "kevin durant",
     "nikola jokic",
 }
+
+
+def initialize_player_sport_data() -> None:
+    load_extension_player_sport_data()
+    for player in PLAYER_SPORT_HINTS:
+        PLAYER_DISPLAY_NAMES.setdefault(player, title_case_name(player))
+    rebuild_partial_player_hints()
+    SORTED_PLAYER_KEYS[:] = sorted(PLAYER_SPORT_HINTS, key=len, reverse=True)
+
+
+def load_extension_player_sport_data() -> None:
+    if not PLAYER_SPORT_DATA_PATH.exists():
+        return
+    try:
+        raw = PLAYER_SPORT_DATA_PATH.read_text(encoding="utf-8")
+        match = re.search(r"window\.AutoSheetReviewPlayerSports\s*=\s*(\{.*?\})\s*;\s*\}\)\(\);", raw, re.S)
+        if not match:
+            return
+        payload = json.loads(match.group(1))
+    except Exception:
+        return
+    players = payload.get("players") if isinstance(payload, dict) else {}
+    if not isinstance(players, dict):
+        return
+    for player, value in players.items():
+        key = normalize_player_key(player)
+        if not key:
+            continue
+        if isinstance(value, str):
+            sport = canonical_sport_label(value) or clean_rule_text(value)
+            display_name = title_case_name(key)
+            teams: list[str] = []
+        elif isinstance(value, dict):
+            sport = canonical_sport_label(value.get("sport") or "") or clean_rule_text(value.get("sport") or "")
+            display_name = str(value.get("displayName") or value.get("display_name") or title_case_name(key)).strip()
+            teams_value = value.get("teams") if isinstance(value.get("teams"), list) else [value.get("team")] if value.get("team") else []
+            teams = [str(team or "").strip() for team in teams_value if str(team or "").strip()]
+        else:
+            continue
+        if not sport:
+            continue
+        PLAYER_SPORT_HINTS[key] = sport
+        PLAYER_DISPLAY_NAMES[key] = display_name
+        if teams:
+            PLAYER_TEAM_HINTS[key] = teams
+
+
+def rebuild_partial_player_hints() -> None:
+    token_map: dict[str, list[dict[str, str]]] = {}
+    for player, sport in PLAYER_SPORT_HINTS.items():
+        parts = clean_rule_text(player).split()
+        if not parts:
+            continue
+        tokens = [parts[-1], *[part for part in parts if is_distinctive_first_name(part)]]
+        for token in tokens:
+            if len(token) < 4 or is_ambiguous_partial_token(token) or token in PRODUCT_WORDS:
+                continue
+            token_map.setdefault(token, []).append({
+                "key": player,
+                "playerName": PLAYER_DISPLAY_NAMES.get(player) or title_case_name(player),
+                "sport": sport,
+            })
+    PARTIAL_PLAYER_HINTS.clear()
+    for token, hints in token_map.items():
+        override_key = PARTIAL_PLAYER_TOKEN_OVERRIDES.get(token)
+        override = next((hint for hint in hints if hint["key"] == override_key), None) if override_key else None
+        if override:
+            PARTIAL_PLAYER_HINTS[token] = override
+            continue
+        sports = {hint["sport"] for hint in hints}
+        if len(sports) == 1:
+            PARTIAL_PLAYER_HINTS[token] = sorted(hints, key=lambda hint: len(hint["playerName"]))[0]
+
+
+def normalize_player_key(value: Any) -> str:
+    return clean_rule_text(value)
+
+
+def is_distinctive_first_name(token: str) -> bool:
+    return token in DISTINCTIVE_FIRST_NAMES
+
+
+def is_ambiguous_partial_token(token: str) -> bool:
+    return token in AMBIGUOUS_PARTIAL_TOKENS
+
+
+def title_case_name(value: Any) -> str:
+    return " ".join(word[:1].upper() + word[1:] for word in str(value or "").split())
 
 
 @dataclass
@@ -1109,11 +1340,14 @@ def parse_card_for_matching(text: str) -> dict[str, Any]:
     player_matches = find_known_player_sports(raw)
     player = player_matches[0]["playerName"] if player_matches else ""
     sport = infer_sport(raw, player)
+    team_matches = find_known_player_teams(raw, player_matches)
     return {
         "text": raw,
         "playerName": player,
         "sport": sport,
         "sportCorrelations": player_matches,
+        "team": team_matches[0]["team"] if team_matches else "",
+        "teamCorrelations": team_matches,
     }
 
 
@@ -1128,20 +1362,58 @@ def infer_sport(raw: str, player_name: str = "") -> str:
 def find_known_player_sports(raw: str) -> list[dict[str, str]]:
     haystack = f" {clean_rule_text(raw)} "
     seen: set[str] = set()
-    matches: list[dict[str, str]] = []
-    for player in sorted(PLAYER_SPORT_HINTS, key=len, reverse=True):
+    exact_matches: list[dict[str, str]] = []
+    player_keys = SORTED_PLAYER_KEYS or sorted(PLAYER_SPORT_HINTS, key=len, reverse=True)
+    for player in player_keys:
         key = clean_rule_text(player)
         if f" {key} " not in haystack:
             continue
-        if any(player_name_contains(existing["key"], key) for existing in matches):
+        if any(player_name_contains(existing["key"], key) for existing in exact_matches):
             continue
         sport = PLAYER_SPORT_HINTS[player]
         unique_key = f"{key}:{sport}"
         if unique_key in seen:
             continue
         seen.add(unique_key)
-        matches.append({"key": key, "playerName": player, "sport": sport})
-    return matches
+        exact_matches.append({
+            "key": key,
+            "playerName": PLAYER_DISPLAY_NAMES.get(key) or title_case_name(key),
+            "sport": sport,
+        })
+    if exact_matches:
+        return exact_matches
+
+    partial_matches: list[dict[str, str]] = []
+    for token in sorted(PARTIAL_PLAYER_HINTS, key=len, reverse=True):
+        if f" {token} " not in haystack:
+            continue
+        hint = PARTIAL_PLAYER_HINTS[token]
+        unique_key = f"{hint['key']}:{hint['sport']}"
+        if unique_key in seen:
+            continue
+        seen.add(unique_key)
+        partial_matches.append(dict(hint))
+    return partial_matches
+
+
+def find_known_player_teams(raw: str, sport_correlations: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
+    seen: set[str] = set()
+    teams: list[dict[str, str]] = []
+    correlations = sport_correlations if sport_correlations is not None else find_known_player_sports(raw)
+    for correlation in correlations:
+        key = clean_rule_text(correlation.get("key") or correlation.get("playerName") or "")
+        for team in PLAYER_TEAM_HINTS.get(key, []):
+            unique_key = f"{key}:{clean_rule_text(team)}"
+            if unique_key in seen:
+                continue
+            seen.add(unique_key)
+            teams.append({
+                "key": key,
+                "playerName": correlation.get("playerName") or PLAYER_DISPLAY_NAMES.get(key) or title_case_name(key),
+                "sport": correlation.get("sport") or PLAYER_SPORT_HINTS.get(key, ""),
+                "team": team,
+            })
+    return teams
 
 
 def player_name_contains(longer_player: str, shorter_player: str) -> bool:
@@ -1281,13 +1553,7 @@ def sport_term_matches_known_player(sport: str, haystack: str) -> bool:
     expected = canonical_sport_label(sport)
     if not expected:
         return False
-    cleaned_haystack = f" {clean_rule_text(haystack)} "
-    for player, player_sport in PLAYER_SPORT_HINTS.items():
-        if player_sport != expected:
-            continue
-        if f" {clean_rule_text(player)} " in cleaned_haystack:
-            return True
-    return False
+    return any(canonical_sport_label(match.get("sport") or "") == expected for match in find_known_player_sports(haystack))
 
 
 def word_matches(word: str, haystack: str) -> bool:
@@ -1347,3 +1613,6 @@ def normalize_key(value: Any) -> str:
 
 def clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9/.' -]+", " ", str(value or "").lower())).strip()
+
+
+initialize_player_sport_data()
