@@ -413,6 +413,8 @@ class CompanyRules:
     blocks: list[AssignmentRule] = field(default_factory=list)
     grade_rules: dict[str, GradeRule] = field(default_factory=dict)
     rule_groups: list["CompanyRules"] = field(default_factory=list)
+    goat_players: set[str] = field(default_factory=set)
+    goat_ranges: list[AssignmentRule] = field(default_factory=list)
     accept_all: bool = False
 
 
@@ -478,7 +480,7 @@ class AssignmentEngine:
         for company in self.companies:
             if not company_accepts(company.rules, card_text, source_value, str(getattr(row, "grader", "") or "")):
                 continue
-            payout = payout_for_value(company.payout_tiers, source_value, card_text)
+            payout = payout_for_value(company.payout_tiers, source_value, card_text, company.rules)
             if payout is None:
                 continue
             candidates.append(AssignmentRecommendation(company.name, round(payout, 2), source_value))
@@ -546,7 +548,7 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
     return True
 
 
-def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "") -> float | None:
+def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "", rules: CompanyRules | None = None) -> float | None:
     haystack = clean_text(text)
     payouts: list[float] = []
     for tier in tiers:
@@ -554,7 +556,7 @@ def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "") -> f
             continue
         if tier.max_price is not None and value > tier.max_price:
             continue
-        if tier.matcher and not payout_category_matches(tier.matcher, haystack):
+        if tier.matcher and not payout_category_matches(tier.matcher, haystack, rules, value):
             continue
         payouts.append(value * tier.rate)
     return max(payouts) if payouts else None
@@ -835,6 +837,7 @@ def synthesize_workbook_rules(sheets: list[tuple[str, list[list[Any]]]]) -> list
     context = {"goatPlayers": unique_values(goat_players)}
 
     rules: list[str] = []
+    rules.extend(f"goat-player: {player}" for player in context["goatPlayers"])
     for title, values in sheets:
         cleaned_title = clean_rule_label(title)
         if re.search(r"^(comping standards|payouts)$", cleaned_title, re.I):
@@ -875,6 +878,7 @@ def synthesize_arena_club_rules(values: list[list[Any]], context: dict[str, Any]
                 if is_goat_rule_label(label) and context.get("goatPlayers"):
                     for player in context["goatPlayers"]:
                         rules.append(format_rule(player, parsed_range))
+                        rules.append(f"goat-range: {format_rule(player, parsed_range)}")
                 else:
                     rules.append(format_rule(label, parsed_range))
 
@@ -893,6 +897,7 @@ def synthesize_arena_club_category_table_rules(values: list[list[Any]], context:
             if is_goat_rule_label(expanded_label) and context.get("goatPlayers"):
                 for player in context["goatPlayers"]:
                     rules.append(format_rule(player, parsed_range))
+                    rules.append(f"goat-range: {format_rule(player, parsed_range)}")
             else:
                 rules.append(format_rule(expanded_label, parsed_range))
     return rules
@@ -1112,6 +1117,14 @@ def parse_rules(text: str, accept_all: bool = False) -> CompanyRules:
             if key in {"block", "blocks", "blockrules", "donotbuy", "neverbuy"}:
                 rules.blocks.append(parse_rule_line(value, block=True))
                 continue
+            if key in {"goatplayer", "goatplayers"}:
+                rules.goat_players.update(clean_rule_text(player) for player in split_values(value))
+                continue
+            if key in {"goatrange", "goatranges"}:
+                parsed_goat_range = parse_rule_line(value)
+                if parsed_goat_range.min_price is not None or parsed_goat_range.max_price is not None:
+                    rules.goat_ranges.append(parsed_goat_range)
+                continue
             if key in {"minprice", "minimumprice"}:
                 rules.ranges.append(AssignmentRule(min_price=parse_money(value)))
                 continue
@@ -1131,6 +1144,14 @@ def parse_rule_dict(payload: dict[str, Any], accept_all: bool = False) -> Compan
     rules = CompanyRules(accept_all=accept_all or bool(payload.get("accept_all")))
     rules.include.extend(split_values(payload.get("include") or payload.get("includeKeywords") or payload.get("sports") or payload.get("sport")))
     rules.exclude.extend(split_values(payload.get("exclude") or payload.get("excludeKeywords")))
+    rules.goat_players.update(clean_rule_text(player) for player in split_values(payload.get("goatPlayers") or payload.get("goat_players")))
+    for item in payload.get("goatRanges") or payload.get("goat_ranges") or []:
+        if isinstance(item, dict):
+            rules.goat_ranges.append(AssignmentRule(
+                matcher=str(item.get("matcher") or item.get("player") or "").strip(),
+                min_price=to_number(item.get("min") or item.get("minPrice")),
+                max_price=to_number(item.get("max") or item.get("maxPrice")),
+            ))
     for block in split_values(payload.get("blocks") or payload.get("blockRules")):
         rules.blocks.append(parse_rule_line(block, block=True))
     for item in payload.get("ranges") or payload.get("rangeRules") or []:
@@ -1335,17 +1356,24 @@ def normalize_payout_category(value: Any) -> str:
     return replacements.get(text.lower(), text)
 
 
-def payout_category_matches(category: str, haystack: str) -> bool:
+def payout_category_matches(category: str, haystack: str, rules: CompanyRules | None = None, value: float | None = None) -> bool:
     expected = clean_rule_text(category)
     if not expected:
         return True
-    value = parse_card_for_matching(haystack)
+    parsed_value = parse_card_for_matching(haystack)
     if expected in {"goats", "8 main goats"}:
-        return any(player_matches_value(player, value) for player in GOAT_PAYOUT_PLAYERS)
+        goat_players = rules.goat_players if rules else set()
+        if not goat_players or value is None:
+            return False
+        goat_haystack = clean_text(haystack)
+        return any(
+            player_matches_value(player, parsed_value)
+            for player in goat_players
+        ) and any(rule_matches(rule, goat_haystack, value) for rule in rules.goat_ranges)
     return (
         matcher_matches_text(category, haystack)
-        or player_matches_value(category, value)
-        or sport_label_matches_value(category, value, haystack)
+        or player_matches_value(category, parsed_value)
+        or sport_label_matches_value(category, parsed_value, haystack)
     )
 
 
