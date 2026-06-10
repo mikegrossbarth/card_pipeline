@@ -18,6 +18,7 @@ TOKEN_PATH = ROOT / "lucas_google_sheets_token.json"
 SCOPES = ("https://www.googleapis.com/auth/spreadsheets.readonly",)
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+_ENV_LOADED = False
 
 
 class GoogleSheetsAuthError(RuntimeError):
@@ -98,6 +99,7 @@ def spreadsheet_id_from_url(value: str) -> str:
 
 
 def oauth_client_config() -> tuple[str, str]:
+    load_local_env_files()
     client_id = (
         os.environ.get("GOOGLE_SHEETS_OAUTH_CLIENT_ID")
         or os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
@@ -113,6 +115,38 @@ def oauth_client_config() -> tuple[str, str]:
             "Missing GOOGLE_SHEETS_OAUTH_CLIENT_ID in .env. Create a Google OAuth Desktop client and add its client ID."
         )
     return client_id, client_secret
+
+
+def load_local_env_files() -> None:
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+    _ENV_LOADED = True
+    for path in (ROOT / ".env", ROOT / "photo_tool" / "app" / ".env", ROOT / "photo_tool" / ".env"):
+        load_simple_env(path)
+
+
+def load_simple_env(path: Path) -> None:
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = clean_env_value(value)
+
+
+def clean_env_value(value: str) -> str:
+    text = value.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        text = text[1:-1]
+    return text
 
 
 def load_token() -> dict[str, Any]:
