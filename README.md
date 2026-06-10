@@ -4,6 +4,8 @@ Lot Upload, Comping & Assignment System.
 
 L.U.C.A.S is a desktop workflow app for intake, receiving, working-sheet tracking, Card Ladder comping, and assignment routing.
 
+For a click-by-click setup walkthrough for a brand-new user, start with [FIRST_RUN_SETUP.md](FIRST_RUN_SETUP.md).
+
 ## Install
 
 1. Install Google Chrome.
