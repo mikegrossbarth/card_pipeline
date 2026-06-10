@@ -130,7 +130,12 @@ class BridgeState:
         row.card_ladder_value = value
         ocr = result.get("ocr") if isinstance(result.get("ocr"), dict) else {}
         comps = ocr.get("comps") if isinstance(ocr.get("comps"), list) else []
+        profile_title = clean_profile_title(ocr.get("profileTitle") or ocr.get("profile_title") or ocr.get("profile"))
+        profile_grader = clean_grader(ocr.get("profileGrader") or ocr.get("profile_grader") or row.grader)
+        profile_grade = clean_grade(ocr.get("profileGrade") or ocr.get("profile_grade") or "")
         if result_status == "partial_comp_capture":
+            if profile_title:
+                row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
             if row_has_comp_data(row):
                 row.notes = str(result.get("error") or "Partial Card Ladder capture skipped; kept existing comps.")
                 return
@@ -152,10 +157,7 @@ class BridgeState:
             row.status = "Card Ladder invalid cert"
             row.notes = str(result.get("error") or "Card Ladder showed no information with this cert.")
             return
-        profile_title = clean_profile_title(ocr.get("profileTitle") or ocr.get("profile_title") or ocr.get("profile"))
-        profile_grader = clean_grader(ocr.get("profileGrader") or ocr.get("profile_grader") or row.grader)
-        profile_grade = clean_grade(ocr.get("profileGrade") or ocr.get("profile_grade") or "")
-        if profile_title and result_status != "no_results":
+        if profile_title:
             row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
         row.card_ladder_comps_average = comp_price(comps, self.comp_strategy)
         row.card_ladder_comp_confidence = comp_confidence(comps)

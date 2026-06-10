@@ -141,11 +141,26 @@ async function submitPreparedCertModal(row) {
   await submitSearch();
   const resultState = await waitForResultsPage(row, beforeUrl, beforeSignature);
   if (["invalid_cert", "no_results"].includes(resultState.status)) {
+    const text = document.body.innerText || "";
+    const profile = resultState.status === "no_results" ? extractProfileFromText(text) : { title: "", grader: "", grade: "" };
+    const resultCount = resultState.status === "no_results" ? extractResultCount(text) : null;
     return {
       ...row,
       value: null,
       status: resultState.status,
       error: resultState.reason,
+      ocr: {
+        ok: false,
+        value: null,
+        labelSeen: false,
+        profileTitle: profile.title,
+        profileGrader: profile.grader,
+        profileGrade: profile.grade,
+        resultCount,
+        comps: [],
+        evidence: resultState.reason,
+        debugImage: "",
+      },
       pageUrl: location.href,
       capturedAt: new Date().toISOString(),
     };
