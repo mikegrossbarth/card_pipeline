@@ -9,6 +9,7 @@ import shutil
 import sys
 import threading
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -44,6 +45,7 @@ from intake_io import (  # noqa: E402
     infer_grader,
     mark_received_in_workbooks,
     normalize_grader,
+    read_company_profit_records,
     read_photo_export,
     read_simple_spreadsheet,
     scan_to_cert,
@@ -86,6 +88,7 @@ INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
 RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
 COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
 SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
+PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
 APP_TITLE = "L.U.C.A.S"
@@ -116,13 +119,14 @@ def save_app_settings(settings: dict[str, object]) -> None:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, PROFIT_LEDGER_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
     RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
     COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
     SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
+    PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 
 
 def set_pipeline_from_working_dir(path: Path) -> None:
@@ -338,9 +342,13 @@ class CardPipelineApp(tk.Tk):
         self.payout_status_var = tk.StringVar(value="No unpaid sheets loaded.")
         self.payout_summary_people: dict[str, str] = {}
         self.payout_detail_keys: dict[str, str] = {}
+        self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
+        self.profit_metric_var = tk.StringVar(value="")
+        self.profit_rows: list[dict[str, object]] = []
 
         self._build_ui()
         self._show_mode()
+        self.refresh_profit_tab()
         self._poll_events()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.status_var.set(self.bridge_status_text)
@@ -835,10 +843,251 @@ class CardPipelineApp(tk.Tk):
         self.payout_detail_tree.bind("<ButtonRelease-1>", self.open_payout_marker_editor)
 
     def _build_profit_tab(self) -> None:
-        panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(16, 12))
-        panel.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(panel, text="Profit", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).pack(anchor=tk.W)
-        ttk.Label(panel, text="Profit calculations will live here.", style="Muted.TLabel").pack(anchor=tk.W, pady=(8, 0))
+        controls = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(16, 12))
+        controls.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(controls, text="Profit", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, sticky="w")
+        ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=1, sticky="w", padx=(12, 0))
+        controls.columnconfigure(2, weight=1)
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=0, column=2, sticky="e")
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
+        chart_panel.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(chart_panel, text="Profit Over Time", style="Panel.TLabel").pack(anchor=tk.W)
+        self.profit_chart_canvas = tk.Canvas(
+            chart_panel,
+            height=230,
+            bg="#1f1f1f",
+            highlightthickness=1,
+            highlightbackground="#333333",
+        )
+        self.profit_chart_canvas.pack(fill=tk.X, expand=False, pady=(8, 0))
+        self.profit_chart_canvas.bind("<Configure>", lambda _event: self._draw_profit_chart())
+
+        ledger_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
+        ledger_panel.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(ledger_panel, text="Sold Cards", style="Panel.TLabel").pack(anchor=tk.W)
+        self.profit_tree = self._build_home_tree(
+            ledger_panel,
+            columns=("date", "company", "card", "cert", "purchase", "sale", "profit", "sheet"),
+            headings={
+                "date": "Date",
+                "company": "Company",
+                "card": "Card",
+                "cert": "Cert",
+                "purchase": "Purchase",
+                "sale": "Sale Price",
+                "profit": "Profit",
+                "sheet": "Company Sheet",
+            },
+            widths={"date": 95, "company": 150, "card": 440, "cert": 110, "purchase": 105, "sale": 105, "profit": 105, "sheet": 220},
+            height=18,
+        )
+        self.profit_tree.tag_configure("profit_positive", foreground="#d7fbe8")
+        self.profit_tree.tag_configure("profit_negative", foreground="#ffd1d1")
+        self.profit_tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
+
+    def _load_profit_ledger(self) -> list[dict[str, object]]:
+        if not PROFIT_LEDGER_PATH.exists():
+            return []
+        try:
+            raw = json.loads(PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
+
+    def _save_profit_ledger(self, rows: list[dict[str, object]]) -> None:
+        PROFIT_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        PROFIT_LEDGER_PATH.write_text(json.dumps(rows, indent=2, sort_keys=True), encoding="utf-8")
+
+    def _profit_record_key(self, record: dict[str, object]) -> str:
+        return "|".join(
+            str(record.get(field) or "").strip().lower()
+            for field in ("cert_number", "company", "date_added", "weekly_sheet_name", "source_sheet")
+        )
+
+    def _money_value(self, value: object) -> float | None:
+        if value is None or value == "":
+            return None
+        match = re.search(r"-?[\d,]+(?:\.\d{1,2})?", str(value))
+        if not match:
+            return None
+        try:
+            return float(match.group(0).replace(",", ""))
+        except ValueError:
+            return None
+
+    def _normalize_profit_record(self, record: dict[str, object]) -> dict[str, object]:
+        normalized = dict(record)
+        purchase = self._money_value(normalized.get("purchase_price"))
+        sale = self._money_value(normalized.get("sale_price"))
+        normalized["purchase_price"] = purchase
+        normalized["sale_price"] = sale
+        normalized["profit"] = round(sale - purchase, 2) if sale is not None and purchase is not None else None
+        normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))
+        normalized["company"] = str(normalized.get("company") or normalized.get("best_company") or "").strip()
+        normalized["card_title"] = str(normalized.get("card_title") or "").strip()
+        normalized["cert_number"] = str(normalized.get("cert_number") or "").strip()
+        normalized["weekly_sheet_name"] = str(normalized.get("weekly_sheet_name") or "").strip()
+        normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
+        normalized["ledger_key"] = self._profit_record_key(normalized)
+        return normalized
+
+    def record_profit_sales(self, records: list[dict[str, object]]) -> int:
+        if not records:
+            return 0
+        ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
+        added = 0
+        for record in records:
+            normalized = self._normalize_profit_record(record)
+            key = str(normalized.get("ledger_key") or "")
+            if not key or key in existing_keys:
+                continue
+            ledger.append(normalized)
+            existing_keys.add(key)
+            added += 1
+        if added:
+            self._save_profit_ledger(ledger)
+        self.refresh_profit_tab()
+        return added
+
+    def refresh_profit_tab(self) -> None:
+        ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
+        backfilled = 0
+        for record in read_company_profit_records(COMPANY_SHEETS_DIR):
+            normalized = self._normalize_profit_record(record)
+            key = str(normalized.get("ledger_key") or "")
+            if not key or key in existing_keys:
+                continue
+            ledger.append(normalized)
+            existing_keys.add(key)
+            backfilled += 1
+        if backfilled:
+            self._save_profit_ledger(ledger)
+        self.profit_rows = ledger
+        self.profit_rows.sort(key=lambda record: (str(record.get("date_added") or ""), str(record.get("company") or ""), str(record.get("card_title") or "")), reverse=True)
+        if not hasattr(self, "profit_tree"):
+            return
+        self.profit_tree.delete(*self.profit_tree.get_children())
+        total_purchase = 0.0
+        total_sale = 0.0
+        total_profit = 0.0
+        complete_count = 0
+        for record in self.profit_rows:
+            purchase = self._money_value(record.get("purchase_price"))
+            sale = self._money_value(record.get("sale_price"))
+            profit = self._money_value(record.get("profit"))
+            if purchase is not None:
+                total_purchase += purchase
+            if sale is not None:
+                total_sale += sale
+            if profit is not None:
+                total_profit += profit
+                complete_count += 1
+            tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
+            self.profit_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    record.get("date_added") or "",
+                    record.get("company") or "",
+                    record.get("card_title") or "",
+                    record.get("cert_number") or "",
+                    format_money(purchase),
+                    format_money(sale),
+                    format_money(profit),
+                    record.get("weekly_sheet_name") or "",
+                ),
+                tags=(tag,),
+            )
+        if self.profit_rows:
+            self.profit_tree.insert(
+                "",
+                tk.END,
+                values=("TOTAL", "", f"{len(self.profit_rows)} card(s)", "", format_money(total_purchase), format_money(total_sale), format_money(total_profit), ""),
+                tags=("total_row",),
+            )
+        self.profit_metric_var.set(
+            f"Cards: {len(self.profit_rows)}   Sales: {format_money(total_sale)}   Profit: {format_money(total_profit)}"
+        )
+        missing = len(self.profit_rows) - complete_count
+        suffix = f" | {missing} card(s) missing purchase or sale price" if missing else ""
+        backfill_suffix = f" | backfilled {backfilled} from company sheets" if backfilled else ""
+        self.profit_status_var.set(f"Loaded {len(self.profit_rows)} sold card(s) from {PROFIT_LEDGER_PATH.name}{suffix}{backfill_suffix}.")
+        self._draw_profit_chart()
+
+    def _profit_month_key(self, value: object) -> str:
+        text = str(value or "").strip()
+        try:
+            return datetime.strptime(text[:10], "%Y-%m-%d").strftime("%Y-%m")
+        except ValueError:
+            return text[:7] if len(text) >= 7 else "Unknown"
+
+    def _draw_profit_chart(self) -> None:
+        if not hasattr(self, "profit_chart_canvas"):
+            return
+        canvas = self.profit_chart_canvas
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 400)
+        height = max(canvas.winfo_height(), 220)
+        pad_left, pad_right, pad_top, pad_bottom = 62, 22, 26, 44
+        plot_w = max(width - pad_left - pad_right, 10)
+        plot_h = max(height - pad_top - pad_bottom, 10)
+        dated = [
+            record
+            for record in self.profit_rows
+            if self._money_value(record.get("profit")) is not None and self._profit_month_key(record.get("date_added")) != "Unknown"
+        ]
+        if not dated:
+            canvas.create_text(width / 2, height / 2, text="No profit data yet", fill="#b3b3b3", font=("Segoe UI", 12, "bold"))
+            return
+        monthly: dict[str, float] = {}
+        for record in dated:
+            month = self._profit_month_key(record.get("date_added"))
+            monthly[month] = monthly.get(month, 0.0) + float(self._money_value(record.get("profit")) or 0.0)
+        months = sorted(monthly)
+        cumulative_values: list[float] = []
+        running = 0.0
+        for month in months:
+            running += monthly[month]
+            cumulative_values.append(running)
+        values = list(monthly.values()) + cumulative_values + [0.0]
+        min_y = min(values)
+        max_y = max(values)
+        if min_y == max_y:
+            min_y -= 1
+            max_y += 1
+        def x_at(index: int) -> float:
+            if len(months) == 1:
+                return pad_left + plot_w / 2
+            return pad_left + (plot_w * index / (len(months) - 1))
+        def y_at(value: float) -> float:
+            return pad_top + (max_y - value) / (max_y - min_y) * plot_h
+        zero_y = y_at(0.0)
+        canvas.create_line(pad_left, pad_top, pad_left, pad_top + plot_h, fill="#555555")
+        canvas.create_line(pad_left, zero_y, pad_left + plot_w, zero_y, fill="#555555")
+        canvas.create_text(8, pad_top, anchor="nw", text=format_money(max_y), fill="#b3b3b3", font=("Segoe UI", 8))
+        canvas.create_text(8, pad_top + plot_h - 12, anchor="nw", text=format_money(min_y), fill="#b3b3b3", font=("Segoe UI", 8))
+        bar_width = min(44, max(10, plot_w / max(len(months), 1) * 0.45))
+        for index, month in enumerate(months):
+            x = x_at(index)
+            monthly_value = monthly[month]
+            y = y_at(monthly_value)
+            color = "#2dd4bf" if monthly_value >= 0 else "#ef4444"
+            canvas.create_rectangle(x - bar_width / 2, min(y, zero_y), x + bar_width / 2, max(y, zero_y), fill=color, outline="")
+            if len(months) <= 12 or index % max(1, len(months) // 8) == 0:
+                canvas.create_text(x, height - 24, text=month[5:] if month != "Unknown" else month, fill="#b3b3b3", font=("Segoe UI", 8))
+        points = [(x_at(index), y_at(value)) for index, value in enumerate(cumulative_values)]
+        for first, second in zip(points, points[1:]):
+            canvas.create_line(*first, *second, fill="#22c55e", width=3)
+        for x, y in points:
+            canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#22c55e", outline="")
+        canvas.create_text(pad_left, 8, anchor="nw", text="Bars: monthly profit", fill="#2dd4bf", font=("Segoe UI", 9, "bold"))
+        canvas.create_text(pad_left + 160, 8, anchor="nw", text="Line: cumulative profit", fill="#22c55e", font=("Segoe UI", 9, "bold"))
 
     def choose_working_folder(self) -> None:
         selected = filedialog.askdirectory(
@@ -857,6 +1106,7 @@ class CardPipelineApp(tk.Tk):
             directory.mkdir(parents=True, exist_ok=True)
         COMPANY_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
         self.home_sheet_markers = self._load_sheet_markers()
+        self.refresh_profit_tab()
         self.status_var.set(f"Working folder set to {WORKING_SHEETS_DIR}")
         self.refresh_home()
         self.refresh_working_sheets()
@@ -2326,6 +2576,7 @@ class CardPipelineApp(tk.Tk):
                     self.review_sheet_sources,
                 )
                 company_rows_added = int(company_result.get("rows_added") or 0)
+                self.record_profit_sales(list(company_result.get("added_records") or []))
                 errors.extend(company_result.get("errors") or [])
         moved_received: list[str] = []
         try:

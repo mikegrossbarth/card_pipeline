@@ -265,7 +265,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
 
 
 def append_company_sheet_rows(directory: Path, rows: list[Any], source_lookup: dict[int, str] | None = None, sheet_source_lookup: dict[int, str] | None = None) -> dict[str, Any]:
-    result = {"files_updated": 0, "rows_added": 0, "skipped": 0, "errors": []}
+    result = {"files_updated": 0, "rows_added": 0, "skipped": 0, "errors": [], "added_records": []}
     grouped: dict[str, list[Any]] = {}
     for row in rows:
         company = clean_part(getattr(row, "best_company", ""))
@@ -279,10 +279,12 @@ def append_company_sheet_rows(directory: Path, rows: list[Any], source_lookup: d
     for company, company_rows in grouped.items():
         path = company_weekly_sheet_path(directory, company)
         try:
-            added = append_rows_to_company_sheet(path, company_rows, source_lookup, sheet_source_lookup)
+            append_result = append_rows_to_company_sheet(path, company_rows, source_lookup, sheet_source_lookup)
+            added = int(append_result.get("added") or 0)
             if added:
                 result["files_updated"] += 1
                 result["rows_added"] += added
+                result["added_records"].extend(append_result.get("records") or [])
         except Exception as error:
             result["errors"].append(f"{company}: {error}")
     return result
@@ -300,7 +302,7 @@ def week_start(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
-def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dict[int, str] | None = None, sheet_source_lookup: dict[int, str] | None = None) -> int:
+def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dict[int, str] | None = None, sheet_source_lookup: dict[int, str] | None = None) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     headers = [
         "Date Added",
@@ -330,27 +332,53 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
         existing_certs = set()
 
     added = 0
+    added_records: list[dict[str, Any]] = []
     today_text = datetime.now().strftime("%Y-%m-%d")
+    company = path.parent.name
     for row in rows:
         cert = normalize_cert(getattr(row, "cert_number", ""))
         if cert and cert in existing_certs:
             continue
+        source_sheet = (sheet_source_lookup or {}).get(row.excel_row, "")
+        source = (source_lookup or {}).get(row.excel_row, "")
+        purchase_price = parse_money(getattr(row, "existing_value", None))
+        sale_price = parse_money(getattr(row, "estimated_payout", None))
         sheet.append(
             [
                 today_text,
-                (sheet_source_lookup or {}).get(row.excel_row, ""),
-                (source_lookup or {}).get(row.excel_row, ""),
+                source_sheet,
+                source,
                 cert,
                 getattr(row, "grader", ""),
                 getattr(row, "card_title", ""),
-                getattr(row, "existing_value", None),
+                purchase_price,
                 getattr(row, "card_ladder_value", None),
                 getattr(row, "card_ladder_comps_average", None),
                 getattr(row, "best_company", ""),
-                getattr(row, "estimated_payout", None),
+                sale_price,
                 getattr(row, "status", ""),
                 getattr(row, "notes", ""),
             ]
+        )
+        added_records.append(
+            {
+                "date_added": today_text,
+                "company": company,
+                "weekly_sheet": str(path),
+                "weekly_sheet_name": path.name,
+                "source_sheet": source_sheet,
+                "source": source,
+                "cert_number": cert,
+                "grader": clean_part(getattr(row, "grader", "")),
+                "card_title": clean_part(getattr(row, "card_title", "")),
+                "purchase_price": purchase_price,
+                "sale_price": sale_price,
+                "card_ladder_value": parse_money(getattr(row, "card_ladder_value", None)),
+                "comps": parse_money(getattr(row, "card_ladder_comps_average", None)),
+                "best_company": clean_part(getattr(row, "best_company", "")),
+                "status": clean_part(getattr(row, "status", "")),
+                "notes": clean_part(getattr(row, "notes", "")),
+            }
         )
         if cert:
             existing_certs.add(cert)
@@ -359,7 +387,7 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
         sheet.auto_filter.ref = sheet.dimensions
         workbook.save(path)
     workbook.close()
-    return added
+    return {"added": added, "records": added_records}
 
 
 def existing_sheet_certs(sheet) -> set[str]:
@@ -384,6 +412,51 @@ def style_company_sheet_header(sheet) -> None:
     widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
+
+
+def read_company_profit_records(directory: Path) -> list[dict[str, Any]]:
+    if not directory.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for path in sorted(directory.glob("*/*.xlsx")):
+        company = path.parent.name
+        try:
+            workbook = load_workbook(path, read_only=True, data_only=True)
+        except Exception:
+            continue
+        try:
+            sheet = workbook.active
+            headers = _header_map_for_row(sheet, 1)
+            for row_index in range(2, _sheet_max_row(sheet) + 1):
+                cert = normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, 4))
+                card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, 6))
+                purchase = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 7))
+                sale = parse_money(_cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, 11))
+                if not cert and not card and purchase is None and sale is None:
+                    continue
+                records.append(
+                    {
+                        "date_added": clean_part(_cell_by_header(sheet, row_index, headers, ("dateadded", "date"), 1)),
+                        "company": company,
+                        "weekly_sheet": str(path),
+                        "weekly_sheet_name": path.name,
+                        "source_sheet": clean_part(_cell_by_header(sheet, row_index, headers, ("sourcesheet",), 2)),
+                        "source": clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, 3)),
+                        "cert_number": cert,
+                        "grader": normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, 5)),
+                        "card_title": card,
+                        "purchase_price": purchase,
+                        "sale_price": sale,
+                        "card_ladder_value": parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, 8)),
+                        "comps": parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, 9)),
+                        "best_company": clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, 10)) or company,
+                        "status": clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, 12)),
+                        "notes": clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, 13)),
+                    }
+                )
+        finally:
+            workbook.close()
+    return records
 
 
 def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, str] | None = None) -> Path:
