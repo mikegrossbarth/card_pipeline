@@ -187,6 +187,20 @@ COMP_COLUMNS = (
     "sheet_source",
 )
 
+RECEIVE_COLUMNS = (
+    "excel_row",
+    "source",
+    "sheet_source",
+    "cert_number",
+    "grader",
+    "card_title",
+    "purchase_price",
+    "card_ladder_value",
+    "card_ladder_comps_average",
+    "card_ladder_comp_confidence",
+    "status",
+)
+
 REVIEW_COLUMNS = DISPLAY_COLUMNS
 
 ADD_REVIEW_ROW_IID = "__add_review_row__"
@@ -265,7 +279,7 @@ class CardPipelineApp(tk.Tk):
         )
 
         self.input_mode = tk.StringVar(value="Barcode Scanner")
-        self.review_mode = tk.StringVar(value="Automatic Assignment")
+        self.review_mode = tk.StringVar(value="Automatic Receive")
         self.review_input_mode = tk.StringVar(value="Barcode Scanner")
         self.comp_strategy_label = tk.StringVar(value="Average last 5")
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
@@ -295,10 +309,10 @@ class CardPipelineApp(tk.Tk):
         self.review_scan_cert = tk.StringVar()
         self.review_scan_entry: ttk.Entry | None = None
         self.review_scanning_active = False
-        self.review_status = tk.StringVar(value="Assignment station is off.")
+        self.review_status = tk.StringVar(value="Receive station is off.")
         self.assignment_progress_value = tk.DoubleVar(value=0)
         self.review_photo_paths: list[Path] = []
-        self.review_photo_status = tk.StringVar(value="No assignment photos selected.")
+        self.review_photo_status = tk.StringVar(value="No receive photos selected.")
         self.review_photo_worker: threading.Thread | None = None
         self.assignment_engine = AssignmentEngine.load()
         self.assignment_recommendation_job = 0
@@ -498,10 +512,12 @@ class CardPipelineApp(tk.Tk):
         self.home_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.intake_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.comp_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
+        self.receive_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.review_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.tabs.add(self.home_tab, text="Home")
         self.tabs.add(self.intake_tab, text="Intake")
         self.tabs.add(self.comp_tab, text="Comp")
+        self.tabs.add(self.receive_tab, text="Receive")
         self.tabs.add(self.review_tab, text="Assignment")
         self.row_trees: list[ttk.Treeview] = []
 
@@ -588,41 +604,52 @@ class CardPipelineApp(tk.Tk):
         self.comp_method_combo.bind("<<ComboboxSelected>>", self.recalculate_comp_method)
         ttk.Label(comp_controls, text="Comp Method", style="Panel.TLabel").pack(side=tk.RIGHT)
 
-        review_controls = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
-        review_controls.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(review_controls, text="Assignment Mode", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
+        receive_controls = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
+        receive_controls.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(receive_controls, text="Receive Mode", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
         review_mode = ttk.Combobox(
-            review_controls,
+            receive_controls,
             textvariable=self.review_mode,
             state="readonly",
-            values=["Automatic Assignment", "Manual Assignment"],
+            values=["Automatic Receive", "Manual Receive"],
             width=20,
         )
         review_mode.grid(row=0, column=1, sticky="w", padx=(8, 16))
         review_mode.bind("<<ComboboxSelected>>", lambda _event: self._show_review_mode())
-        ttk.Label(review_controls, text="Received Sheet", style="Panel.TLabel").grid(row=0, column=2, sticky="w")
+        ttk.Label(receive_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(10, 0))
+        receive_controls.columnconfigure(4, weight=1)
+
+        self.review_mode_host = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
+        self.review_mode_host.pack(fill=tk.X, pady=(0, 10))
+        self.receive_tree = self._build_table(self.receive_tab, editable=True, columns=RECEIVE_COLUMNS)
+        receive_bottom = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
+        receive_bottom.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(receive_bottom, text="Mark Received in Sheets", command=self.mark_review_received_in_sheets, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(receive_bottom, text="Refresh Incoming Sheets", command=self.refresh_incoming_index, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(receive_bottom, text="Delete Selected", command=self.delete_selected_review_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(receive_bottom, text="Clear Receive Rows", command=self.clear_review_rows, style="Soft.TButton").pack(side=tk.RIGHT)
+
+        review_controls = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
+        review_controls.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(review_controls, text="Received Sheet", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
         self.received_sheet_combo = ttk.Combobox(review_controls, textvariable=self.selected_received_sheet, state="readonly", width=32)
-        self.received_sheet_combo.grid(row=0, column=3, sticky="ew", padx=(8, 8))
-        ttk.Button(review_controls, text="Load", command=self.load_selected_received_sheet_for_review, style="Primary.TButton").grid(row=0, column=4, sticky="w", padx=(0, 8))
-        ttk.Button(review_controls, text="Refresh", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=5, sticky="w")
-        ttk.Button(review_controls, text="Assignment Rules", command=self.open_assignment_rules, style="Soft.TButton").grid(row=0, column=6, sticky="w", padx=(8, 0))
-        review_controls.columnconfigure(3, weight=1)
-        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=7, sticky="w", pady=(10, 0))
-        ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
+        self.received_sheet_combo.grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        ttk.Button(review_controls, text="Load", command=self.load_selected_received_sheet_for_review, style="Primary.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
+        ttk.Button(review_controls, text="Refresh", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=3, sticky="w")
+        ttk.Button(review_controls, text="Assignment Rules", command=self.open_assignment_rules, style="Soft.TButton").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        review_controls.columnconfigure(1, weight=1)
+        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(10, 0))
+        ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=5, sticky="w", pady=(4, 0))
         self.assignment_progress = ttk.Progressbar(
             review_controls,
             variable=self.assignment_progress_value,
             maximum=100,
             mode="determinate",
         )
-        self.assignment_progress.grid(row=3, column=0, columnspan=7, sticky="ew", pady=(8, 0))
-        self.review_mode_host = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
-        self.review_mode_host.pack(fill=tk.X, pady=(0, 10))
+        self.assignment_progress.grid(row=3, column=0, columnspan=5, sticky="ew", pady=(8, 0))
         self.review_tree = self._build_table(self.review_tab, editable=True, columns=REVIEW_COLUMNS)
         review_bottom = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         review_bottom.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(review_bottom, text="Mark Received in Sheets", command=self.mark_review_received_in_sheets, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(review_bottom, text="Refresh Incoming Sheets", command=self.refresh_incoming_index, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(review_bottom, text="Delete Selected", command=self.delete_selected_review_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(review_bottom, text="Clear Assignment Rows", command=self.clear_review_rows, style="Soft.TButton").pack(side=tk.RIGHT)
         self._show_review_mode()
@@ -1236,7 +1263,7 @@ class CardPipelineApp(tk.Tk):
             return
         for child in self.review_mode_host.winfo_children():
             child.destroy()
-        if self.review_mode.get() == "Manual Assignment":
+        if self.review_mode.get() == "Manual Receive":
             self._build_manual_review_mode()
         else:
             self._build_automatic_review_mode()
@@ -1244,7 +1271,7 @@ class CardPipelineApp(tk.Tk):
 
     def _build_manual_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
-        ttk.Label(self.review_mode_host, text="Double-click cells in the Assignment table to enter certs or adjust matched details.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
+        ttk.Label(self.review_mode_host, text="Double-click cells in the Receive table to enter certs or adjust matched details.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
 
     def _build_automatic_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
@@ -1264,7 +1291,7 @@ class CardPipelineApp(tk.Tk):
             self._build_review_barcode_controls(start_col=2)
 
     def _build_review_barcode_controls(self, start_col: int) -> None:
-        self.review_station_button = ttk.Button(self.review_mode_host, text="Enter Assignment Scanning Mode", command=self.toggle_review_scanning, style="Primary.TButton")
+        self.review_station_button = ttk.Button(self.review_mode_host, text="Enter Receive Scanning Mode", command=self.toggle_review_scanning, style="Primary.TButton")
         self.review_station_button.grid(row=0, column=start_col, sticky="w", padx=(0, 14))
         ttk.Label(self.review_mode_host, text="Scan", style="Panel.TLabel").grid(row=0, column=start_col + 1, sticky="w")
         self.review_scan_entry = ttk.Entry(self.review_mode_host, textvariable=self.review_scan_cert, width=28)
@@ -1278,9 +1305,9 @@ class CardPipelineApp(tk.Tk):
     def _build_review_photo_controls(self, start_col: int) -> None:
         self.review_scanning_active = False
         self.review_scan_entry = None
-        ttk.Button(self.review_mode_host, text="Add Assignment Photos", command=self.add_review_photos, style="Soft.TButton").grid(row=0, column=start_col, sticky="w", padx=(0, 8))
-        ttk.Button(self.review_mode_host, text="Scan Assignment Photos", command=self.scan_review_photos, style="Primary.TButton").grid(row=0, column=start_col + 1, sticky="w", padx=(0, 8))
-        ttk.Button(self.review_mode_host, text="Clear Assignment Photos", command=self.clear_review_photos, style="Soft.TButton").grid(row=0, column=start_col + 2, sticky="w")
+        ttk.Button(self.review_mode_host, text="Add Receive Photos", command=self.add_review_photos, style="Soft.TButton").grid(row=0, column=start_col, sticky="w", padx=(0, 8))
+        ttk.Button(self.review_mode_host, text="Scan Receive Photos", command=self.scan_review_photos, style="Primary.TButton").grid(row=0, column=start_col + 1, sticky="w", padx=(0, 8))
+        ttk.Button(self.review_mode_host, text="Clear Receive Photos", command=self.clear_review_photos, style="Soft.TButton").grid(row=0, column=start_col + 2, sticky="w")
         ttk.Label(self.review_mode_host, textvariable=self.review_photo_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=9, sticky="w", pady=(10, 0))
 
     def _build_barcode_mode(self) -> None:
@@ -1587,7 +1614,7 @@ class CardPipelineApp(tk.Tk):
                     "notes": "Loaded from received sheet",
                 }
             )
-        added = self._append_review_rows(review_rows)
+        added = self._append_review_rows(review_rows, schedule_recommendations=True)
         self.review_status.set(f"Loaded {len(added)} row(s) from {name}.")
         self.status_var.set(f"Loaded received sheet: {name}")
 
@@ -1604,9 +1631,10 @@ class CardPipelineApp(tk.Tk):
         ])
         if added_rows:
             row_id = str(added_rows[-1])
-            self.review_tree.selection_set(row_id)
-            self.review_tree.focus(row_id)
-            self.review_tree.see(row_id)
+            target_tree = self.receive_tree if hasattr(self, "receive_tree") else self.review_tree
+            target_tree.selection_set(row_id)
+            target_tree.focus(row_id)
+            target_tree.see(row_id)
             self.review_status.set("Manual row added. Double-click cells to edit it.")
             return added_rows[-1]
         return None
@@ -1615,21 +1643,21 @@ class CardPipelineApp(tk.Tk):
         self.review_scanning_active = not self.review_scanning_active
         self._set_review_station_controls()
         if self.review_scanning_active:
-            self.review_status.set("Assignment scanning mode armed. Scan received certs now.")
+            self.review_status.set("Receive scanning mode armed. Scan received certs now.")
             self._arm_review_scanner()
         else:
-            self.review_status.set("Assignment station is off.")
+            self.review_status.set("Receive station is off.")
 
     def _set_review_station_controls(self) -> None:
         if not hasattr(self, "review_station_button"):
             return
-        self.review_station_button.configure(text="Exit Assignment Scanning Mode" if self.review_scanning_active else "Enter Assignment Scanning Mode")
+        self.review_station_button.configure(text="Exit Receive Scanning Mode" if self.review_scanning_active else "Enter Receive Scanning Mode")
         if self.review_scan_entry is not None:
             self.review_scan_entry.configure(state=tk.NORMAL if self.review_scanning_active else tk.DISABLED)
 
     def add_review_scanned_row(self) -> None:
         if not self.review_scanning_active:
-            self.review_status.set("Click Enter Assignment Scanning Mode before scanning.")
+            self.review_status.set("Click Enter Receive Scanning Mode before scanning.")
             return
         cert = scan_to_cert(self.review_scan_cert.get())
         if not cert:
@@ -1642,7 +1670,7 @@ class CardPipelineApp(tk.Tk):
                 "grader": "",
                 "card_title": "",
                 "purchase_price": None,
-                "source": "Assignment Barcode",
+                "source": "Receive Barcode",
                 "notes": "Received",
             }
         ])
@@ -1652,17 +1680,17 @@ class CardPipelineApp(tk.Tk):
 
     def add_review_photos(self) -> None:
         paths = filedialog.askopenfilenames(
-            title="Choose assignment photos",
+            title="Choose receive photos",
             filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.bmp"), ("All files", "*.*")],
         )
         self._add_review_photo_paths([Path(path) for path in paths])
 
     def clear_review_photos(self) -> None:
         if self.review_photo_worker and self.review_photo_worker.is_alive():
-            messagebox.showinfo("Scan running", "Wait for the assignment photo scan to finish before clearing photos.")
+            messagebox.showinfo("Scan running", "Wait for the receive photo scan to finish before clearing photos.")
             return
         self.review_photo_paths = []
-        self.review_photo_status.set("No assignment photos selected.")
+        self.review_photo_status.set("No receive photos selected.")
 
     def _add_review_photo_paths(self, paths: list[Path]) -> None:
         existing = {path.resolve() for path in self.review_photo_paths if path.exists()}
@@ -1673,14 +1701,14 @@ class CardPipelineApp(tk.Tk):
             self.review_photo_paths.append(path)
             existing.add(path.resolve())
             added += 1
-        self.review_photo_status.set(f"{len(self.review_photo_paths)} assignment photo(s) selected. Added {added}.")
+        self.review_photo_status.set(f"{len(self.review_photo_paths)} receive photo(s) selected. Added {added}.")
 
     def scan_review_photos(self) -> None:
         if self.review_photo_worker and self.review_photo_worker.is_alive():
-            messagebox.showinfo("Scan running", "Assignment photo scan is already running.")
+            messagebox.showinfo("Scan running", "Receive photo scan is already running.")
             return
         if not self.review_photo_paths:
-            messagebox.showinfo("No photos", "Add assignment photos before scanning.")
+            messagebox.showinfo("No photos", "Add receive photos before scanning.")
             return
         if genai is None or identify_cards_sync is None:
             messagebox.showerror("Missing dependency", "Photo OCR dependencies are not available.")
@@ -1691,7 +1719,7 @@ class CardPipelineApp(tk.Tk):
             messagebox.showerror("Missing GOOGLE_API_KEY", "Create .env in the L.U.C.A.S project folder or set GOOGLE_API_KEY.")
             return
         self.photo_client = genai.Client(api_key=api_key)
-        self.review_photo_status.set(f"Scanning 0/{len(self.review_photo_paths)} assignment photo(s)...")
+        self.review_photo_status.set(f"Scanning 0/{len(self.review_photo_paths)} receive photo(s)...")
         self.review_photo_worker = threading.Thread(target=self._review_photo_scan_worker, daemon=True)
         self.review_photo_worker.start()
 
@@ -1705,18 +1733,18 @@ class CardPipelineApp(tk.Tk):
                 rows = [self._photo_card_to_review_row(path, card) for card in cards if self._photo_card_has_inventory(card)]
                 detected_total += len(rows)
                 self.events.put(("review_rows", rows))
-                self.events.put(("review_status", f"Scanning {index}/{total}: {path.name} -> {len(rows)} assignment row(s)."))
+                self.events.put(("review_status", f"Scanning {index}/{total}: {path.name} -> {len(rows)} receive row(s)."))
             except Exception as error:
                 self.events.put(("review_status", f"{path.name}: {error}"))
-        self.events.put(("review_status", f"Assignment photo scan complete. Added {detected_total} row(s)."))
+        self.events.put(("review_status", f"Receive photo scan complete. Added {detected_total} row(s)."))
 
     def _photo_card_to_review_row(self, path: Path, card: dict) -> dict[str, object]:
         row = self._photo_card_to_row(path, card)
-        row["source"] = f"Assignment Photo: {path.name}"
+        row["source"] = f"Receive Photo: {path.name}"
         row["notes"] = "Received"
         return row
 
-    def _append_review_rows(self, rows: list[dict[str, object]]) -> list[int]:
+    def _append_review_rows(self, rows: list[dict[str, object]], schedule_recommendations: bool = False) -> list[int]:
         existing = list(self.review_rows)
         start = len(existing) + 2
         added_excel_rows: list[int] = []
@@ -1752,7 +1780,7 @@ class CardPipelineApp(tk.Tk):
             self.review_sheet_sources[excel_row] = sheet_source
             added_excel_rows.append(excel_row)
         self.review_rows = existing
-        self._refresh_table()
+        self._refresh_table(schedule_recommendations=schedule_recommendations)
         return added_excel_rows
 
     def _incoming_match(self, cert: str) -> dict[str, object]:
@@ -1786,25 +1814,30 @@ class CardPipelineApp(tk.Tk):
         self.review_sources = {}
         self.review_sheet_sources = {}
         self._refresh_table()
-        self.review_status.set("Assignment rows cleared.")
+        self.review_status.set("Receive/assignment rows cleared.")
 
     def delete_selected_review_rows(self) -> None:
+        tree = self.review_tree
+        if hasattr(self, "receive_tree") and self.receive_tree.selection():
+            tree = self.receive_tree
+        elif self.review_tree.selection():
+            tree = self.review_tree
         deleted = self._delete_selected_rows(
-            self.review_tree,
+            tree,
             self.review_rows,
             self.review_sources,
             self.review_sheet_sources,
         )
         if deleted:
-            self.review_status.set(f"Deleted {deleted} assignment row(s).")
-            self.status_var.set(f"Deleted {deleted} assignment row(s).")
+            self.review_status.set(f"Deleted {deleted} receive/assignment row(s).")
+            self.status_var.set(f"Deleted {deleted} receive/assignment row(s).")
         else:
-            self.review_status.set("Select assignment rows to delete.")
+            self.review_status.set("Select receive or assignment rows to delete.")
 
     def mark_review_received_in_sheets(self) -> None:
         certs = {scan_to_cert(row.cert_number) for row in self.review_rows if scan_to_cert(row.cert_number)}
         if not certs:
-            messagebox.showinfo("No received certs", "Scan or load received cards in Assignment before marking sheets.")
+            messagebox.showinfo("No received certs", "Scan or load received cards in Receive before marking sheets.")
             return
         paths: list[Path] = []
         errors: list[str] = []
@@ -1845,7 +1878,7 @@ class CardPipelineApp(tk.Tk):
             messagebox.showwarning("Some sheets were skipped", "\n".join(errors[:8]))
 
     def _arm_review_scanner(self) -> None:
-        if self.review_mode.get() != "Automatic Assignment" or self.review_scan_entry is None:
+        if self.review_mode.get() != "Automatic Receive" or self.review_scan_entry is None:
             return
         try:
             self.review_scan_entry.focus_set()
@@ -2190,7 +2223,7 @@ class CardPipelineApp(tk.Tk):
     def reload_assignment_rules(self) -> None:
         self.assignment_engine = AssignmentEngine.load()
         self.assignment_config_status.set(self._assignment_config_status())
-        self._refresh_table()
+        self._refresh_table(schedule_recommendations=True)
         self.review_status.set("Assignment rules reloaded.")
         self.status_var.set("Assignment rules reloaded.")
 
@@ -2205,9 +2238,10 @@ class CardPipelineApp(tk.Tk):
             return "Assignment companies: none configured. Add assignment_companies.json to enable best-company payouts."
         return f"Assignment companies loaded: {count}"
 
-    def _refresh_table(self, schedule_recommendations: bool = True) -> None:
+    def _refresh_table(self, schedule_recommendations: bool = False) -> None:
         self._render_rows(self.intake_tree, self.intake_rows, self.intake_sources)
         self._render_rows(self.comp_tree, self.state.rows, self.row_sources, self.comp_sheet_sources)
+        self._render_rows(self.receive_tree, self.review_rows, self.review_sources, self.review_sheet_sources)
         self._render_rows(self.review_tree, self.review_rows, self.review_sources, self.review_sheet_sources)
         completed = sum(1 for row in self.state.rows if row.card_ladder_value is not None)
         self.summary_var.set(f"{len(self.intake_rows)} intake rows | Loaded comp rows: {len(self.state.rows)} | Card Ladder values: {completed}")
@@ -2232,7 +2266,7 @@ class CardPipelineApp(tk.Tk):
                 tags=tuple(tags),
                 values=tuple(self._row_display_value(row, col, sources, sheet_sources) for col in columns),
             )
-        if tree is self.review_tree and self.review_mode.get() == "Manual Assignment":
+        if self._is_receive_tree(tree) and self.review_mode.get() == "Manual Receive":
             add_values = []
             for col in columns:
                 if col == "excel_row":
@@ -2252,6 +2286,12 @@ class CardPipelineApp(tk.Tk):
 
     def _tree_columns(self, tree: ttk.Treeview) -> tuple[str, ...]:
         return tuple(getattr(tree, "_display_columns", DISPLAY_COLUMNS))
+
+    def _is_receive_tree(self, tree: ttk.Treeview) -> bool:
+        return hasattr(self, "receive_tree") and tree is self.receive_tree
+
+    def _is_review_row_tree(self, tree: ttk.Treeview) -> bool:
+        return self._is_receive_tree(tree) or (hasattr(self, "review_tree") and tree is self.review_tree)
 
     def _row_display_value(
         self,
@@ -2293,7 +2333,7 @@ class CardPipelineApp(tk.Tk):
         if tree is self.intake_tree:
             self.delete_selected_intake_rows()
             return "break"
-        if tree is self.review_tree:
+        if self._is_review_row_tree(tree):
             self.delete_selected_review_rows()
             return "break"
         return None
@@ -2327,14 +2367,14 @@ class CardPipelineApp(tk.Tk):
             self.intake_rows = remaining
             self.intake_sources = new_sources
             self.intake_sheet_sources = new_sheet_sources
-        elif tree is self.review_tree:
+        elif self._is_review_row_tree(tree):
             self.review_rows = remaining
             self.review_sources = new_sources
             self.review_sheet_sources = new_sheet_sources
         else:
             return 0
         self._cancel_cell_edit()
-        self._refresh_table()
+        self._refresh_table(schedule_recommendations=(tree is self.review_tree))
         return len(selected_rows)
 
     def _duplicate_certs(self, rows: list[WorkbookRow]) -> set[str]:
@@ -2370,7 +2410,7 @@ class CardPipelineApp(tk.Tk):
     def _handle_table_click(self, event):
         tree = event.widget
         row_id = tree.identify_row(event.y)
-        if tree is self.review_tree and row_id == ADD_REVIEW_ROW_IID:
+        if self._is_receive_tree(tree) and row_id == ADD_REVIEW_ROW_IID:
             self.add_manual_review_row()
             return "break"
         return None
@@ -2379,7 +2419,7 @@ class CardPipelineApp(tk.Tk):
         tree = event.widget
         row_id = tree.identify_row(event.y)
         column_id = tree.identify_column(event.x)
-        if tree is self.review_tree and row_id == ADD_REVIEW_ROW_IID:
+        if self._is_receive_tree(tree) and row_id == ADD_REVIEW_ROW_IID:
             self.add_manual_review_row()
             return
         if not row_id or not column_id:
@@ -2422,7 +2462,7 @@ class CardPipelineApp(tk.Tk):
         self._apply_cell_value(tree, excel_row, column, value)
         if tree is self.comp_tree:
             self.comp_output_saved = False
-        self._refresh_table()
+        self._refresh_table(schedule_recommendations=(tree is self.review_tree))
         if tree.exists(row_id):
             tree.selection_set(row_id)
             tree.focus(row_id)
@@ -2447,7 +2487,7 @@ class CardPipelineApp(tk.Tk):
             target_rows = self.state.rows
             target_sources = self.row_sources
             target_sheet_sources = self.comp_sheet_sources
-        elif tree is self.review_tree:
+        elif self._is_review_row_tree(tree):
             target_rows = self.review_rows
             target_sources = self.review_sources
             target_sheet_sources = self.review_sheet_sources
@@ -2483,7 +2523,7 @@ class CardPipelineApp(tk.Tk):
             elif column == "card_ladder_comp_confidence":
                 row.card_ladder_comp_confidence = clean_value
             row.status = "Ready" if row.cert_number and row.grader else "Needs setup"
-            if tree is self.review_tree and column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert:
+            if self._is_review_row_tree(tree) and column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert:
                 match = self._incoming_match(row.cert_number)
                 target_sheet_sources[excel_row] = str(match.get("sheet") or "NO SHEET FOUND")
                 if match:
