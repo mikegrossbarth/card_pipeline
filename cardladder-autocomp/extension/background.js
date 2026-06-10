@@ -278,6 +278,19 @@ async function lookupRowWithRetries(tabId, row) {
         capturedAt: noResultsDomResult.capturedAt || pageResult.capturedAt || new Date().toISOString(),
       };
     }
+    const noResultsOcrResult = await captureValueWithOcr(tabId, row, pageResult);
+    if (noResultsOcrResult?.ocr?.profileTitle) {
+      return {
+        ...pageResult,
+        ocr: {
+          ...(pageResult.ocr || {}),
+          ...(noResultsOcrResult.ocr || {}),
+          comps: [],
+        },
+        pageUrl: pageResult.pageUrl || noResultsOcrResult.pageUrl || "",
+        capturedAt: noResultsOcrResult.capturedAt || pageResult.capturedAt || new Date().toISOString(),
+      };
+    }
     return pageResult;
   }
 
