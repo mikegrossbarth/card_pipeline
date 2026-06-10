@@ -264,6 +264,9 @@ def clean_profile_title(value) -> str:
     text = re.sub(r"^profile\s*:\s*", "", text, flags=re.I)
     tail_patterns = [
         r"\s+\bclose\s+\$?\d[\d,]*(?:\.\d{1,2})?.*$",
+        r"\s+[x×]\s*$",
+        r"\s+\bthere\s+are\s+no\s+results\b.*$",
+        r"\s+\btry\s+searching\b.*$",
         r"\s+\bhelp[_\s-]*outline\b.*$",
         r"\s+\b(?:date\s+sold|type|price)\b.*$",
         r"\s+\$\d[\d,]*(?:\.\d{1,2})?\s+\b(?:help[_\s-]*outline|ebay|fanatics|pwcc|goldin|alt|myslabs|heritage|pristine|auction)\b.*$",
