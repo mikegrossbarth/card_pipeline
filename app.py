@@ -297,10 +297,13 @@ class CardPipelineApp(tk.Tk):
         self.review_scan_entry: ttk.Entry | None = None
         self.review_scanning_active = False
         self.review_status = tk.StringVar(value="Assignment station is off.")
+        self.assignment_progress_value = tk.DoubleVar(value=0)
         self.review_photo_paths: list[Path] = []
         self.review_photo_status = tk.StringVar(value="No assignment photos selected.")
         self.review_photo_worker: threading.Thread | None = None
         self.assignment_engine = AssignmentEngine.load()
+        self.assignment_recommendation_job = 0
+        self.assignment_recommendation_running = False
         self.assignment_config_status = tk.StringVar(value=self._assignment_config_status())
         self.received_sheet_paths: dict[str, Path] = {}
         self.selected_received_sheet = tk.StringVar()
@@ -607,6 +610,13 @@ class CardPipelineApp(tk.Tk):
         review_controls.columnconfigure(3, weight=1)
         ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=7, sticky="w", pady=(10, 0))
         ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
+        self.assignment_progress = ttk.Progressbar(
+            review_controls,
+            variable=self.assignment_progress_value,
+            maximum=100,
+            mode="determinate",
+        )
+        self.assignment_progress.grid(row=3, column=0, columnspan=7, sticky="ew", pady=(8, 0))
         self.review_mode_host = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         self.review_mode_host.pack(fill=tk.X, pady=(0, 10))
         self.review_tree = self._build_table(self.review_tab, editable=True, columns=REVIEW_COLUMNS)
@@ -2123,6 +2133,61 @@ class CardPipelineApp(tk.Tk):
             row.best_company = recommendation.company
             row.estimated_payout = recommendation.payout
 
+    def _queue_assignment_recommendations(self) -> None:
+        rows = [*self.state.rows, *self.review_rows]
+        if not rows or not self.assignment_engine.companies:
+            self.assignment_progress_value.set(0)
+            return
+        self.assignment_recommendation_job += 1
+        job_id = self.assignment_recommendation_job
+        self.assignment_recommendation_running = True
+        self.assignment_progress_value.set(0)
+        total = len(rows)
+        self.review_status.set(f"Calculating assignment recommendations: 0/{total}...")
+        self.status_var.set("Calculating assignment recommendations...")
+        threading.Thread(target=self._assignment_recommendations_worker, args=(job_id, rows), daemon=True).start()
+
+    def _assignment_recommendations_worker(self, job_id: int, rows: list[WorkbookRow]) -> None:
+        total = len(rows)
+        results: list[tuple[int, str, float | None]] = []
+        progress_step = max(1, total // 25)
+        for index, row in enumerate(rows, start=1):
+            recommendation = self.assignment_engine.recommend(row)
+            results.append((id(row), recommendation.company, recommendation.payout))
+            if index == total or index % progress_step == 0:
+                self.events.put(("assignment_recommendations_progress", {"job_id": job_id, "done": index, "total": total}))
+        self.events.put(("assignment_recommendations_done", {"job_id": job_id, "total": total, "results": results}))
+
+    def _apply_assignment_recommendation_results(self, payload: dict[str, object]) -> None:
+        if int(payload.get("job_id") or 0) != self.assignment_recommendation_job:
+            return
+        results = {
+            int(row_id): (str(company or ""), payout)
+            for row_id, company, payout in list(payload.get("results") or [])
+        }
+        filled = 0
+        for row in [*self.state.rows, *self.review_rows]:
+            company, payout = results.get(id(row), ("", None))
+            row.best_company = company if payout is not None else ""
+            row.estimated_payout = payout if payout is not None else None
+            if payout is not None:
+                filled += 1
+        total = int(payload.get("total") or 0)
+        self.assignment_recommendation_running = False
+        self.assignment_progress_value.set(100 if total else 0)
+        self.review_status.set(f"Assignment recommendations complete: {filled}/{total} row(s) populated.")
+        self.status_var.set(f"Assignment recommendations complete: {filled}/{total} row(s) populated.")
+        self._refresh_table(schedule_recommendations=False)
+
+    def _update_assignment_recommendation_progress(self, payload: dict[str, object]) -> None:
+        if int(payload.get("job_id") or 0) != self.assignment_recommendation_job:
+            return
+        done = int(payload.get("done") or 0)
+        total = int(payload.get("total") or 0)
+        percent = (done / total * 100) if total else 0
+        self.assignment_progress_value.set(percent)
+        self.review_status.set(f"Calculating assignment recommendations: {done}/{total}...")
+
     def reload_assignment_rules(self) -> None:
         self.assignment_engine = AssignmentEngine.load()
         self.assignment_config_status.set(self._assignment_config_status())
@@ -2141,13 +2206,14 @@ class CardPipelineApp(tk.Tk):
             return "Assignment companies: none configured. Add assignment_companies.json to enable best-company payouts."
         return f"Assignment companies loaded: {count}"
 
-    def _refresh_table(self) -> None:
-        self._apply_recommendations()
+    def _refresh_table(self, schedule_recommendations: bool = True) -> None:
         self._render_rows(self.intake_tree, self.intake_rows, self.intake_sources)
         self._render_rows(self.comp_tree, self.state.rows, self.row_sources, self.comp_sheet_sources)
         self._render_rows(self.review_tree, self.review_rows, self.review_sources, self.review_sheet_sources)
         completed = sum(1 for row in self.state.rows if row.card_ladder_value is not None)
         self.summary_var.set(f"{len(self.intake_rows)} intake rows | Loaded comp rows: {len(self.state.rows)} | Card Ladder values: {completed}")
+        if schedule_recommendations:
+            self._queue_assignment_recommendations()
 
     def _render_rows(self, tree: ttk.Treeview, rows: list[WorkbookRow], sources: dict[int, str], sheet_sources: dict[int, str] | None = None) -> None:
         self._remember_column_widths(tree)
@@ -2477,6 +2543,10 @@ class CardPipelineApp(tk.Tk):
                         self.review_status.set(f"Received sheet load failed: {payload.get('error')}")
                         self.status_var.set(f"Received sheet load failed: {payload.get('error')}")
                         messagebox.showerror("Load failed", str(payload.get("error") or "Unknown error"))
+                    elif kind == "assignment_recommendations_progress":
+                        self._update_assignment_recommendation_progress(payload)
+                    elif kind == "assignment_recommendations_done":
+                        self._apply_assignment_recommendation_results(payload)
         except queue.Empty:
             pass
         self.after(200, self._poll_events)

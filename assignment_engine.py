@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -1365,6 +1366,11 @@ def infer_sport(raw: str, player_name: str = "") -> str:
 
 
 def find_known_player_sports(raw: str) -> list[dict[str, str]]:
+    return [dict(item) for item in _find_known_player_sports_cached(str(raw or ""))]
+
+
+@lru_cache(maxsize=4096)
+def _find_known_player_sports_cached(raw: str) -> tuple[tuple[tuple[str, str], ...], ...]:
     haystack = f" {clean_rule_text(raw)} "
     seen: set[str] = set()
     exact_matches: list[dict[str, str]] = []
@@ -1386,7 +1392,7 @@ def find_known_player_sports(raw: str) -> list[dict[str, str]]:
             "sport": sport,
         })
     if exact_matches:
-        return exact_matches
+        return tuple(tuple(sorted(match.items())) for match in exact_matches)
 
     partial_matches: list[dict[str, str]] = []
     for token in sorted(PARTIAL_PLAYER_HINTS, key=len, reverse=True):
@@ -1398,7 +1404,7 @@ def find_known_player_sports(raw: str) -> list[dict[str, str]]:
             continue
         seen.add(unique_key)
         partial_matches.append(dict(hint))
-    return partial_matches
+    return tuple(tuple(sorted(match.items())) for match in partial_matches)
 
 
 def find_known_player_teams(raw: str, sport_correlations: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
