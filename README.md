@@ -6,12 +6,14 @@ L.U.C.A.S is a desktop workflow app for intake, receiving, working-sheet trackin
 
 ## Install
 
-1. Install Python 3.11 or newer and Google Chrome. When installing Python, check `Add python.exe to PATH`.
+1. Install Google Chrome.
 2. Download this project or clone the repository.
-3. Double-click `install_dependencies.bat`.
+3. Double-click `install_dependencies.bat`. If Python 3.11 or newer is missing, the installer tries to install Python 3.11 with Windows Package Manager (`winget`) before creating the app environment.
 4. Open `.env`, which the installer creates from `.env.example`.
 5. Add `GOOGLE_API_KEY` in `.env` if you use Photo OCR or Card Ladder screenshot OCR fallback.
 6. Launch with `Run Card Pipeline.vbs` for the no-console app, or `Run Card Pipeline.bat` if you want to see console output.
+
+If automatic Python install is not available on that computer, install Python 3.11 or newer from python.org, include Tcl/Tk support, and check `Add python.exe to PATH`, then run `install_dependencies.bat` again.
 
 ## Local Configuration
 
@@ -90,6 +92,6 @@ The photo OCR helper used by L.U.C.A.S is bundled in `photo_tool`. It uses the s
 
 ## Troubleshooting
 
-If the app does not open, run `Run Card Pipeline.bat` instead of the `.vbs` launcher so Windows keeps the console visible. The most common cause is Python not being installed or not being on PATH. Reinstall Python from python.org, make sure `Add python.exe to PATH` is checked, then run `install_dependencies.bat` again.
+If the app does not open, run `Run Card Pipeline.bat` instead of the `.vbs` launcher so Windows keeps the console visible. The most common cause is Python not being installed, not being on PATH, or missing Tcl/Tk support. Run `install_dependencies.bat` first; if automatic Python install is unavailable, install Python from python.org, include Tcl/Tk support, make sure `Add python.exe to PATH` is checked, then run `install_dependencies.bat` again.
 
 The app launcher uses `.venv` first. If `.venv` is missing, `install_dependencies.bat` recreates it and installs the packages from `requirements.txt`.
