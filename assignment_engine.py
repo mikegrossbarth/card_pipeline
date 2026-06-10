@@ -231,7 +231,7 @@ class AssignmentEngine:
 
 def load_company(entry: dict[str, Any], base_dir: Path) -> AssignmentCompany | None:
     name = str(entry.get("name") or "").strip()
-    if not name:
+    if not name or entry.get("active") is False:
         return None
     rules_text = read_source_text(entry.get("rules") or entry.get("rules_source") or entry.get("rulesSource"), base_dir)
     payout_text = read_source_text(entry.get("payout") or entry.get("payout_source") or entry.get("payoutSource"), base_dir)

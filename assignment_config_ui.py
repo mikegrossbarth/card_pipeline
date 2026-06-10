@@ -45,6 +45,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.config_path = CONFIG_PATH
         self.companies = self._load_config()
         self.selected_index: int | None = None
+        self.company_rows: list[tk.Frame] = []
         self.rule_rows: list[dict[str, Any]] = []
         self.payout_rows: list[dict[str, tk.StringVar]] = []
 
@@ -63,7 +64,6 @@ class AssignmentRulesDialog(tk.Toplevel):
         self._build_ui()
         self._refresh_company_list()
         if self.companies:
-            self.company_list.selection_set(0)
             self._select_company(0)
         else:
             self._new_company()
@@ -113,24 +113,18 @@ class AssignmentRulesDialog(tk.Toplevel):
         side = ttk.Frame(shell, style="AssignPanel.TFrame", padding=12)
         side.grid(row=1, column=0, sticky="ns", padx=(0, 12))
         ttk.Label(side, text="Companies", style="AssignTitle.TLabel").pack(anchor=tk.W)
-        self.company_list = tk.Listbox(
+        self.company_list = tk.Frame(
             side,
-            width=28,
-            height=24,
-            activestyle="none",
-            exportselection=False,
+            width=280,
+            height=620,
             bg="#1f1f1f",
-            fg="#d9d9d9",
-            selectbackground="#1ed760",
-            selectforeground="#000000",
             highlightthickness=1,
             highlightbackground="#333333",
             relief=tk.FLAT,
-            borderwidth=0,
-            font=("Segoe UI", 10),
+            borderwidth=0
         )
-        self.company_list.pack(fill=tk.Y, expand=True, pady=(8, 10))
-        self.company_list.bind("<<ListboxSelect>>", self._on_company_select)
+        self.company_list.pack(fill=tk.BOTH, expand=True, pady=(8, 10))
+        self.company_list.pack_propagate(False)
         ttk.Button(side, text="New Company", command=self._new_company, style="AssignPrimary.TButton").pack(fill=tk.X, pady=(0, 8))
         ttk.Button(side, text="Delete Company", command=self._delete_company, style="AssignSoft.TButton").pack(fill=tk.X)
 
@@ -279,17 +273,65 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.config_path.write_text(json.dumps({"companies": self.companies}, indent=2), encoding="utf-8")
 
     def _refresh_company_list(self) -> None:
-        self.company_list.delete(0, tk.END)
-        for company in self.companies:
-            self.company_list.insert(tk.END, str(company.get("name") or "Untitled"))
+        for child in self.company_list.winfo_children():
+            child.destroy()
+        self.company_rows = []
+        for index, company in enumerate(self.companies):
+            self._add_company_row(index, company)
 
-    def _on_company_select(self, _event=None) -> None:
-        selection = self.company_list.curselection()
-        if selection:
-            self._select_company(selection[0])
+    def _add_company_row(self, index: int, company: dict[str, Any]) -> None:
+        active = company.get("active") is not False
+        selected = index == self.selected_index
+        bg = "#242424" if selected else "#1f1f1f"
+        row = tk.Frame(self.company_list, bg=bg, padx=5, pady=4)
+        row.pack(fill=tk.X, padx=4, pady=(4 if index == 0 else 0, 0))
+        active_button = tk.Button(
+            row,
+            text="Active" if active else "Inactive",
+            command=lambda row_index=index: self._toggle_company_active(row_index),
+            bg="#1ed760" if active else "#3a3a3a",
+            fg="#000000" if active else "#d9d9d9",
+            activebackground="#1fdf64" if active else "#4a4a4a",
+            activeforeground="#000000" if active else "#ffffff",
+            relief=tk.FLAT,
+            borderwidth=0,
+            font=("Segoe UI Semibold", 8),
+            width=8,
+            padx=6,
+            pady=4,
+        )
+        active_button.pack(side=tk.LEFT, padx=(0, 6))
+        name_button = tk.Button(
+            row,
+            text=str(company.get("name") or "Untitled"),
+            command=lambda row_index=index: self._select_company(row_index),
+            anchor=tk.W,
+            bg=bg,
+            fg="#ffffff" if selected else "#d9d9d9",
+            activebackground="#242424",
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            borderwidth=0,
+            font=("Segoe UI Semibold" if selected else "Segoe UI", 10),
+            padx=4,
+            pady=4,
+        )
+        name_button.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.company_rows.append(row)
+
+    def _toggle_company_active(self, index: int) -> None:
+        if not (0 <= index < len(self.companies)):
+            return
+        company = self.companies[index]
+        company["active"] = not (company.get("active") is not False)
+        self._write_config()
+        self._refresh_company_list()
+        state = "active" if company.get("active") is not False else "inactive"
+        self.status.set(f"{company.get('name') or 'Company'} is now {state}. Save & Reload to apply in Assignment.")
 
     def _select_company(self, index: int) -> None:
         self.selected_index = index
+        self._refresh_company_list()
         company = self.companies[index]
         self.company_name.set(str(company.get("name") or ""))
         self.rule_source_mode.set(str(company.get("rules_source_kind") or source_kind_for_path(company.get("rules"))))
@@ -325,7 +367,7 @@ class AssignmentRulesDialog(tk.Toplevel):
 
     def _new_company(self) -> None:
         self.selected_index = None
-        self.company_list.selection_clear(0, tk.END)
+        self._refresh_company_list()
         self.company_name.set("")
         self.rule_source_mode.set("manual")
         self.rule_source_path.set("")
@@ -564,6 +606,7 @@ class AssignmentRulesDialog(tk.Toplevel):
 
         company = {
             "name": name,
+            "active": self.companies[self.selected_index].get("active", True) if self.selected_index is not None else True,
             "rules": rule_source,
             "rules_source_kind": self.rule_source_mode.get(),
             "payout": payout_source,
@@ -576,8 +619,7 @@ class AssignmentRulesDialog(tk.Toplevel):
             self.companies[self.selected_index] = company
         self._write_config()
         self._refresh_company_list()
-        self.company_list.selection_clear(0, tk.END)
-        self.company_list.selection_set(self.selected_index)
+        self._select_company(self.selected_index)
         self.status.set(f"Saved {name}.")
         return True
 

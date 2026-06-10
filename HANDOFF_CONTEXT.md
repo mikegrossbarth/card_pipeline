@@ -67,6 +67,7 @@ Assignment supports local company recommendation config through `assignment_comp
 For each company, configure:
 
 - `name`
+- `active` (optional; defaults to active. Inactive companies are skipped by recommendations.)
 - `rules` or `rules_source`
 - `payout` or `payout_source`
 - optional `accept_all` and `rate` fallback
