@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-05-stale-page-guard-v1";
+const CARDLADDER_CONTENT_VERSION = "2026-06-10-no-results-profile-v1";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -836,12 +836,29 @@ function extractResultCount(text) {
 
 function extractProfileFromText(text) {
   const normalized = String(text || "").replace(/\s+/g, " ");
-  const match = normalized.match(new RegExp(`Grade:\\s*([^,|]+).*?Grader:\\s*([A-Z]+).*?Profile:\\s*(.*?)(?=\\s+(?:CL\\s*Value|Card\\s*Ladder\\s*Value|${COMP_SOURCE_PATTERN_TEXT}|close\\s+\\$|help[_\\s-]*outline|Date\\s+Sold|$))`, "i"));
-  if (!match) return { title: "", grader: "", grade: "" };
+  const titleStop = `(?=\\s+(?:CL\\s*Value|Card\\s*Ladder\\s*Value|Grade:|Grader:|${COMP_SOURCE_PATTERN_TEXT}|close\\s+\\$|help[_\\s-]*outline|Date\\s+Sold|No\\s+sales|No\\s+results|$))`;
+  const gradeGraderProfile = normalized.match(new RegExp(`Grade:\\s*([^,|]+).*?Grader:\\s*([A-Z]+).*?Profile:\\s*(.*?)${titleStop}`, "i"));
+  if (gradeGraderProfile) {
+    return {
+      grade: String(gradeGraderProfile[1] || "").trim(),
+      grader: String(gradeGraderProfile[2] || "").trim().toUpperCase(),
+      title: cleanProfileTitle(String(gradeGraderProfile[3] || "")),
+    };
+  }
+  const profileFirst = normalized.match(new RegExp(`Profile:\\s*(.*?)${titleStop}.*?Grade:\\s*([^,|]+).*?Grader:\\s*([A-Z]+)`, "i"));
+  if (profileFirst) {
+    return {
+      grade: String(profileFirst[2] || "").trim(),
+      grader: String(profileFirst[3] || "").trim().toUpperCase(),
+      title: cleanProfileTitle(String(profileFirst[1] || "")),
+    };
+  }
+  const profileOnly = normalized.match(new RegExp(`Profile:\\s*(.*?)${titleStop}`, "i"));
+  if (!profileOnly) return { title: "", grader: "", grade: "" };
   return {
-    grade: String(match[1] || "").trim(),
-    grader: String(match[2] || "").trim().toUpperCase(),
-    title: cleanProfileTitle(String(match[3] || "")),
+    grade: "",
+    grader: "",
+    title: cleanProfileTitle(String(profileOnly[1] || "")),
   };
 }
 
