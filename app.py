@@ -772,9 +772,9 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(partial_panel, text="Partially Received Incoming Sheets", style="Panel.TLabel").pack(anchor=tk.W)
         self.partial_received_tree = self._build_home_tree(
             partial_panel,
-            columns=("sheet", "progress", "volume", "person", "paid", "tracking", "all_received"),
-            headings={"sheet": "Sheet", "progress": "Received", "volume": "Price Volume", "person": "Person", "paid": "Paid", "tracking": "Tracking", "all_received": "All Received"},
-            widths={"sheet": 280, "progress": 100, "volume": 130, "person": 130, "paid": 80, "tracking": 180, "all_received": 110},
+            columns=("sheet", "progress", "volume", "person", "tracking", "all_received"),
+            headings={"sheet": "Sheet", "progress": "Received", "volume": "Price Volume", "person": "Person", "tracking": "Tracking", "all_received": "All Received"},
+            widths={"sheet": 280, "progress": 100, "volume": 130, "person": 130, "tracking": 180, "all_received": 110},
             height=8,
         )
         self.partial_received_tree.tag_configure("partial_sheet", background="#4a3d12", foreground="#fff3b0")
@@ -1090,7 +1090,6 @@ class CardPipelineApp(tk.Tk):
                         f"{received}/{total}",
                         format_money(volume),
                         str(marker.get("assigned_person") or ""),
-                        "Yes" if marker.get("paid") else "",
                         str(marker.get("tracking_number") or ""),
                         "Yes" if marker.get("all_received") else "",
                     ),
@@ -1297,7 +1296,7 @@ class CardPipelineApp(tk.Tk):
         kind, name = self._split_home_sheet_key(self.home_selected_sheet_key)
         marker = self.home_sheet_markers.get(self.home_selected_sheet_key, {})
         summary = self.home_sheet_summaries.get(self.home_selected_sheet_key, {})
-        paid_var = tk.BooleanVar(value=bool(marker.get("paid")))
+        incoming_proper_var = tk.BooleanVar(value=(kind == "Incoming"))
         all_received_var = tk.BooleanVar(value=bool(marker.get("all_received") or summary.get("all_received")))
         tracking_var = tk.StringVar(value=str(marker.get("tracking_number") or ""))
         person_var = tk.StringVar(value=str(marker.get("assigned_person") or ""))
@@ -1313,7 +1312,7 @@ class CardPipelineApp(tk.Tk):
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text=name, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
         ttk.Label(frame, text=kind, style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
-        ttk.Checkbutton(frame, text="Paid", variable=paid_var, style="Panel.TCheckbutton").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ttk.Checkbutton(frame, text="Incoming Proper", variable=incoming_proper_var, style="Panel.TCheckbutton").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 10))
         ttk.Label(frame, text="Tracking Number", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         ttk.Entry(frame, textvariable=tracking_var, width=34).grid(row=3, column=1, sticky="ew", pady=(0, 10))
         ttk.Checkbutton(frame, text="All Received", variable=all_received_var, style="Panel.TCheckbutton").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
@@ -1329,7 +1328,7 @@ class CardPipelineApp(tk.Tk):
             text="Save Markers",
             command=lambda: self.save_home_sheet_markers(
                 {
-                    "paid": bool(paid_var.get()),
+                    "incoming_proper": bool(incoming_proper_var.get()),
                     "tracking_number": tracking_var.get().strip(),
                     "all_received": bool(all_received_var.get()),
                     "assigned_person": person_var.get().strip(),
@@ -1348,8 +1347,10 @@ class CardPipelineApp(tk.Tk):
         if not self.home_selected_sheet_key:
             messagebox.showinfo("Choose sheet", "Choose a sheet on Home before saving markers.")
             return
+        existing_marker = dict(self.home_sheet_markers.get(self.home_selected_sheet_key, {}))
+        incoming_proper = bool(marker.get("incoming_proper"))
         marker = {
-            "paid": bool(marker.get("paid")),
+            "paid": bool(existing_marker.get("paid")),
             "tracking_number": str(marker.get("tracking_number") or "").strip(),
             "all_received": bool(marker.get("all_received")),
             "assigned_person": str(marker.get("assigned_person") or "").strip(),
@@ -1373,8 +1374,8 @@ class CardPipelineApp(tk.Tk):
                     key = moved_key
                     self.home_selected_sheet_key = key
                     moved = True
-            elif marker["paid"]:
-                moved_key = self._move_paid_working_sheet_to_incoming(key)
+            elif incoming_proper:
+                moved_key = self._move_working_sheet_to_incoming(key)
                 if moved_key:
                     self.home_sheet_markers.pop(key, None)
                     key = moved_key
@@ -1402,7 +1403,7 @@ class CardPipelineApp(tk.Tk):
         kind, name = key.split("|", 1)
         return kind, name
 
-    def _move_paid_working_sheet_to_incoming(self, key: str) -> str:
+    def _move_working_sheet_to_incoming(self, key: str) -> str:
         kind, name = self._split_home_sheet_key(key)
         if kind != "Working" or not name:
             return ""
