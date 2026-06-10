@@ -289,7 +289,7 @@ class CardPipelineApp(tk.Tk):
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
         self.working_sheet_title = tk.StringVar()
         self.selected_working_sheet = tk.StringVar()
-        self.summary_var = tk.StringVar(value="Choose an intake mode to begin.")
+        self.summary_var = tk.StringVar(value="Choose a create mode to begin.")
         self.status_var = tk.StringVar(value="Card Ladder bridge starting...")
         self.bridge_status_var = tk.StringVar(value=self.bridge_status_text)
         self.pipeline_root_var = tk.StringVar(value=str(CARD_PIPELINE_DIR))
@@ -528,7 +528,7 @@ class CardPipelineApp(tk.Tk):
         self.receive_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.review_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.tabs.add(self.home_tab, text="Home")
-        self.tabs.add(self.intake_tab, text="Intake")
+        self.tabs.add(self.intake_tab, text="Create")
         self.tabs.add(self.comp_tab, text="Comp")
         self.tabs.add(self.receive_tab, text="Receive")
         self.tabs.add(self.review_tab, text="Assignment")
@@ -2008,7 +2008,7 @@ class CardPipelineApp(tk.Tk):
 
     def save_working_sheet(self) -> None:
         if not self.intake_rows:
-            messagebox.showinfo("No intake rows", "Scan or load cards in Intake before saving a working sheet.")
+            messagebox.showinfo("No create rows", "Scan or load cards in Create before saving a working sheet.")
             return
         title = self.working_sheet_title.get().strip()
         if not title:
@@ -2126,7 +2126,7 @@ class CardPipelineApp(tk.Tk):
         self.intake_sources = {}
         self.intake_sheet_sources = {}
         self._refresh_table()
-        self.status_var.set("Intake rows cleared.")
+        self.status_var.set("Create rows cleared.")
 
     def delete_selected_intake_rows(self) -> None:
         deleted = self._delete_selected_rows(
@@ -2136,9 +2136,9 @@ class CardPipelineApp(tk.Tk):
             self.intake_sheet_sources,
         )
         if deleted:
-            self.status_var.set(f"Deleted {deleted} intake row(s).")
+            self.status_var.set(f"Deleted {deleted} create row(s).")
         else:
-            self.status_var.set("Select intake rows to delete.")
+            self.status_var.set("Select create rows to delete.")
 
     def _append_rows(self, rows: list[dict[str, object]]) -> list[int]:
         existing = list(self.intake_rows)
@@ -2276,7 +2276,7 @@ class CardPipelineApp(tk.Tk):
         self._render_rows(self.receive_tree, self.review_rows, self.review_sources, self.review_sheet_sources)
         self._render_rows(self.review_tree, self.review_rows, self.review_sources, self.review_sheet_sources)
         completed = sum(1 for row in self.state.rows if row.card_ladder_value is not None)
-        self.summary_var.set(f"{len(self.intake_rows)} intake rows | Loaded comp rows: {len(self.state.rows)} | Card Ladder values: {completed}")
+        self.summary_var.set(f"{len(self.intake_rows)} create rows | Loaded comp rows: {len(self.state.rows)} | Card Ladder values: {completed}")
         if schedule_recommendations:
             self._schedule_assignment_recommendations()
 

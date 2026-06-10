@@ -50,7 +50,7 @@ The app starts the local Card Ladder bridge automatically when L.U.C.A.S opens.
 
 ## Input Modes
 
-Use the `Intake` tab for all card entry.
+Use the `Create` tab for all card entry.
 
 - `Barcode Scanner`: enter scanning station mode, then scan certs continuously.
 - `Photo OCR`: add photos or a folder, scan them inside this app, and append detected card rows.
