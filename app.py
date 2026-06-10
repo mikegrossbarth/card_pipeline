@@ -1302,12 +1302,70 @@ class CardPipelineApp(tk.Tk):
             return
         total_balance = sum(float(item["purchase_total"]) for item in matching_items)
         total_cards = sum(int(item["row_count"]) for item in matching_items)
-        confirmed = messagebox.askyesno(
-            "Mark paid",
-            f"Mark {len(matching_items)} sheet(s), {total_cards} card(s), and {format_money(total_balance)} paid for {person}?",
+        self.open_mark_payout_person_paid_popup(person, matching_items, total_cards, total_balance)
+
+    def open_mark_payout_person_paid_popup(
+        self,
+        person: str,
+        matching_items: list[dict[str, object]],
+        total_cards: int,
+        total_balance: float,
+    ) -> None:
+        confirmed_var = tk.BooleanVar(value=False)
+        popup = tk.Toplevel(self)
+        popup.title("Mark Payout Paid")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Mark Payout Paid", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text=person, style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        ttk.Label(frame, text="Sheets", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 18), pady=(0, 8))
+        ttk.Label(frame, text=str(len(matching_items)), style="Panel.TLabel").grid(row=2, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="Cards", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 18), pady=(0, 8))
+        ttk.Label(frame, text=str(total_cards), style="Panel.TLabel").grid(row=3, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="Total Balance", style="Panel.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 18), pady=(0, 14))
+        ttk.Label(frame, text=format_money(total_balance), style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=4, column=1, sticky="w", pady=(0, 14))
+
+        confirm_button = ttk.Button(
+            frame,
+            text="Mark Paid",
+            style="Primary.TButton",
+            state=tk.DISABLED,
+            command=lambda: self._apply_payout_person_paid(person, matching_items, total_balance, popup),
         )
-        if not confirmed:
-            return
+
+        def toggle_confirm() -> None:
+            confirm_button.configure(state=tk.NORMAL if confirmed_var.get() else tk.DISABLED)
+
+        ttk.Checkbutton(
+            frame,
+            text="I confirm this person's full active balance has been paid.",
+            variable=confirmed_var,
+            command=toggle_confirm,
+            style="Panel.TCheckbutton",
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 14))
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=6, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        confirm_button.pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+
+    def _apply_payout_person_paid(
+        self,
+        person: str,
+        matching_items: list[dict[str, object]],
+        total_balance: float,
+        popup: tk.Toplevel | None = None,
+    ) -> None:
         for item in matching_items:
             key = str(item["key"])
             kind, _name = self._split_home_sheet_key(key)
@@ -1320,6 +1378,8 @@ class CardPipelineApp(tk.Tk):
             self.home_sheet_markers[key] = marker
         self._save_sheet_markers()
         self.refresh_home()
+        if popup is not None:
+            popup.destroy()
         self.status_var.set(f"Marked {len(matching_items)} sheet(s) paid for {person}: {format_money(total_balance)}.")
 
     def open_payout_marker_editor(self, event=None) -> None:
