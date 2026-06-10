@@ -12,7 +12,7 @@ For a click-by-click setup walkthrough for a brand-new user, start with [FIRST_R
 2. Download this project or clone the repository.
 3. Double-click `install_dependencies.bat`. If Python 3.11 or newer is missing, the installer tries to install Python 3.11 with Windows Package Manager (`winget`) before creating the app environment.
 4. Open `.env`, which the installer creates from `.env.example`.
-5. Add `GOOGLE_API_KEY` in `.env` if you use Photo OCR or Card Ladder screenshot OCR fallback.
+5. Add `GOOGLE_API_KEY`, `GOOGLE_SHEETS_OAUTH_CLIENT_ID`, `GOOGLE_SHEETS_OAUTH_CLIENT_SECRET`, and `LUCAS_WORKING_SHEETS_DIR` in `.env`.
 6. Launch with `Run Card Pipeline.vbs` for the no-console app, or `Run Card Pipeline.bat` if you want to see console output.
 
 If automatic Python install is not available on that computer, install Python 3.11 or newer from python.org, include Tcl/Tk support, and check `Add python.exe to PATH`, then run `install_dependencies.bat` again.
@@ -28,7 +28,7 @@ GOOGLE_SHEETS_OAUTH_CLIENT_ID=your_desktop_oauth_client_id
 GOOGLE_SHEETS_OAUTH_CLIENT_SECRET=your_desktop_oauth_client_secret
 ```
 
-`GOOGLE_API_KEY` can be created or copied from Google AI Studio's API key page. `LUCAS_WORKING_SHEETS_DIR` is optional because the same folder can be selected with the in-app `Working Folder` button. `LUCAS_PIPELINE_DIR` is still supported for older setups that point at the parent pipeline folder. `GOOGLE_SHEETS_OAUTH_CLIENT_ID` and `GOOGLE_SHEETS_OAUTH_CLIENT_SECRET` are optional unless Assignment Rules needs to read private Google Sheets files; use a Google Cloud OAuth client with application type `Desktop app`.
+`GOOGLE_API_KEY` can be created or copied from Google AI Studio's API key page. `LUCAS_WORKING_SHEETS_DIR` should point at the user's `WORKING SHEETS` folder. `LUCAS_PIPELINE_DIR` is still supported for older setups that point at the parent pipeline folder. `GOOGLE_SHEETS_OAUTH_CLIENT_ID` and `GOOGLE_SHEETS_OAUTH_CLIENT_SECRET` should come from a Google Cloud OAuth client with application type `Desktop app`.
 
 ## Data Folder
 

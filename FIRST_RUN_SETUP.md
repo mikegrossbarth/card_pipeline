@@ -6,7 +6,7 @@ L.U.C.A.S stands for Lot Upload, Comping & Assignment System. It helps you creat
 
 ## Quick Answer
 
-For the full app experience, the computer needs:
+For a complete L.U.C.A.S setup, the computer needs:
 
 - Google Chrome
 - the L.U.C.A.S project folder
@@ -14,25 +14,26 @@ For the full app experience, the computer needs:
 - a local data folder with `WORKING SHEETS`, `INCOMING SHEETS`, and `RECEIVED SHEETS`
 - a Card Ladder account and Chrome extension setup for comping
 - a Google AI Studio API key for Photo OCR and screenshot OCR fallback
-- Google OAuth credentials only if you want private Google Sheets rules or payout sheets
+- Google OAuth credentials for Google Sheets rules or payout sheets
+- Google Drive for desktop
 - company assignment rules and payout files configured inside the app
 
-You do not need every optional setup item to open the app. You only need the optional parts for the features that use them.
+This guide treats the full workflow as required. Setup is not complete until every section below is done.
 
 ## What Each Requirement Is For
 
-| Requirement | Needed for | Required to open app? |
+| Requirement | Needed for | Required for complete setup? |
 | --- | --- | --- |
-| Google Chrome | Card Ladder automation and extension | No |
+| Google Chrome | Card Ladder automation and extension | Yes |
 | Python 3.11+ | running the desktop app | Yes, but installer tries to install it |
 | `.venv` dependencies | app libraries like spreadsheet and image support | Yes, created by installer |
-| Working folder | saving and finding card sheets | Yes for normal use |
-| Card Ladder account | comping cards with Card Ladder | Only for comping |
-| Card Ladder Chrome extension | automated comp runs | Only for comping |
-| `GOOGLE_API_KEY` | Photo OCR and Card Ladder screenshot OCR fallback | Only for OCR features |
-| Google OAuth Client ID/Secret | reading private Google Sheets rule/payout files | Only for private Google Sheets |
-| Google Drive for desktop | local synced Drive folders, if you use them | Optional |
-| assignment companies | best company and estimated payout | Only for assignment recommendations |
+| Working folder | saving and finding card sheets | Yes |
+| Card Ladder account | comping cards with Card Ladder | Yes |
+| Card Ladder Chrome extension | automated comp runs | Yes |
+| `GOOGLE_API_KEY` | Photo OCR and Card Ladder screenshot OCR fallback | Yes |
+| Google OAuth Client ID/Secret | reading Google Sheets rule/payout files | Yes |
+| Google Drive for desktop | synced Drive folders and Google Sheets shortcuts | Yes |
+| assignment companies | best company and estimated payout | Yes |
 
 ## Step 1: Get The App Folder
 
@@ -89,7 +90,7 @@ Then run `install_dependencies.bat` again.
 
 ## Step 4: Create The Sheet Folders
 
-Create a main folder for your pipeline data. This can be local or inside Google Drive for desktop.
+Create a main folder for your pipeline data inside Google Drive for desktop.
 
 Example:
 
@@ -147,7 +148,7 @@ lucas_settings.json
 
 That file is local to the computer and should not be committed to Git.
 
-## Step 7: Optional `.env` Setup
+## Step 7: Configure `.env`
 
 Open the `.env` file in the L.U.C.A.S project folder.
 
@@ -162,11 +163,11 @@ GOOGLE_SHEETS_OAUTH_CLIENT_SECRET=your_desktop_oauth_client_secret
 LUCAS_WORKING_SHEETS_DIR=G:\My Drive\CARD_PIPELINE\WORKING SHEETS
 ```
 
-You can leave optional values blank if you do not use those features.
+For a complete setup, fill in every value shown above.
 
 Do not commit `.env` to Git.
 
-## Step 8: Optional Photo OCR Setup
+## Step 8: Set Up Photo OCR And OCR Fallback
 
 Photo OCR needs:
 
@@ -187,9 +188,9 @@ This key is used for:
 - scanning photos into card rows
 - Card Ladder screenshot OCR fallback
 
-If this key is missing, the rest of the app can still run, but Photo OCR and OCR fallback will not work.
+If this key is missing, setup is incomplete. Photo OCR and Card Ladder screenshot OCR fallback will not work.
 
-## Step 9: Optional Card Ladder Setup
+## Step 9: Set Up Card Ladder
 
 Card Ladder comping needs:
 
@@ -228,13 +229,9 @@ If comping does not start, check:
 - L.U.C.A.S is running
 - the Comp tab says the Card Ladder bridge is running
 
-## Step 10: Optional Google Sheets Setup
+## Step 10: Set Up Google Sheets Access
 
-You only need this if Assignment Rules must read private Google Sheets rule files or payout files.
-
-If your rule and payout files are normal local `.xlsx` or `.csv` files, you do not need Google OAuth.
-
-To use private Google Sheets:
+Google Sheets access is part of the complete setup because company rules and payout files may live in Google Sheets.
 
 1. go to Google Cloud Console
 2. create or choose a project
@@ -267,9 +264,9 @@ lucas_google_sheets_token.json
 
 That token file is local and should not be committed to Git.
 
-## Step 11: Optional Google Drive For Desktop
+## Step 11: Set Up Google Drive For Desktop
 
-Google Drive for desktop is helpful if your team keeps sheets in Drive.
+Google Drive for desktop is required for the standard team setup because the pipeline folders and source files can live in synced Drive folders.
 
 Once installed, Google Drive usually creates a drive like:
 
@@ -281,7 +278,7 @@ You can put `CARD_PIPELINE` there.
 
 Native Google Sheets files may appear as `.gsheet` shortcuts. If L.U.C.A.S cannot read a `.gsheet` directly as a local workbook, it will use the saved Google Sheet URL and Google OAuth setup to read the live sheet.
 
-For the easiest setup, use synced `.xlsx` or `.csv` files when possible.
+For the easiest rule and payout setup, use synced `.xlsx` or `.csv` files when possible.
 
 ## Step 12: Set Up Assignment Companies
 
@@ -321,7 +318,7 @@ After setup, test the app in this order:
 1. Create a small working sheet in the `Create` tab.
 2. Save it to `WORKING SHEETS`.
 3. Open the `Comp` tab and make sure the sheet appears.
-4. If using Card Ladder, run one comp as a test.
+4. Run one Card Ladder comp as a test.
 5. Open Assignment Rules and make sure companies load.
 6. Open the `Assignment` tab and confirm best company and estimated payout can populate.
 7. Open the `Receive` tab and test marking a row received.
@@ -411,10 +408,10 @@ Use this as the final handoff checklist:
 - [ ] `WORKING SHEETS`, `INCOMING SHEETS`, and `RECEIVED SHEETS` folders exist
 - [ ] L.U.C.A.S opens
 - [ ] `Working Folder` points to `WORKING SHEETS`
-- [ ] `GOOGLE_API_KEY` is added if using Photo OCR
-- [ ] Card Ladder extension is loaded if using comping
+- [ ] `GOOGLE_API_KEY` is added
+- [ ] Card Ladder extension is loaded
 - [ ] user is logged into Card Ladder in Chrome
-- [ ] Google OAuth credentials are added if using private Google Sheets
-- [ ] `Connect Google` has been completed if using private Google Sheets
+- [ ] Google OAuth credentials are added
+- [ ] `Connect Google` has been completed
 - [ ] Assignment companies are created and active
 - [ ] one small test sheet works end to end
