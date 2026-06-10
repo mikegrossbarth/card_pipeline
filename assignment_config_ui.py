@@ -7,7 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
-from assignment_engine import CONFIG_PATH, read_source_text
+from assignment_engine import CONFIG_PATH, materialize_gsheet_shortcut, normalize_source_value, read_source_text
 
 
 GRADE_COMPANIES = ("psa", "bgs", "sgc", "cgc")
@@ -349,6 +349,8 @@ class AssignmentRulesDialog(tk.Toplevel):
             self.preview_status.set("No source file selected.")
             return
         try:
+            path = self._materialize_source_if_needed(path)
+            self.rule_source_path.set(path)
             text = read_source_text(path, self.config_path.parent)
         except Exception as error:
             self.preview_status.set(f"Could not read source: {error}")
@@ -503,7 +505,11 @@ class AssignmentRulesDialog(tk.Toplevel):
             if not path:
                 messagebox.showinfo("Rule source", "Choose the local rules file before saving.")
                 return ""
-            return path
+            try:
+                return self._materialize_source_if_needed(path)
+            except Exception as error:
+                messagebox.showerror("Rule source", f"Could not prepare rule source: {error}")
+                return ""
         self.rules_dir.mkdir(parents=True, exist_ok=True)
         rules_path = self.rules_dir / f"{safe_stem(name)}-rules.json"
         rules_path.write_text(json.dumps(self._rules_payload(), indent=2), encoding="utf-8")
@@ -516,11 +522,24 @@ class AssignmentRulesDialog(tk.Toplevel):
             if not path:
                 messagebox.showinfo("Payout source", "Choose the local payout file before saving.")
                 return ""
-            return path
+            try:
+                return self._materialize_source_if_needed(path)
+            except Exception as error:
+                messagebox.showerror("Payout source", f"Could not prepare payout source: {error}")
+                return ""
         self.rules_dir.mkdir(parents=True, exist_ok=True)
         payout_path = self.rules_dir / f"{safe_stem(name)}-payout.json"
         payout_path.write_text(json.dumps(self._payout_payload(), indent=2), encoding="utf-8")
         return str(payout_path)
+
+    def _materialize_source_if_needed(self, path_text: str) -> str:
+        normalized = normalize_source_value(path_text)
+        path = Path(normalized).expanduser()
+        if path.suffix.lower() != ".gsheet":
+            return normalized
+        export_dir = self.rules_dir / "SHEET EXPORTS"
+        exported = materialize_gsheet_shortcut(path, export_dir)
+        return str(exported)
 
     def _save_and_reload(self) -> None:
         if self._save_company():

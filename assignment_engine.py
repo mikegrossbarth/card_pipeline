@@ -187,7 +187,8 @@ def read_source_text(source: Any, base_dir: Path) -> str:
     except OSError as error:
         raise ValueError(f"Invalid local source path: {raw}") from error
     if path.suffix.lower() == ".gsheet":
-        return read_gsheet_shortcut_text(path)
+        exported = materialize_gsheet_shortcut(path, path.parent / "LUCAS SHEET EXPORTS")
+        return read_workbook_text(exported)
     if path.suffix.lower() in {".xlsx", ".xlsm"}:
         return read_workbook_text(path)
     try:
@@ -208,7 +209,7 @@ def normalize_source_value(source: Any) -> str:
     return raw
 
 
-def read_gsheet_shortcut_text(path: Path) -> str:
+def load_gsheet_shortcut(path: Path) -> dict[str, Any]:
     try:
         shortcut = json.loads(path.read_text(encoding="utf-8-sig"))
     except OSError as error:
@@ -219,6 +220,11 @@ def read_gsheet_shortcut_text(path: Path) -> str:
         raise ValueError(
             "This .gsheet file is not readable shortcut JSON. Choose a synced/exported .xlsx or .csv copy from Google Drive."
         ) from error
+    return shortcut
+
+
+def read_gsheet_shortcut_text(path: Path) -> str:
+    shortcut = load_gsheet_shortcut(path)
     url = gsheet_shortcut_url(shortcut)
     if not url:
         raise ValueError(
@@ -230,6 +236,57 @@ def read_gsheet_shortcut_text(path: Path) -> str:
             "Google returned no CSV rows for this .gsheet shortcut. Export or sync the sheet as .xlsx/.csv and choose that file."
         )
     return text
+
+
+def materialize_gsheet_shortcut(path: Path, output_dir: Path) -> Path:
+    shortcut = load_gsheet_shortcut(path)
+    url = gsheet_shortcut_url(shortcut)
+    if not url:
+        raise ValueError("This .gsheet shortcut does not contain a Google Sheet URL or document id.")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = safe_filename(str(shortcut.get("name") or path.stem or "google-sheet"))
+    output_path = unique_export_path(output_dir / f"{stem}.xlsx")
+    download_google_sheet_xlsx(url, output_path)
+    return output_path
+
+
+def download_google_sheet_xlsx(url: str, output_path: Path) -> None:
+    request_url = google_sheet_xlsx_url(url)
+    with urllib.request.urlopen(request_url, timeout=40) as response:
+        data = response.read()
+    if not data.startswith(b"PK"):
+        text = data[:500].decode("utf-8", errors="replace")
+        if re.search(r"<!doctype html|<html[\s>]", text, re.I):
+            raise ValueError(
+                "Google returned a web page instead of an XLSX export. Open the sheet in Google Drive and save/download it as .xlsx or .csv."
+            )
+        raise ValueError("Google did not return a valid XLSX export for this sheet.")
+    output_path.write_bytes(data)
+
+
+def google_sheet_xlsx_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    if "docs.google.com" not in parsed.netloc or "/spreadsheets/" not in parsed.path:
+        return url
+    match = re.search(r"/spreadsheets/d/([^/]+)", parsed.path)
+    if not match:
+        return url
+    return f"https://docs.google.com/spreadsheets/d/{match.group(1)}/export?format=xlsx"
+
+
+def unique_export_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    for index in range(2, 1000):
+        candidate = path.with_name(f"{path.stem}-{index}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    return path
+
+
+def safe_filename(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._ -]+", "-", value).strip(" .-")
+    return safe or "google-sheet"
 
 
 def gsheet_shortcut_url(shortcut: dict[str, Any]) -> str:
