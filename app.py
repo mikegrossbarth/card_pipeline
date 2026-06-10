@@ -34,6 +34,7 @@ from assignment_engine import AssignmentEngine  # noqa: E402
 from assignment_config_ui import open_assignment_rules_dialog  # noqa: E402
 
 from intake_io import (  # noqa: E402
+    append_company_sheet_rows,
     build_card_title,
     clean_part,
     default_output_path,
@@ -81,6 +82,7 @@ CARD_PIPELINE_DIR = Path(os.environ.get("LUCAS_PIPELINE_DIR") or DEFAULT_CARD_PI
 WORKING_SHEETS_DIR = Path(os.environ.get("LUCAS_WORKING_SHEETS_DIR") or CARD_PIPELINE_DIR / "WORKING SHEETS")
 INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
 RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
+COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
 SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 APP_TITLE = "L.U.C.A.S"
@@ -111,11 +113,12 @@ def save_app_settings(settings: dict[str, object]) -> None:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, SHEET_MARKERS_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
     RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
+    COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
     SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 
 
@@ -846,6 +849,7 @@ class CardPipelineApp(tk.Tk):
         self.pipeline_root_var.set(str(CARD_PIPELINE_DIR))
         for directory in (WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR):
             directory.mkdir(parents=True, exist_ok=True)
+        COMPANY_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
         self.home_sheet_markers = self._load_sheet_markers()
         self.status_var.set(f"Working folder set to {WORKING_SHEETS_DIR}")
         self.refresh_home()
@@ -989,6 +993,8 @@ class CardPipelineApp(tk.Tk):
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
                     "card_ladder_comp_confidence": row.get("card_ladder_comp_confidence") or "",
                     "card_ladder_comps": row.get("card_ladder_comps") or "",
+                    "best_company": row.get("best_company") or "",
+                    "estimated_payout": row.get("estimated_payout"),
                 }
         payload["incoming_index"] = index
 
@@ -1798,6 +1804,8 @@ class CardPipelineApp(tk.Tk):
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
                     "card_ladder_comp_confidence": row.get("card_ladder_comp_confidence") or "",
                     "card_ladder_comps": row.get("card_ladder_comps") or "",
+                    "best_company": row.get("best_company") or "",
+                    "estimated_payout": row.get("estimated_payout"),
                 }
         self.incoming_cert_index = index
         self._match_all_review_rows()
@@ -1854,6 +1862,8 @@ class CardPipelineApp(tk.Tk):
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
                     "card_ladder_comp_confidence": row.get("card_ladder_comp_confidence") or "",
                     "card_ladder_comps": row.get("card_ladder_comps") or "",
+                    "best_company": row.get("best_company") or "",
+                    "estimated_payout": row.get("estimated_payout"),
                     "source": f"Received Sheet: {name}",
                     "sheet_source": name,
                     "status": "Received",
@@ -2004,6 +2014,8 @@ class CardPipelineApp(tk.Tk):
             comps_average = row.get("card_ladder_comps_average") if row.get("card_ladder_comps_average") is not None else match.get("card_ladder_comps_average")
             comp_confidence = str(row.get("card_ladder_comp_confidence") or match.get("card_ladder_comp_confidence") or "")
             comp_details = str(row.get("card_ladder_comps") or match.get("card_ladder_comps") or "")
+            best_company = str(row.get("best_company") or match.get("best_company") or "").strip()
+            estimated_payout = row.get("estimated_payout") if row.get("estimated_payout") is not None else match.get("estimated_payout")
             sheet_source = str(row.get("sheet_source") or match.get("sheet") or ("NO SHEET FOUND" if cert else ""))
             status = str(row.get("status") or ("Needs setup" if not cert else ("Received" if match else "Received - no incoming match")))
             excel_row = start + offset
@@ -2018,6 +2030,8 @@ class CardPipelineApp(tk.Tk):
                     card_ladder_comps_average=comps_average,
                     card_ladder_comp_confidence=comp_confidence,
                     card_ladder_comps=comp_details,
+                    best_company=best_company,
+                    estimated_payout=estimated_payout,
                     status=status,
                     notes=str(row.get("notes") or ""),
                 )
@@ -2051,6 +2065,10 @@ class CardPipelineApp(tk.Tk):
                     row.card_ladder_comp_confidence = str(match.get("card_ladder_comp_confidence") or "")
                 if not row.card_ladder_comps and match.get("card_ladder_comps"):
                     row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
+                if not row.best_company and match.get("best_company"):
+                    row.best_company = str(match.get("best_company") or "")
+                if row.estimated_payout is None and match.get("estimated_payout") is not None:
+                    row.estimated_payout = match.get("estimated_payout")
                 row.status = "Received"
             elif row.status == "Received":
                 row.status = "Received - no incoming match"
@@ -2101,6 +2119,24 @@ class CardPipelineApp(tk.Tk):
         rows_marked = int(result.get("rows_marked") or 0)
         files_updated = int(result.get("files_updated") or 0)
         certs_marked = len(result.get("certs_marked") or set())
+        company_rows_added = 0
+        if rows_marked:
+            company_rows = [
+                row
+                for row in self.review_rows
+                if scan_to_cert(row.cert_number) in result.get("certs_marked", set())
+            ]
+            self._apply_recommendations_to_rows(company_rows)
+            eligible_company_rows = [row for row in company_rows if str(row.best_company or "").strip()]
+            if eligible_company_rows and self._confirm_company_sheet_append(eligible_company_rows):
+                company_result = append_company_sheet_rows(
+                    COMPANY_SHEETS_DIR,
+                    eligible_company_rows,
+                    self.review_sources,
+                    self.review_sheet_sources,
+                )
+                company_rows_added = int(company_result.get("rows_added") or 0)
+                errors.extend(company_result.get("errors") or [])
         moved_received: list[str] = []
         try:
             moved_received = self._move_fully_received_sheets_to_received(paths)
@@ -2119,9 +2155,65 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set("No sheet rows marked received.")
         if moved_received:
             self.status_var.set(f"Moved {len(moved_received)} fully received sheet(s) to RECEIVED SHEETS.")
+        if company_rows_added:
+            self.status_var.set(f"Added {company_rows_added} card(s) to weekly company sheet(s).")
         self.refresh_home()
         if errors:
             messagebox.showwarning("Some sheets were skipped", "\n".join(errors[:8]))
+
+    def _apply_recommendations_to_rows(self, rows: list[WorkbookRow]) -> None:
+        for row in rows:
+            if row.best_company and row.estimated_payout is not None:
+                continue
+            recommendation = self.assignment_engine.recommend(row)
+            if recommendation.payout is None:
+                continue
+            row.best_company = recommendation.company
+            row.estimated_payout = recommendation.payout
+
+    def _confirm_company_sheet_append(self, rows: list[WorkbookRow]) -> bool:
+        companies = sorted({str(row.best_company or "").strip() for row in rows if str(row.best_company or "").strip()})
+        popup = tk.Toplevel(self)
+        popup.title("Company Pile")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+
+        confirmed = tk.BooleanVar(value=False)
+        result = {"ok": False}
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Company Sheet Update", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(
+            frame,
+            text=f"{len(rows)} received card(s) have company assignments: {', '.join(companies[:4])}{'...' if len(companies) > 4 else ''}",
+            style="Muted.TLabel",
+            wraplength=520,
+        ).grid(row=1, column=0, sticky="w", pady=(0, 12))
+        ttk.Checkbutton(
+            frame,
+            text="I physically put these cards in their company piles. Add them to weekly company sheets.",
+            variable=confirmed,
+            style="Panel.TCheckbutton",
+        ).grid(row=2, column=0, sticky="w", pady=(0, 14))
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=3, column=0, sticky="e")
+
+        def finish(ok: bool) -> None:
+            result["ok"] = ok and bool(confirmed.get())
+            popup.destroy()
+
+        ttk.Button(buttons, text="Skip", command=lambda: finish(False), style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Continue", command=lambda: finish(True), style="Primary.TButton").pack(side=tk.LEFT)
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        self.wait_window(popup)
+        return bool(result["ok"])
 
     def _arm_review_scanner(self) -> None:
         if self.review_mode.get() != "Automatic Receive" or self.review_scan_entry is None:
@@ -2321,6 +2413,8 @@ class CardPipelineApp(tk.Tk):
                     card_ladder_comps_average=row.get("card_ladder_comps_average"),
                     card_ladder_comp_confidence=str(row.get("card_ladder_comp_confidence") or ""),
                     card_ladder_comps=str(row.get("card_ladder_comps") or ""),
+                    best_company=str(row.get("best_company") or ""),
+                    estimated_payout=row.get("estimated_payout"),
                     status=str(row.get("status") or ("Ready" if cert and grader else "Needs setup")),
                     notes=str(row.get("notes") or ""),
                 )
@@ -2528,12 +2622,7 @@ class CardPipelineApp(tk.Tk):
                 tk.END,
                 iid=str(row.excel_row),
                 tags=tuple(tags),
-                values=tuple(
-                    ""
-                    if self._is_receive_tree(tree) and col in {"best_company", "estimated_payout"}
-                    else self._row_display_value(row, col, sources, sheet_sources)
-                    for col in columns
-                ),
+                values=tuple(self._row_display_value(row, col, sources, sheet_sources) for col in columns),
             )
         if self._is_receive_tree(tree) and self.review_mode.get() == "Manual Receive":
             add_values = []

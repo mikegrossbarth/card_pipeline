@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,8 @@ COMPS_AVERAGE_HEADERS = (
 )
 COMP_CONFIDENCE_HEADERS = ("compconfidence", "cardladdercompconfidence", "clconfidence", "confidence")
 COMP_DETAILS_HEADERS = ("cardladdercompdetails", "compdetails", "cardladdercompsdetail", "compsdetails")
+BEST_COMPANY_HEADERS = ("bestcompany", "assignedcompany", "companyassignment")
+ESTIMATED_PAYOUT_HEADERS = ("estimatedpayout", "estpayout", "payout")
 STATUS_HEADERS = ("compstatus", "status", "assignmentstatus")
 NOTES_HEADERS = ("notes", "note")
 SOURCE_HEADERS = ("source", "sourcephoto", "sourcefile", "file")
@@ -87,6 +90,8 @@ SIMPLE_HEADER_ALIASES = (
     + CARD_LADDER_VALUE_HEADERS
     + COMPS_AVERAGE_HEADERS
     + COMP_CONFIDENCE_HEADERS
+    + BEST_COMPANY_HEADERS
+    + ESTIMATED_PAYOUT_HEADERS
 )
 
 
@@ -107,6 +112,8 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
             comps_average = parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, None))
             comp_confidence = clean_part(_cell_by_header(sheet, row_index, headers, COMP_CONFIDENCE_HEADERS, None))
             comp_details = clean_part(_cell_by_header(sheet, row_index, headers, COMP_DETAILS_HEADERS, None))
+            best_company = clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, None))
+            estimated_payout = parse_money(_cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, None))
             status = clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, None))
             notes = clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, None))
             source = clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, None if has_header else 4))
@@ -123,6 +130,8 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
                     "card_ladder_comps_average": comps_average,
                     "card_ladder_comp_confidence": comp_confidence,
                     "card_ladder_comps": comp_details,
+                    "best_company": best_company,
+                    "estimated_payout": estimated_payout,
                     "source": source or f"{path.name}:{row_index}",
                     "status": status,
                     "notes": notes or _setup_notes(cert, card, grader),
@@ -258,6 +267,127 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         sheet.column_dimensions[chr(64 + index)].width = width
     workbook.save(path)
     return path
+
+
+def append_company_sheet_rows(directory: Path, rows: list[Any], source_lookup: dict[int, str] | None = None, sheet_source_lookup: dict[int, str] | None = None) -> dict[str, Any]:
+    result = {"files_updated": 0, "rows_added": 0, "skipped": 0, "errors": []}
+    grouped: dict[str, list[Any]] = {}
+    for row in rows:
+        company = clean_part(getattr(row, "best_company", ""))
+        if not company:
+            result["skipped"] += 1
+            continue
+        grouped.setdefault(company, []).append(row)
+    if not grouped:
+        return result
+    directory.mkdir(parents=True, exist_ok=True)
+    for company, company_rows in grouped.items():
+        path = company_weekly_sheet_path(directory, company)
+        try:
+            added = append_rows_to_company_sheet(path, company_rows, source_lookup, sheet_source_lookup)
+            if added:
+                result["files_updated"] += 1
+                result["rows_added"] += added
+        except Exception as error:
+            result["errors"].append(f"{company}: {error}")
+    return result
+
+
+def company_weekly_sheet_path(directory: Path, company: str, today: date | None = None) -> Path:
+    start = week_start(today or date.today())
+    safe_company = safe_filename(company) or "Company"
+    return directory / f"{safe_company} WEEK OF {start:%Y-%m-%d}.xlsx"
+
+
+def week_start(day: date) -> date:
+    return day - timedelta(days=day.weekday())
+
+
+def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dict[int, str] | None = None, sheet_source_lookup: dict[int, str] | None = None) -> int:
+    headers = [
+        "Date Added",
+        "Source Sheet",
+        "Source",
+        "Certification Number",
+        "Company",
+        "Card Description",
+        "Purchase Price",
+        "Card Ladder Value",
+        "Comps",
+        "Comp Confidence",
+        "Best Company",
+        "Estimated Payout",
+        "Status",
+        "Notes",
+    ]
+    if path.exists():
+        workbook = load_workbook(path)
+        sheet = workbook.active
+        existing_certs = existing_sheet_certs(sheet)
+    else:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Cards"
+        sheet.append(headers)
+        style_company_sheet_header(sheet)
+        existing_certs = set()
+
+    added = 0
+    today_text = datetime.now().strftime("%Y-%m-%d")
+    for row in rows:
+        cert = normalize_cert(getattr(row, "cert_number", ""))
+        if cert and cert in existing_certs:
+            continue
+        sheet.append(
+            [
+                today_text,
+                (sheet_source_lookup or {}).get(row.excel_row, ""),
+                (source_lookup or {}).get(row.excel_row, ""),
+                cert,
+                getattr(row, "grader", ""),
+                getattr(row, "card_title", ""),
+                getattr(row, "existing_value", None),
+                getattr(row, "card_ladder_value", None),
+                getattr(row, "card_ladder_comps_average", None),
+                getattr(row, "card_ladder_comp_confidence", ""),
+                getattr(row, "best_company", ""),
+                getattr(row, "estimated_payout", None),
+                getattr(row, "status", ""),
+                getattr(row, "notes", ""),
+            ]
+        )
+        if cert:
+            existing_certs.add(cert)
+        added += 1
+    if added:
+        sheet.auto_filter.ref = sheet.dimensions
+        workbook.save(path)
+    workbook.close()
+    return added
+
+
+def existing_sheet_certs(sheet) -> set[str]:
+    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    cert_col = headers.get("certificationnumber") or headers.get("certnumber") or headers.get("cert")
+    if not cert_col:
+        return set()
+    return {
+        normalize_cert(sheet.cell(row_index, cert_col).value)
+        for row_index in range(2, sheet.max_row + 1)
+        if normalize_cert(sheet.cell(row_index, cert_col).value)
+    }
+
+
+def style_company_sheet_header(sheet) -> None:
+    header_fill = PatternFill("solid", fgColor="111827")
+    header_font = Font(color="FFFFFF", bold=True)
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+    sheet.freeze_panes = "A2"
+    widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 18, 18, 18, 20, 38]
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
 
 
 def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, str] | None = None) -> Path:
