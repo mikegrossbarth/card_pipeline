@@ -153,7 +153,7 @@ class AssignmentRulesDialog(tk.Toplevel):
 
         self.body = ttk.Frame(main, style="Assign.TFrame")
         self.body.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
-        self.body.columnconfigure(0, weight=3)
+        self.body.columnconfigure(0, weight=1)
         self.body.columnconfigure(1, weight=1)
         self.body.rowconfigure(0, weight=1)
 
@@ -189,9 +189,9 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.right_panel = ttk.Frame(self.body, style="Assign.TFrame")
         self.right_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         self.right_panel.columnconfigure(0, weight=1)
-        self.right_panel.rowconfigure(1, weight=1)
+        self.right_panel.rowconfigure(0, weight=1)
         self.payout_panel = self._build_payout_panel(self.right_panel)
-        self.payout_panel.grid(row=0, column=0, sticky="ew")
+        self.payout_panel.grid(row=0, column=0, sticky="nsew")
 
         footer = ttk.Frame(shell, style="Assign.TFrame")
         footer.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
@@ -250,14 +250,14 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_path_entry.configure(state=tk.NORMAL if payout_linked else tk.DISABLED)
         if rule_linked:
             self.manual_rule_panel.grid_remove()
-            self.linked_rule_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+            self.linked_rule_panel.grid_remove()
         else:
             self.linked_rule_panel.grid_remove()
             self.manual_rule_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         if payout_linked:
             self.payout_panel.grid_remove()
         else:
-            self.payout_panel.grid(row=0, column=0, sticky="ew")
+            self.payout_panel.grid(row=0, column=0, sticky="nsew")
 
     def _reset_preview_status(self) -> None:
         self.preview_status.set("No source file selected.")
