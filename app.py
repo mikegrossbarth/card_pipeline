@@ -853,7 +853,7 @@ class CardPipelineApp(tk.Tk):
 
         chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
         chart_panel.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(chart_panel, text="Profit Over Time", style="Panel.TLabel").pack(anchor=tk.W)
+        ttk.Label(chart_panel, text="Daily Profit Over Time", style="Panel.TLabel").pack(anchor=tk.W)
         self.profit_chart_canvas = tk.Canvas(
             chart_panel,
             height=230,
@@ -1045,26 +1045,22 @@ class CardPipelineApp(tk.Tk):
         if not dated:
             canvas.create_text(width / 2, height / 2, text="No profit data yet", fill="#b3b3b3", font=("Segoe UI", 12, "bold"))
             return
-        monthly: dict[str, float] = {}
+        daily: dict[str, float] = {}
         for record in dated:
-            month = self._profit_month_key(record.get("date_added"))
-            monthly[month] = monthly.get(month, 0.0) + float(self._money_value(record.get("profit")) or 0.0)
-        months = sorted(monthly)
-        cumulative_values: list[float] = []
-        running = 0.0
-        for month in months:
-            running += monthly[month]
-            cumulative_values.append(running)
-        values = list(monthly.values()) + cumulative_values + [0.0]
+            day = str(record.get("date_added") or "")[:10]
+            daily[day] = daily.get(day, 0.0) + float(self._money_value(record.get("profit")) or 0.0)
+        days = sorted(daily)
+        daily_values = [daily[day] for day in days]
+        values = daily_values + [0.0]
         min_y = min(values)
         max_y = max(values)
         if min_y == max_y:
             min_y -= 1
             max_y += 1
         def x_at(index: int) -> float:
-            if len(months) == 1:
+            if len(days) == 1:
                 return pad_left + plot_w / 2
-            return pad_left + (plot_w * index / (len(months) - 1))
+            return pad_left + (plot_w * index / (len(days) - 1))
         def y_at(value: float) -> float:
             return pad_top + (max_y - value) / (max_y - min_y) * plot_h
         zero_y = y_at(0.0)
@@ -1072,22 +1068,16 @@ class CardPipelineApp(tk.Tk):
         canvas.create_line(pad_left, zero_y, pad_left + plot_w, zero_y, fill="#555555")
         canvas.create_text(8, pad_top, anchor="nw", text=format_money(max_y), fill="#b3b3b3", font=("Segoe UI", 8))
         canvas.create_text(8, pad_top + plot_h - 12, anchor="nw", text=format_money(min_y), fill="#b3b3b3", font=("Segoe UI", 8))
-        bar_width = min(44, max(10, plot_w / max(len(months), 1) * 0.45))
-        for index, month in enumerate(months):
-            x = x_at(index)
-            monthly_value = monthly[month]
-            y = y_at(monthly_value)
-            color = "#2dd4bf" if monthly_value >= 0 else "#ef4444"
-            canvas.create_rectangle(x - bar_width / 2, min(y, zero_y), x + bar_width / 2, max(y, zero_y), fill=color, outline="")
-            if len(months) <= 12 or index % max(1, len(months) // 8) == 0:
-                canvas.create_text(x, height - 24, text=month[5:] if month != "Unknown" else month, fill="#b3b3b3", font=("Segoe UI", 8))
-        points = [(x_at(index), y_at(value)) for index, value in enumerate(cumulative_values)]
+        points = [(x_at(index), y_at(value)) for index, value in enumerate(daily_values)]
         for first, second in zip(points, points[1:]):
             canvas.create_line(*first, *second, fill="#22c55e", width=3)
-        for x, y in points:
-            canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#22c55e", outline="")
-        canvas.create_text(pad_left, 8, anchor="nw", text="Bars: monthly profit", fill="#2dd4bf", font=("Segoe UI", 9, "bold"))
-        canvas.create_text(pad_left + 160, 8, anchor="nw", text="Line: cumulative profit", fill="#22c55e", font=("Segoe UI", 9, "bold"))
+        for index, (x, y) in enumerate(points):
+            value = daily_values[index]
+            color = "#22c55e" if value >= 0 else "#ef4444"
+            canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline="")
+            if len(days) <= 14 or index % max(1, len(days) // 8) == 0:
+                canvas.create_text(x, height - 24, text=days[index][5:], fill="#b3b3b3", font=("Segoe UI", 8))
+        canvas.create_text(pad_left, 8, anchor="nw", text="Line: daily profit", fill="#22c55e", font=("Segoe UI", 9, "bold"))
 
     def choose_working_folder(self) -> None:
         selected = filedialog.askdirectory(
