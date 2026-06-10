@@ -2250,8 +2250,21 @@ class CardPipelineApp(tk.Tk):
         elif company_rows_missing_company:
             self.status_var.set(f"{company_rows_missing_company} checked company pile card(s) had no Best Company.")
         self.refresh_home()
+        summary_lines = [
+            f"Marked rows: {rows_marked}",
+            f"Updated sheet files: {files_updated}",
+            f"Matched certs: {certs_marked}/{len(certs)}",
+        ]
+        if moved_received:
+            summary_lines.append(f"Moved to received: {len(moved_received)}")
+        if company_rows_added:
+            summary_lines.append(f"Company sheet rows added: {company_rows_added}")
+        if company_rows_missing_company:
+            summary_lines.append(f"Company pile rows missing Best Company: {company_rows_missing_company}")
         if errors:
-            messagebox.showwarning("Some sheets were skipped", "\n".join(errors[:8]))
+            messagebox.showwarning("Mark received completed with warnings", "\n".join(summary_lines + ["", "Warnings:", *errors[:8]]))
+        else:
+            messagebox.showinfo("Mark received complete", "\n".join(summary_lines))
 
     def _apply_recommendations_to_rows(self, rows: list[WorkbookRow]) -> None:
         for row in rows:
