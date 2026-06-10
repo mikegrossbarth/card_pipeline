@@ -155,13 +155,29 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.manual_rule_panel = ttk.Frame(self.body, style="AssignPanel.TFrame", padding=12)
         self.manual_rule_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         self.manual_rule_panel.columnconfigure(0, weight=1)
+        self.manual_rule_panel.rowconfigure(2, weight=1)
         rule_header = ttk.Frame(self.manual_rule_panel, style="AssignPanel.TFrame")
         rule_header.grid(row=0, column=0, sticky="ew")
         ttk.Label(rule_header, text="Manual Rule Builder", style="AssignTitle.TLabel").pack(side=tk.LEFT)
         ttk.Button(rule_header, text="Add Rule", command=self._add_rule_row, style="AssignSoft.TButton").pack(side=tk.RIGHT)
         ttk.Label(self.manual_rule_panel, text="Used when Rule Source is Manual rules.", style="AssignMuted.TLabel").grid(row=1, column=0, sticky=tk.W, pady=(3, 8))
-        self.rules_frame = ttk.Frame(self.manual_rule_panel, style="AssignPanel.TFrame")
-        self.rules_frame.grid(row=2, column=0, sticky="new")
+        rules_view = ttk.Frame(self.manual_rule_panel, style="AssignPanel.TFrame")
+        rules_view.grid(row=2, column=0, sticky="nsew")
+        rules_view.columnconfigure(0, weight=1)
+        rules_view.rowconfigure(0, weight=1)
+        self.rules_canvas = tk.Canvas(rules_view, bg="#1f1f1f", highlightthickness=0, borderwidth=0)
+        self.rules_canvas.grid(row=0, column=0, sticky="nsew")
+        rules_scrollbar = ttk.Scrollbar(rules_view, orient=tk.VERTICAL, command=self.rules_canvas.yview)
+        rules_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.rules_canvas.configure(yscrollcommand=rules_scrollbar.set)
+        self.rules_frame = ttk.Frame(self.rules_canvas, style="AssignPanel.TFrame")
+        self.rules_canvas_window = self.rules_canvas.create_window((0, 0), window=self.rules_frame, anchor="nw")
+        self.rules_frame.bind("<Configure>", self._update_rules_scrollregion)
+        self.rules_frame.bind("<Enter>", lambda _event: self.rules_canvas.bind_all("<MouseWheel>", self._on_rules_mousewheel))
+        self.rules_frame.bind("<Leave>", lambda _event: self.rules_canvas.unbind_all("<MouseWheel>"))
+        self.rules_canvas.bind("<Configure>", self._resize_rules_canvas_window)
+        self.rules_canvas.bind("<Enter>", lambda _event: self.rules_canvas.bind_all("<MouseWheel>", self._on_rules_mousewheel))
+        self.rules_canvas.bind("<Leave>", lambda _event: self.rules_canvas.unbind_all("<MouseWheel>"))
 
         self.right_panel = ttk.Frame(self.body, style="Assign.TFrame")
         self.right_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
@@ -258,6 +274,18 @@ class AssignmentRulesDialog(tk.Toplevel):
     def _on_source_mode_change(self) -> None:
         self._reset_preview_status()
         self._sync_source_visibility()
+
+    def _update_rules_scrollregion(self, _event=None) -> None:
+        if hasattr(self, "rules_canvas"):
+            self.rules_canvas.configure(scrollregion=self.rules_canvas.bbox("all"))
+
+    def _resize_rules_canvas_window(self, event) -> None:
+        if hasattr(self, "rules_canvas_window"):
+            self.rules_canvas.itemconfigure(self.rules_canvas_window, width=event.width)
+
+    def _on_rules_mousewheel(self, event) -> None:
+        if hasattr(self, "rules_canvas"):
+            self.rules_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _load_config(self) -> list[dict[str, Any]]:
         if not self.config_path.exists():
