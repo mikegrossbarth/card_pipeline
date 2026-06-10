@@ -6,6 +6,7 @@ import os
 import re
 import urllib.parse
 import urllib.request
+import urllib.error
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -295,8 +296,15 @@ def materialize_google_sheet_url_to_path(url: str, output_path: Path) -> None:
 
 def download_google_sheet_xlsx(url: str, output_path: Path) -> None:
     request_url = google_sheet_xlsx_url(url)
-    with urllib.request.urlopen(request_url, timeout=40) as response:
-        data = response.read()
+    try:
+        with urllib.request.urlopen(request_url, timeout=40) as response:
+            data = response.read()
+    except urllib.error.HTTPError as error:
+        if error.code in {401, 403}:
+            raise ValueError(
+                "Google rejected the sheet export because this sheet is private. Share/export access is required, or L.U.C.A.S needs an authenticated Google import connection."
+            ) from error
+        raise
     if not data.startswith(b"PK"):
         text = data[:500].decode("utf-8", errors="replace")
         if re.search(r"<!doctype html|<html[\s>]", text, re.I):
