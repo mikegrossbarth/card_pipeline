@@ -1045,7 +1045,8 @@ class CardPipelineApp(tk.Tk):
         if not dated:
             canvas.create_text(width / 2, height / 2, text="No profit data yet", fill="#b3b3b3", font=("Segoe UI", 12, "bold"))
             return
-        daily: dict[str, float] = {}
+        month_start = datetime.now().replace(day=1).strftime("%Y-%m-%d")
+        daily: dict[str, float] = {month_start: 0.0}
         for record in dated:
             day = str(record.get("date_added") or "")[:10]
             daily[day] = daily.get(day, 0.0) + float(self._money_value(record.get("profit")) or 0.0)
@@ -1064,10 +1065,18 @@ class CardPipelineApp(tk.Tk):
         def y_at(value: float) -> float:
             return pad_top + (max_y - value) / (max_y - min_y) * plot_h
         zero_y = y_at(0.0)
+        grid_lines = 4
+        for line_index in range(grid_lines + 1):
+            y = pad_top + (plot_h * line_index / grid_lines)
+            value = max_y - ((max_y - min_y) * line_index / grid_lines)
+            canvas.create_line(pad_left, y, pad_left + plot_w, y, fill="#2f2f2f")
+            canvas.create_text(8, y - 6, anchor="nw", text=format_money(value), fill="#8f8f8f", font=("Segoe UI", 8))
+        vertical_lines = min(max(len(days), 2), 8)
+        for line_index in range(vertical_lines):
+            x = pad_left + (plot_w * line_index / max(vertical_lines - 1, 1))
+            canvas.create_line(x, pad_top, x, pad_top + plot_h, fill="#2a2a2a")
         canvas.create_line(pad_left, pad_top, pad_left, pad_top + plot_h, fill="#555555")
         canvas.create_line(pad_left, zero_y, pad_left + plot_w, zero_y, fill="#555555")
-        canvas.create_text(8, pad_top, anchor="nw", text=format_money(max_y), fill="#b3b3b3", font=("Segoe UI", 8))
-        canvas.create_text(8, pad_top + plot_h - 12, anchor="nw", text=format_money(min_y), fill="#b3b3b3", font=("Segoe UI", 8))
         points = [(x_at(index), y_at(value)) for index, value in enumerate(daily_values)]
         for first, second in zip(points, points[1:]):
             canvas.create_line(*first, *second, fill="#22c55e", width=3)
