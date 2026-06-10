@@ -331,6 +331,9 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_summaries: dict[str, dict[str, object]] = {}
         self.home_sheet_markers: dict[str, dict[str, object]] = self._load_sheet_markers()
         self.home_selected_sheet_key = ""
+        self.payout_person_var = tk.StringVar()
+        self.payout_status_var = tk.StringVar(value="No unpaid received sheets loaded.")
+        self.payout_detail_keys: dict[str, str] = {}
 
         self._build_ui()
         self._show_mode()
@@ -527,11 +530,13 @@ class CardPipelineApp(tk.Tk):
         self.comp_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.receive_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.review_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
+        self.payouts_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.tabs.add(self.home_tab, text="Home")
         self.tabs.add(self.intake_tab, text="Create")
         self.tabs.add(self.comp_tab, text="Comp")
         self.tabs.add(self.receive_tab, text="Receive")
         self.tabs.add(self.review_tab, text="Assignment")
+        self.tabs.add(self.payouts_tab, text="PAYOUTS/PROFITS")
         self.row_trees: list[ttk.Treeview] = []
 
         self._build_home_tab(palette)
@@ -667,6 +672,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(review_bottom, text="Delete Selected", command=self.delete_selected_review_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(review_bottom, text="Clear Assignment Rows", command=self.clear_review_rows, style="Soft.TButton").pack(side=tk.RIGHT)
         self._show_review_mode()
+        self._build_payouts_tab()
 
         bottom = ttk.Frame(self, style="App.TFrame", padding=(16, 0, 16, 14))
         bottom.pack(fill=tk.X)
@@ -779,6 +785,45 @@ class CardPipelineApp(tk.Tk):
         tree.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         return tree
 
+    def _build_payouts_tab(self) -> None:
+        controls = ttk.Frame(self.payouts_tab, style="Panel.TFrame", padding=(16, 12))
+        controls.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(controls, text="Assigned Person", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
+        self.payout_person_combo = ttk.Combobox(controls, textvariable=self.payout_person_var, width=30)
+        self.payout_person_combo.grid(row=0, column=1, sticky="w", padx=(8, 10))
+        self._bind_person_autocomplete(self.payout_person_combo)
+        ttk.Button(controls, text="Save Person to Selected", command=self.save_payout_person_for_selected, style="Primary.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
+        ttk.Button(controls, text="Mark Selected Paid", command=self.mark_selected_payouts_paid, style="Soft.TButton").grid(row=0, column=3, sticky="w", padx=(0, 8))
+        ttk.Button(controls, text="Refresh", command=self.refresh_payouts_tab, style="Soft.TButton").grid(row=0, column=4, sticky="w")
+        controls.columnconfigure(5, weight=1)
+        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=6, sticky="w", pady=(10, 0))
+
+        body = ttk.Frame(self.payouts_tab, style="App.TFrame")
+        body.pack(fill=tk.BOTH, expand=True)
+        summary_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 12))
+        summary_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        ttk.Label(summary_panel, text="Active Balances", style="Panel.TLabel").pack(anchor=tk.W)
+        self.payout_summary_tree = self._build_home_tree(
+            summary_panel,
+            columns=("person", "sheets", "cards", "balance"),
+            headings={"person": "Person", "sheets": "Sheets", "cards": "Cards", "balance": "Balance Owed"},
+            widths={"person": 220, "sheets": 80, "cards": 80, "balance": 130},
+            height=18,
+        )
+
+        detail_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 12))
+        detail_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        ttk.Label(detail_panel, text="Unpaid Received Sheets", style="Panel.TLabel").pack(anchor=tk.W)
+        self.payout_detail_tree = self._build_home_tree(
+            detail_panel,
+            columns=("sheet", "person", "cards", "received", "volume", "status"),
+            headings={"sheet": "Sheet", "person": "Person", "cards": "Cards", "received": "Received", "volume": "Balance", "status": "Status"},
+            widths={"sheet": 300, "person": 160, "cards": 80, "received": 95, "volume": 130, "status": 140},
+            height=18,
+        )
+        self.payout_detail_tree.configure(selectmode="extended")
+        self.payout_detail_tree.bind("<<TreeviewSelect>>", lambda _event: self._load_selected_payout_person())
+
     def choose_working_folder(self) -> None:
         selected = filedialog.askdirectory(
             title="Choose WORKING SHEETS folder",
@@ -864,6 +909,7 @@ class CardPipelineApp(tk.Tk):
                 self.home_sheet_summaries[key] = summary
         self._refresh_home_sheet_list()
         self._refresh_home_metrics()
+        self.refresh_payouts_tab()
         self._update_home_sheet_tabs()
         if errors:
             self.status_var.set(f"Home refreshed with {len(errors)} sheet issue(s).")
@@ -979,6 +1025,7 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_summaries = dict(payload.get("home_summaries") or {})
         self._refresh_home_sheet_list()
         self._refresh_home_metrics()
+        self.refresh_payouts_tab()
         self._update_home_sheet_tabs()
 
         errors = list(payload.get("errors") or [])
@@ -1048,6 +1095,158 @@ class CardPipelineApp(tk.Tk):
             return "Awaiting Receive"
         return "Awaiting tracking"
 
+    def refresh_payouts_tab(self) -> None:
+        if not hasattr(self, "payout_summary_tree"):
+            return
+        self._refresh_person_combo_values()
+        self.payout_summary_tree.delete(*self.payout_summary_tree.get_children())
+        self.payout_detail_tree.delete(*self.payout_detail_tree.get_children())
+        self.payout_detail_keys = {}
+
+        balances: dict[str, dict[str, float | int]] = {}
+        detail_count = 0
+        for item in self._unpaid_received_sheet_items():
+            person = item["person"] or "Unassigned"
+            balance = balances.setdefault(person, {"sheets": 0, "cards": 0, "balance": 0.0})
+            balance["sheets"] = int(balance["sheets"]) + 1
+            balance["cards"] = int(balance["cards"]) + int(item["row_count"])
+            balance["balance"] = float(balance["balance"]) + float(item["purchase_total"])
+            iid = f"payout:{detail_count}"
+            self.payout_detail_keys[iid] = str(item["key"])
+            self.payout_detail_tree.insert(
+                "",
+                tk.END,
+                iid=iid,
+                values=(
+                    item["name"],
+                    item["person"],
+                    item["row_count"],
+                    f"{item['received_count']}/{item['row_count']}",
+                    format_money(float(item["purchase_total"])),
+                    "Unpaid",
+                ),
+            )
+            detail_count += 1
+
+        for person, values in sorted(balances.items(), key=lambda pair: (-float(pair[1]["balance"]), pair[0].lower())):
+            self.payout_summary_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    person,
+                    int(values["sheets"]),
+                    int(values["cards"]),
+                    format_money(float(values["balance"])),
+                ),
+            )
+
+        total_balance = sum(float(values["balance"]) for values in balances.values())
+        self.payout_status_var.set(f"{detail_count} unpaid received sheet(s) | Active balance: {format_money(total_balance)}")
+
+    def _unpaid_received_sheet_items(self) -> list[dict[str, object]]:
+        items: list[dict[str, object]] = []
+        for name in self.home_sheet_paths.get("Received", {}):
+            key = self._home_sheet_key("Received", name)
+            marker = self.home_sheet_markers.get(key, {})
+            summary = self.home_sheet_summaries.get(key, {})
+            all_received = bool(marker.get("all_received") or summary.get("all_received") or summary.get("row_count"))
+            paid = bool(marker.get("paid"))
+            if paid or not all_received:
+                continue
+            items.append(
+                {
+                    "key": key,
+                    "name": name,
+                    "person": str(marker.get("assigned_person") or "").strip(),
+                    "row_count": int(summary.get("row_count") or 0),
+                    "received_count": int(summary.get("received_count") or summary.get("row_count") or 0),
+                    "purchase_total": float(summary.get("purchase_total") or 0.0),
+                }
+            )
+        return items
+
+    def _known_assigned_people(self) -> list[str]:
+        people = {
+            str(marker.get("assigned_person") or "").strip()
+            for marker in self.home_sheet_markers.values()
+            if str(marker.get("assigned_person") or "").strip()
+        }
+        return sorted(people, key=str.lower)
+
+    def _refresh_person_combo_values(self, filter_text: str = "") -> None:
+        people = self._known_assigned_people()
+        if filter_text:
+            needle = filter_text.strip().lower()
+            people = [person for person in people if needle in person.lower()]
+        if hasattr(self, "payout_person_combo"):
+            self.payout_person_combo["values"] = people
+
+    def _bind_person_autocomplete(self, combo: ttk.Combobox) -> None:
+        combo["values"] = self._known_assigned_people()
+        combo.bind("<KeyRelease>", lambda event, widget=combo: self._filter_person_combo(widget, event), add="+")
+
+    def _filter_person_combo(self, combo: ttk.Combobox, event) -> None:
+        if event.keysym in {"Up", "Down", "Left", "Right", "Return", "KP_Enter", "Escape", "Tab"}:
+            return
+        typed = combo.get()
+        people = self._known_assigned_people()
+        if typed.strip():
+            people = [person for person in people if typed.strip().lower() in person.lower()]
+        combo["values"] = people
+        if people:
+            try:
+                combo.event_generate("<Down>")
+            except tk.TclError:
+                pass
+
+    def _selected_payout_keys(self) -> list[str]:
+        if not hasattr(self, "payout_detail_tree"):
+            return []
+        return [self.payout_detail_keys.get(iid, "") for iid in self.payout_detail_tree.selection() if self.payout_detail_keys.get(iid)]
+
+    def _load_selected_payout_person(self) -> None:
+        keys = self._selected_payout_keys()
+        if not keys:
+            return
+        marker = self.home_sheet_markers.get(keys[0], {})
+        self.payout_person_var.set(str(marker.get("assigned_person") or "").strip())
+
+    def save_payout_person_for_selected(self) -> None:
+        keys = self._selected_payout_keys()
+        if not keys:
+            messagebox.showinfo("Choose sheet", "Choose one or more unpaid received sheets first.")
+            return
+        person = self.payout_person_var.get().strip()
+        if not person:
+            messagebox.showinfo("Person required", "Type or choose an assigned person first.")
+            return
+        for key in keys:
+            marker = dict(self.home_sheet_markers.get(key, {}))
+            marker["assigned_person"] = person
+            marker["paid"] = bool(marker.get("paid"))
+            marker["tracking_number"] = str(marker.get("tracking_number") or "")
+            marker["all_received"] = True
+            self.home_sheet_markers[key] = marker
+        self._save_sheet_markers()
+        self.refresh_home()
+        self.status_var.set(f"Assigned {len(keys)} sheet(s) to {person}.")
+
+    def mark_selected_payouts_paid(self) -> None:
+        keys = self._selected_payout_keys()
+        if not keys:
+            messagebox.showinfo("Choose sheet", "Choose one or more unpaid received sheets first.")
+            return
+        for key in keys:
+            marker = dict(self.home_sheet_markers.get(key, {}))
+            marker["paid"] = True
+            marker["all_received"] = True
+            marker["assigned_person"] = str(marker.get("assigned_person") or "").strip()
+            marker["tracking_number"] = str(marker.get("tracking_number") or "")
+            self.home_sheet_markers[key] = marker
+        self._save_sheet_markers()
+        self.refresh_home()
+        self.status_var.set(f"Marked {len(keys)} sheet(s) paid.")
+
     def _load_home_selected_marker(self) -> None:
         if not hasattr(self, "home_sheet_list"):
             return
@@ -1087,7 +1286,9 @@ class CardPipelineApp(tk.Tk):
         ttk.Entry(frame, textvariable=tracking_var, width=34).grid(row=3, column=1, sticky="ew", pady=(0, 10))
         ttk.Checkbutton(frame, text="All Received", variable=all_received_var, style="Panel.TCheckbutton").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
         ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
-        ttk.Entry(frame, textvariable=person_var, width=34).grid(row=5, column=1, sticky="ew", pady=(0, 14))
+        person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
+        person_combo.grid(row=5, column=1, sticky="ew", pady=(0, 14))
+        self._bind_person_autocomplete(person_combo)
         buttons = ttk.Frame(frame, style="Panel.TFrame")
         buttons.grid(row=6, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
