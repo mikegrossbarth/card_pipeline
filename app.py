@@ -193,7 +193,6 @@ ADD_REVIEW_ROW_IID = "__add_review_row__"
 
 EDITABLE_COLUMNS = {
     "source",
-    "sheet_source",
     "cert_number",
     "grader",
     "card_title",
@@ -2415,7 +2414,10 @@ class CardPipelineApp(tk.Tk):
             return
         tree, row_id, column = self.cell_edit
         value = self.cell_editor.get()
+        current = tree.set(row_id, column)
         self._destroy_cell_editor()
+        if value.strip() == str(current or "").strip():
+            return
         excel_row = int(row_id)
         self._apply_cell_value(tree, excel_row, column, value)
         if tree is self.comp_tree:
@@ -2462,6 +2464,7 @@ class CardPipelineApp(tk.Tk):
         for row in target_rows:
             if row.excel_row != excel_row:
                 continue
+            previous_cert = scan_to_cert(row.cert_number)
             if column == "cert_number":
                 row.cert_number = scan_to_cert(clean_value)
             elif column == "grader":
@@ -2480,7 +2483,7 @@ class CardPipelineApp(tk.Tk):
             elif column == "card_ladder_comp_confidence":
                 row.card_ladder_comp_confidence = clean_value
             row.status = "Ready" if row.cert_number and row.grader else "Needs setup"
-            if tree is self.review_tree and column in {"cert_number", "grader", "card_title"}:
+            if tree is self.review_tree and column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert:
                 match = self._incoming_match(row.cert_number)
                 target_sheet_sources[excel_row] = str(match.get("sheet") or "NO SHEET FOUND")
                 if match:
