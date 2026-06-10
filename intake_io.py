@@ -42,6 +42,53 @@ PHOTO_EXPORT_POSITIONS = {
     "source": 16,
 }
 
+CERT_HEADERS = ("certificationnumber", "certnumber", "cert", "certification", "cert#")
+GRADER_HEADERS = ("company", "gradingcompany", "grader", "gradingco", "gradingcompanyname")
+CARD_HEADERS = ("carddescription", "card", "description", "title", "cardtitle", "item", "itemtitle")
+PURCHASE_PRICE_HEADERS = ("purchaseprice", "purchase", "price", "cost", "buyprice", "paid")
+CARD_LADDER_VALUE_HEADERS = (
+    "cardladdervalue",
+    "cardladder",
+    "clvalue",
+    "cardladderprice",
+    "laddervalue",
+    "ladderprice",
+    "value",
+)
+COMPS_AVERAGE_HEADERS = (
+    "comps",
+    "comp",
+    "compsvalue",
+    "compvalue",
+    "compsavg",
+    "compavg",
+    "averagecomp",
+    "averagecomps",
+    "avgcomp",
+    "avgcomps",
+    "cardladdercomps",
+    "cardladdercompsaverage",
+    "cardladdercompaverage",
+    "clcomps",
+    "clcomp",
+    "compsaverage",
+    "compaverage",
+)
+COMP_CONFIDENCE_HEADERS = ("compconfidence", "cardladdercompconfidence", "clconfidence", "confidence")
+COMP_DETAILS_HEADERS = ("cardladdercompdetails", "compdetails", "cardladdercompsdetail", "compsdetails")
+STATUS_HEADERS = ("compstatus", "status", "assignmentstatus")
+NOTES_HEADERS = ("notes", "note")
+SOURCE_HEADERS = ("source", "sourcephoto", "sourcefile", "file")
+SIMPLE_HEADER_ALIASES = (
+    CERT_HEADERS
+    + GRADER_HEADERS
+    + CARD_HEADERS
+    + PURCHASE_PRICE_HEADERS
+    + CARD_LADDER_VALUE_HEADERS
+    + COMPS_AVERAGE_HEADERS
+    + COMP_CONFIDENCE_HEADERS
+)
+
 
 def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[dict[str, Any]]:
     workbook = load_workbook(path, read_only=True, data_only=True)
@@ -52,17 +99,17 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
         headers = _header_map_for_row(sheet, 1) if has_header else {}
         start_row = 2 if has_header else 1
         for row_index in range(start_row, sheet.max_row + 1):
-            cert = normalize_cert(_cell_by_header(sheet, row_index, headers, ("certificationnumber", "certnumber", "cert"), 1))
-            grader = normalize_grader(_cell_by_header(sheet, row_index, headers, ("company", "gradingcompany", "grader", "gradingco"), None))
-            card = clean_part(_cell_by_header(sheet, row_index, headers, ("carddescription", "card", "description"), 2))
-            purchase_price = parse_money(_cell_by_header(sheet, row_index, headers, ("purchaseprice", "price", "cost"), 3))
-            card_ladder_value = parse_money(_cell_by_header(sheet, row_index, headers, ("cardladdervalue", "cardladder", "clvalue", "value"), None))
-            comps_average = parse_money(_cell_by_header(sheet, row_index, headers, ("comps", "cardladdercomps", "cardladdercompsaverage", "compsaverage", "compaverage"), None))
-            comp_confidence = clean_part(_cell_by_header(sheet, row_index, headers, ("compconfidence", "cardladdercompconfidence", "clconfidence"), None))
-            comp_details = clean_part(_cell_by_header(sheet, row_index, headers, ("cardladdercompdetails", "compdetails"), None))
-            status = clean_part(_cell_by_header(sheet, row_index, headers, ("compstatus", "status"), None))
-            notes = clean_part(_cell_by_header(sheet, row_index, headers, ("notes", "note"), None))
-            source = clean_part(_cell_by_header(sheet, row_index, headers, ("source", "sourcephoto", "sourcefile"), None if has_header else 4))
+            cert = normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, 1))
+            grader = normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, None))
+            card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, 2))
+            purchase_price = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 3))
+            card_ladder_value = parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, None))
+            comps_average = parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, None))
+            comp_confidence = clean_part(_cell_by_header(sheet, row_index, headers, COMP_CONFIDENCE_HEADERS, None))
+            comp_details = clean_part(_cell_by_header(sheet, row_index, headers, COMP_DETAILS_HEADERS, None))
+            status = clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, None))
+            notes = clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, None))
+            source = clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, None if has_header else 4))
             if not cert and not card and purchase_price is None:
                 continue
             grader = grader or infer_grader(card)
@@ -384,13 +431,16 @@ def clean_part(value: Any) -> str:
 
 
 def _looks_like_simple_header(sheet) -> bool:
-    first = " ".join(clean_part(sheet.cell(1, col).value).lower() for col in range(1, min(sheet.max_column, 3) + 1))
-    return any(token in first for token in ("cert", "card", "description", "purchase", "price"))
+    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    if any(alias in headers for alias in SIMPLE_HEADER_ALIASES):
+        return True
+    first = " ".join(clean_part(sheet.cell(1, col).value).lower() for col in range(1, min(sheet.max_column, 5) + 1))
+    return any(token in first for token in ("cert", "card", "description", "purchase", "price", "comp", "ladder"))
 
 
 def _cert_column(sheet) -> int | None:
     headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
-    for alias in ("certificationnumber", "certnumber", "cert", "certification", "cert#"):
+    for alias in CERT_HEADERS:
         if alias in headers:
             return headers[alias]
     if _looks_like_simple_header(sheet):
@@ -400,7 +450,7 @@ def _cert_column(sheet) -> int | None:
 
 def _card_column(sheet) -> int | None:
     headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
-    for alias in ("carddescription", "card", "description"):
+    for alias in CARD_HEADERS:
         if alias in headers:
             return headers[alias]
     return None
@@ -408,7 +458,7 @@ def _card_column(sheet) -> int | None:
 
 def _price_column(sheet) -> int | None:
     headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
-    for alias in ("purchaseprice", "price", "cost"):
+    for alias in PURCHASE_PRICE_HEADERS:
         if alias in headers:
             return headers[alias]
     return None

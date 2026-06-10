@@ -198,6 +198,9 @@ EDITABLE_COLUMNS = {
     "grader",
     "card_title",
     "purchase_price",
+    "card_ladder_value",
+    "card_ladder_comps_average",
+    "card_ladder_comp_confidence",
 }
 
 HEADINGS = {
@@ -919,6 +922,7 @@ class CardPipelineApp(tk.Tk):
 
         self.incoming_cert_index = dict(payload.get("incoming_index") or {})
         self._match_all_review_rows()
+        self._refresh_table()
         self.review_status.set(f"Indexed {len(self.incoming_cert_index)} cert(s) from {int(payload.get('incoming_path_count') or 0)} incoming sheet(s).")
 
         self.home_sheet_paths = dict(payload.get("home_paths") or {"Incoming": {}, "Working": {}, "Received": {}})
@@ -1515,6 +1519,7 @@ class CardPipelineApp(tk.Tk):
                 }
         self.incoming_cert_index = index
         self._match_all_review_rows()
+        self._refresh_table()
         self.review_status.set(f"Indexed {len(index)} cert(s) from {len(paths)} incoming sheet(s).")
 
     def refresh_received_sheets(self) -> None:
@@ -2402,6 +2407,12 @@ class CardPipelineApp(tk.Tk):
                     row.grader = inferred
             elif column == "purchase_price":
                 row.existing_value = self._parse_money_text(clean_value)
+            elif column == "card_ladder_value":
+                row.card_ladder_value = self._parse_money_text(clean_value)
+            elif column == "card_ladder_comps_average":
+                row.card_ladder_comps_average = self._parse_money_text(clean_value)
+            elif column == "card_ladder_comp_confidence":
+                row.card_ladder_comp_confidence = clean_value
             row.status = "Ready" if row.cert_number and row.grader else "Needs setup"
             if tree is self.review_tree and column in {"cert_number", "grader", "card_title"}:
                 match = self._incoming_match(row.cert_number)

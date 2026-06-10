@@ -207,8 +207,20 @@ class AssignmentEngine:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             entries = raw.get("companies", raw) if isinstance(raw, dict) else raw
-            companies = [load_company(entry, path.parent) for entry in entries if isinstance(entry, dict)]
-            return cls([company for company in companies if company is not None])
+            companies: list[AssignmentCompany] = []
+            errors: list[str] = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name") or "Unnamed company").strip()
+                try:
+                    company = load_company(entry, path.parent)
+                except Exception as error:
+                    errors.append(f"{name}: {error}")
+                    continue
+                if company is not None:
+                    companies.append(company)
+            return cls(companies, "; ".join(errors))
         except Exception as error:
             return cls([], str(error))
 
