@@ -13,7 +13,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
-from google_sheets_import import GoogleSheetsAuthError, read_google_sheet_text
+from google_sheets_import import GoogleSheetsAuthError, read_google_sheet_tabs, read_google_sheet_text
 
 
 ROOT = Path(__file__).resolve().parent
@@ -350,7 +350,13 @@ def read_structured_source_text(source: dict[str, Any], base_dir: Path, interact
     if kind == "google_sheet" and url:
         path = path_from_source_value(path_value, base_dir) if path_value else None
         try:
-            return read_google_sheet_text(url, interactive=interactive_google, sheet_name=sheet_name)
+            sheets = read_google_sheet_tabs(url, interactive=interactive_google, sheet_name=sheet_name)
+            if sheet_name:
+                return workbook_values_text(sheets, sheet_name=sheet_name)
+            synthesized = synthesize_workbook_rules(sheets)
+            if synthesized:
+                return "\n".join(synthesized)
+            return workbook_values_text(sheets)
         except GoogleSheetsAuthError:
             if not path or not path.exists():
                 raise
@@ -537,20 +543,301 @@ def google_sheet_csv_url(url: str) -> str:
 def read_workbook_text(path: Path, sheet_name: str = "") -> str:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
-        lines: list[str] = []
-        for sheet in workbook.worksheets:
-            if sheet_name and sheet.title.lower() != sheet_name.lower():
-                continue
-            lines.append(f"# {sheet.title}")
-            for row in sheet.iter_rows(values_only=True):
-                cells = [str(cell).strip() for cell in row if cell not in (None, "")]
-                if cells:
-                    lines.append(" ".join(cells))
-        if sheet_name and not lines:
+        selected_sheets = [
+            sheet for sheet in workbook.worksheets
+            if not sheet_name or sheet.title.lower() == sheet_name.lower()
+        ]
+        if sheet_name and not selected_sheets:
             raise ValueError(f"Workbook does not contain a sheet named {sheet_name}.")
-        return "\n".join(lines)
+        sheets = [(sheet.title, worksheet_values(sheet)) for sheet in selected_sheets]
+        if not sheet_name:
+            synthesized = synthesize_workbook_rules(sheets)
+            if synthesized:
+                return "\n".join(synthesized)
+        return workbook_values_text(sheets, sheet_name=sheet_name)
     finally:
         workbook.close()
+
+
+def worksheet_values(sheet: Any) -> list[list[Any]]:
+    values: list[list[Any]] = []
+    for row in sheet.iter_rows(values_only=True):
+        cells = list(row)
+        while cells and cells[-1] in (None, ""):
+            cells.pop()
+        values.append(cells)
+    return values
+
+
+def workbook_values_text(sheets: list[tuple[str, list[list[Any]]]], sheet_name: str = "") -> str:
+    lines: list[str] = []
+    for title, values in sheets:
+        lines.append(f"# {title}")
+        for row in values:
+            cells = [str(cell).strip() for cell in row if cell not in (None, "")]
+            if cells:
+                lines.append(" ".join(cells))
+    if sheet_name and not lines:
+        raise ValueError(f"Workbook does not contain a sheet named {sheet_name}.")
+    return "\n".join(lines)
+
+
+def synthesize_workbook_rules(sheets: list[tuple[str, list[list[Any]]]]) -> list[str]:
+    goat_players: list[str] = []
+    for title, values in sheets:
+        if re.search(r"goats?", title, re.I):
+            goat_players.extend(extract_player_names_from_values(values))
+    context = {"goatPlayers": unique_values(goat_players)}
+
+    rules: list[str] = []
+    for title, values in sheets:
+        cleaned_title = clean_rule_label(title)
+        if re.search(r"^(comping standards|payouts)$", cleaned_title, re.I):
+            continue
+        if re.search(r"do not buy|never buy", cleaned_title, re.I):
+            rules.extend(synthesize_do_not_buy_rules(values))
+            continue
+        sheet_rules = synthesize_arena_club_rules(values, context)
+        if not sheet_rules:
+            sheet_rules = synthesize_generic_sheet_rules(title, values)
+        if sheet_rules:
+            rules.extend(sheet_rules)
+        else:
+            rules.extend(synthesize_generic_sheet_rules(title, values))
+    return unique_values(rules)
+
+
+def synthesize_arena_club_rules(values: list[list[Any]], context: dict[str, Any]) -> list[str]:
+    rules: list[str] = []
+    rules.extend(synthesize_arena_club_category_table_rules(values, context))
+
+    header_row_index = next(
+        (
+            index for index, row in enumerate(values)
+            if any(re.search(r"brady|kobe|lebron|kaboom|downtown|goats?|color blast|manga", str(cell or ""), re.I) for cell in row)
+        ),
+        -1,
+    )
+    if header_row_index >= 0:
+        headers = values[header_row_index]
+        range_row = next((row for row in values[header_row_index + 1:] if any(parse_sheet_range(cell) for cell in row)), [])
+        for index, header in enumerate(headers):
+            range_value = range_row[index] if index < len(range_row) else None
+            parsed_range = parse_sheet_range(range_value)
+            if not parsed_range:
+                continue
+            for label in expand_header_label(header):
+                if is_goat_rule_label(label) and context.get("goatPlayers"):
+                    for player in context["goatPlayers"]:
+                        rules.append(format_rule(player, parsed_range))
+                else:
+                    rules.append(format_rule(label, parsed_range))
+
+    rules.extend(synthesize_arena_club_sport_range_rules(values))
+    return unique_values(rules)
+
+
+def synthesize_arena_club_category_table_rules(values: list[list[Any]], context: dict[str, Any]) -> list[str]:
+    rules: list[str] = []
+    for row in values:
+        label = normalize_rule_label(row[0] if row else "")
+        parsed_range = parse_sheet_range(row[1] if len(row) > 1 else None)
+        if not label or not parsed_range or is_generic_rule_label(label) or parse_sheet_range(label):
+            continue
+        for expanded_label in expand_header_label(label):
+            if is_goat_rule_label(expanded_label) and context.get("goatPlayers"):
+                for player in context["goatPlayers"]:
+                    rules.append(format_rule(player, parsed_range))
+            else:
+                rules.append(format_rule(expanded_label, parsed_range))
+    return rules
+
+
+def synthesize_arena_club_sport_range_rules(values: list[list[Any]]) -> list[str]:
+    rules: list[str] = []
+    for row_index, row in enumerate(values):
+        for column_index, cell in enumerate(row):
+            if not re.match(r"^price ranges?$", str(cell or "").strip(), re.I):
+                continue
+            parsed_range = parse_sheet_range(row[column_index + 1] if column_index + 1 < len(row) else None)
+            sport = find_nearest_sport_label(values, row_index, column_index)
+            if parsed_range and sport:
+                rules.append(format_rule(sport, parsed_range))
+    return rules
+
+
+def synthesize_generic_sheet_rules(title: str, values: list[list[Any]]) -> list[str]:
+    rules: list[str] = []
+    title_hint = clean_rule_text(title)
+    for row_index, row in enumerate(values):
+        for column_index, cell in enumerate(row):
+            parsed_range = parse_sheet_range(cell)
+            if not parsed_range:
+                continue
+            label = find_rule_label(values, row_index, column_index, title_hint)
+            if label:
+                rules.append(format_rule(label, parsed_range))
+    return unique_values(rules)
+
+
+def synthesize_do_not_buy_rules(values: list[list[Any]]) -> list[str]:
+    rules: list[str] = []
+    max_columns = max((len(row) for row in values), default=0)
+    section_max_by_column: list[float | None] = [None] * max_columns
+    for row in values:
+        apply_do_not_buy_section_headings(row, section_max_by_column)
+        for column_index, cell in enumerate(row):
+            text = re.sub(r"^\d+[.)]\s*", "", clean_rule_label(cell)).strip()
+            if not text or parse_do_not_buy_section(text):
+                continue
+            over_match = (
+                re.match(r"^(.+?)\s+(?:cards\s+)?over\s+\$?([\d,]+(?:\.\d+)?k?)\+?(?:\s+value)?", text, re.I)
+                or re.match(r"^(.+?)\s+\$?([\d,]+(?:\.\d+)?k?)\+$", text, re.I)
+            )
+            if over_match:
+                rules.append(f"block: {over_match.group(1).strip()} over {format_rule_number(parse_money(over_match.group(2)) or 0)}")
+                continue
+            section_max = section_max_by_column[column_index] if column_index < len(section_max_by_column) else None
+            rules.append(f"block: {text} over {format_rule_number(section_max)}" if section_max is not None else f"block: {text}")
+    return unique_values(rules)
+
+
+def apply_do_not_buy_section_headings(row: list[Any], section_max_by_column: list[float | None]) -> None:
+    headings = [
+        (index, section)
+        for index, cell in enumerate(row)
+        for section in [parse_do_not_buy_section(clean_rule_label(cell))]
+        if section and not section.get("keepCurrentPrice")
+    ]
+    for heading_index, (index, section) in enumerate(headings):
+        next_index = headings[heading_index + 1][0] if heading_index + 1 < len(headings) else len(section_max_by_column)
+        for column in range(index, next_index):
+            section_max_by_column[column] = section.get("maxPrice")
+
+
+def parse_do_not_buy_section(value: Any) -> dict[str, Any] | None:
+    text = str(value or "").strip()
+    threshold_match = re.search(r"(?:do\s+not|don't|dont|not|never|avoid).{0,40}?\bover\s+\$?([\d,]+(?:\.\d+)?k?)", text, re.I)
+    if threshold_match:
+        return {"maxPrice": parse_money(threshold_match.group(1))}
+    if re.match(r"^(?:basketball|football|baseball|soccer|hockey|wnba|collegiate|vintage|notes?)$", text, re.I):
+        return {"keepCurrentPrice": True}
+    if re.match(r"^(?:do not buy|don't buy|dont buy|never buy|players to never buy|players to avoid|players to not buy|players not to buy|basketball|football|baseball|soccer|hockey|wnba|collegiate|vintage|currently avoiding(?: buying)?|pausing/limiting|notes?)$", text, re.I):
+        return {"maxPrice": None}
+    return None
+
+
+def extract_player_names_from_values(values: list[list[Any]]) -> list[str]:
+    players: list[str] = []
+    for row in values:
+        for cell in row:
+            text = re.sub(r"^\d+\.?\s*", "", clean_rule_label(cell))
+            text = re.sub(r"\s+\$?\d[\d,]*(?:\.\d+)?k?\s*(?:-|–|—|to|through|thru)\s*\$?\d[\d,]*(?:\.\d+)?k?.*$", "", text, flags=re.I).strip()
+            if is_likely_player_name(text):
+                players.append(text)
+    return unique_values(players)
+
+
+def is_likely_player_name(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text or len(text) > 48:
+        return False
+    if re.search(r"price|range|grade|sport|dupes|qty|conf|goats?|tab|notes?", text, re.I):
+        return False
+    return re.match(r"^[A-Za-z][A-Za-z'. -]+(?:\s+[A-Za-z'. -]+)+$", text) is not None
+
+
+def expand_header_label(value: Any) -> list[str]:
+    label = normalize_rule_label(value)
+    if not label:
+        return []
+    if re.search(r"tom brady.*kobe bryant|kobe bryant.*tom brady", label, re.I):
+        return ["Tom Brady", "Kobe Bryant"]
+    return [label]
+
+
+def normalize_rule_label(value: Any) -> str:
+    label = clean_rule_label(value)
+    label = re.sub(r"&", " ", label)
+    label = re.sub(r"\bBRADY\b", "Tom Brady", label, flags=re.I)
+    label = re.sub(r"\bKOBE\b", "Kobe Bryant", label, flags=re.I)
+    label = re.sub(r"\bKabooms\b", "Kaboom", label, flags=re.I)
+    label = re.sub(r"\bGOATS\b", "GOAT", label, flags=re.I)
+    return label.strip()
+
+
+def is_goat_rule_label(value: Any) -> bool:
+    return re.search(r"\bgoats?\b", str(value or ""), re.I) is not None
+
+
+def find_nearest_sport_label(values: list[list[Any]], row_index: int, column_index: int) -> str:
+    for index in range(row_index - 1, -1, -1):
+        row = values[index]
+        candidate = normalize_sport_label(row[column_index] if column_index < len(row) else "")
+        if candidate:
+            return candidate
+    return ""
+
+
+def normalize_sport_label(value: Any) -> str:
+    label = clean_rule_label(value).lower()
+    sports = {
+        "basketball": "Basketball",
+        "baseball": "Baseball",
+        "football": "Football",
+        "soccer": "Soccer",
+        "ufc": "UFC",
+        "hockey": "Hockey",
+        "pokemon": "Pokemon",
+        "poke": "Pokemon",
+    }
+    return sports.get(label, "")
+
+
+def find_rule_label(values: list[list[Any]], row_index: int, column_index: int, title_hint: str) -> str:
+    row = values[row_index] if row_index < len(values) else []
+    left_values = [clean_rule_label(value) for value in reversed(row[:column_index]) if clean_rule_label(value)]
+    for left_label in left_values:
+        if not re.search(r"price ranges?|range|dupes|qty|conf", left_label, re.I):
+            return normalize_rule_label(left_label)
+    for index in range(row_index - 1, -1, -1):
+        row_above = values[index]
+        above = clean_rule_label(row_above[column_index] if column_index < len(row_above) else "")
+        if above and not parse_sheet_range(above):
+            return normalize_rule_label(above)
+    return normalize_rule_label(title_hint)
+
+
+def parse_sheet_range(value: Any) -> dict[str, float] | None:
+    match = re.search(r"\$?\s*(\d[\d,]*(?:\.\d+)?k?)\s*(?:-|–|—|to|through|thru)\s*\$?\s*(\d[\d,]*(?:\.\d+)?k?)", str(value or ""), re.I)
+    if not match:
+        return None
+    return {"min": parse_money(match.group(1)) or 0, "max": parse_money(match.group(2)) or 0}
+
+
+def format_rule(label: str, parsed_range: dict[str, float]) -> str:
+    return f"{label} ${format_rule_number(parsed_range['min'])}-${format_rule_number(parsed_range['max'])}"
+
+
+def format_rule_number(value: float | None) -> str:
+    if value is None:
+        return ""
+    return str(int(value)) if float(value).is_integer() else str(value)
+
+
+def clean_rule_label(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def unique_values(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def parse_rules(text: str, accept_all: bool = False) -> CompanyRules:
@@ -672,7 +959,7 @@ def rule_matcher_label(value: Any) -> str:
 
 
 def is_generic_rule_label(value: Any) -> bool:
-    text = clean_rule_text(value).lower()
+    text = clean_rule_label(value).lower()
     return text in {
         "price",
         "prices",
@@ -984,8 +1271,23 @@ def term_matches(term: str, haystack: str) -> bool:
     }
     options = [words]
     alias_text = " ".join(words)
+    if canonical_sport_label(alias_text) and sport_term_matches_known_player(alias_text, haystack):
+        return True
     options.extend(alias.split() for alias in aliases.get(alias_text, []))
     return any(all(word_matches(word, haystack) for word in option) for option in options)
+
+
+def sport_term_matches_known_player(sport: str, haystack: str) -> bool:
+    expected = canonical_sport_label(sport)
+    if not expected:
+        return False
+    cleaned_haystack = f" {clean_rule_text(haystack)} "
+    for player, player_sport in PLAYER_SPORT_HINTS.items():
+        if player_sport != expected:
+            continue
+        if f" {clean_rule_text(player)} " in cleaned_haystack:
+            return True
+    return False
 
 
 def word_matches(word: str, haystack: str) -> bool:
