@@ -30,7 +30,12 @@ CATEGORY_ALIASES = {
     "wnba": ["wnba"],
     "pokemon": ["pokemon", "poke"],
     "one piece": ["one piece", "onepiece", "one_piece", "1 piece"],
-    "ufc": ["ufc"],
+    "wwe": ["wwe", "wrestling", "wwf"],
+    "f1": ["f1", "formula 1", "formula one", "formula1"],
+    "marvel": ["marvel"],
+    "disney": ["disney"],
+    "star wars": ["star wars", "starwars"],
+    "ufc": ["ufc", "mma"],
 }
 PLAYER_SPORT_HINTS = {
     "victor wembanyama": "basketball",
@@ -1040,7 +1045,19 @@ def normalize_sport_label(value: Any) -> str:
         "baseball": "Baseball",
         "football": "Football",
         "soccer": "Soccer",
+        "wwe": "WWE",
+        "wrestling": "WWE",
+        "wwf": "WWE",
+        "f1": "F1",
+        "formula 1": "F1",
+        "formula one": "F1",
+        "formula1": "F1",
+        "marvel": "Marvel",
+        "disney": "Disney",
+        "star wars": "Star Wars",
+        "starwars": "Star Wars",
         "ufc": "UFC",
+        "mma": "UFC",
         "hockey": "Hockey",
         "pokemon": "Pokemon",
         "poke": "Pokemon",
@@ -1622,10 +1639,16 @@ def term_matches(term: str, haystack: str) -> bool:
         "bball": ["basketball", "nba"],
         "poke": ["pokemon"],
         "one piece": ["onepiece", "1 piece"],
+        "wwe": ["wrestling", "wwf"],
+        "f1": ["formula 1", "formula one", "formula1"],
+        "star wars": ["starwars"],
+        "ufc": ["mma"],
     }
     options = [words]
     alias_text = " ".join(words)
     if canonical_sport_label(alias_text) and sport_term_matches_known_player(alias_text, haystack):
+        return True
+    if matcher_matches_text(alias_text, haystack):
         return True
     options.extend(alias.split() for alias in aliases.get(alias_text, []))
     return any(all(word_matches(word, haystack) for word in option) for option in options)

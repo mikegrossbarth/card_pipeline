@@ -19,7 +19,21 @@ from google_sheets_import import authorize_google_sheets
 
 
 GRADE_COMPANIES = ("psa", "bgs", "sgc", "cgc")
-SPORT_OPTIONS = ("basketball", "football", "baseball", "soccer", "hockey", "pokemon", "one piece")
+SPORT_OPTIONS = (
+    "basketball",
+    "football",
+    "baseball",
+    "soccer",
+    "hockey",
+    "pokemon",
+    "one piece",
+    "wwe",
+    "f1",
+    "marvel",
+    "disney",
+    "star wars",
+    "ufc",
+)
 RULE_SOURCE_LABELS = {
     "manual": "Manual rules",
     "keep_file": "Google Keep local file",
@@ -500,7 +514,7 @@ class AssignmentRulesDialog(tk.Toplevel):
 
         sports = set(data.get("sports") or split_values(data.get("sport")) if data else [])
         sport_vars = {sport: tk.BooleanVar(value=sport in sports) for sport in SPORT_OPTIONS}
-        ttk.Label(frame, text="Sport", style="Assign.TLabel").grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Label(frame, text="Category", style="Assign.TLabel").grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
         sport_frame = ttk.Frame(frame, style="AssignPanel.TFrame")
         sport_frame.grid(row=2, column=0, sticky="ew", pady=(6, 12))
         sport_frame.columnconfigure(0, weight=1)
@@ -510,7 +524,7 @@ class AssignmentRulesDialog(tk.Toplevel):
             col = option_index % 2
             ttk.Checkbutton(
                 sport_frame,
-                text=title_case(sport),
+                text=category_label(sport),
                 variable=sport_vars[sport],
                 style="Assign.TCheckbutton",
             ).grid(row=row, column=col, sticky=tk.W, padx=(0, 18), pady=2)
@@ -846,6 +860,16 @@ def safe_stem(value: str) -> str:
 
 def title_case(value: str) -> str:
     return " ".join(part.capitalize() for part in value.split())
+
+
+def category_label(value: str) -> str:
+    labels = {
+        "wwe": "WWE",
+        "f1": "F1",
+        "ufc": "UFC",
+        "star wars": "Star Wars",
+    }
+    return labels.get(str(value or "").lower(), title_case(value))
 
 
 def split_values(value: Any) -> list[str]:
