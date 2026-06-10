@@ -8,6 +8,7 @@ from typing import Any
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils.cell import range_boundaries
 
 
 DEFAULT_SHEET = "Cards"
@@ -101,7 +102,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
         has_header = _looks_like_simple_header(sheet)
         headers = _header_map_for_row(sheet, 1) if has_header else {}
         start_row = 2 if has_header else 1
-        for row_index in range(start_row, sheet.max_row + 1):
+        for row_index in range(start_row, _sheet_max_row(sheet) + 1):
             cert = normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, 1))
             grader = normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, None))
             card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, 2))
@@ -144,7 +145,7 @@ def read_photo_export(path: Path, sheet_name: str | None = None) -> list[dict[st
         sheet = workbook[sheet_name] if sheet_name else workbook[workbook.sheetnames[0]]
         schema = _detect_photo_schema(sheet)
         rows: list[dict[str, Any]] = []
-        for row_index in range(schema["first_data_row"], sheet.max_row + 1):
+        for row_index in range(schema["first_data_row"], _sheet_max_row(sheet) + 1):
             source = _source_row(sheet, row_index, schema["headers"])
             cert = normalize_cert(source.get("cert"))
             card = build_card_title(source)
@@ -187,7 +188,7 @@ def summarize_workbook(path: Path) -> dict[str, Any]:
             card_col = _card_column(sheet) or 2
             price_col = _price_column(sheet) or 3
             received_col = _received_column(sheet)
-            for row_index in range(first_data_row, sheet.max_row + 1):
+            for row_index in range(first_data_row, _sheet_max_row(sheet) + 1):
                 cert = normalize_cert(sheet.cell(row_index, cert_col).value)
                 card = clean_part(sheet.cell(row_index, card_col).value)
                 purchase_price = parse_money(sheet.cell(row_index, price_col).value)
@@ -362,13 +363,13 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
 
 
 def existing_sheet_certs(sheet) -> set[str]:
-    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
     cert_col = headers.get("certificationnumber") or headers.get("certnumber") or headers.get("cert")
     if not cert_col:
         return set()
     return {
         normalize_cert(sheet.cell(row_index, cert_col).value)
-        for row_index in range(2, sheet.max_row + 1)
+        for row_index in range(2, _sheet_max_row(sheet) + 1)
         if normalize_cert(sheet.cell(row_index, cert_col).value)
     }
 
@@ -443,12 +444,12 @@ def mark_received_in_workbooks(paths: list[Path], certs: set[str]) -> dict[str, 
                 header_row = 1 if _looks_like_simple_header(sheet) else None
                 received_col = _ensure_received_column(sheet, header_row)
                 first_data_row = 2 if header_row else 1
-                for row_index in range(first_data_row, sheet.max_row + 1):
+                for row_index in range(first_data_row, _sheet_max_row(sheet) + 1):
                     cert = normalize_cert(sheet.cell(row_index, cert_col).value)
                     if cert not in target_certs:
                         continue
                     sheet.cell(row_index, received_col).value = "X"
-                    for col_index in range(1, sheet.max_column + 1):
+                    for col_index in range(1, _sheet_max_column(sheet) + 1):
                         cell = sheet.cell(row_index, col_index)
                         cell.fill = RECEIVED_FILL
                         cell.font = RECEIVED_FONT
@@ -556,25 +557,25 @@ def clean_part(value: Any) -> str:
 
 
 def _looks_like_simple_header(sheet) -> bool:
-    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
     if any(alias in headers for alias in SIMPLE_HEADER_ALIASES):
         return True
-    first = " ".join(clean_part(sheet.cell(1, col).value).lower() for col in range(1, min(sheet.max_column, 5) + 1))
+    first = " ".join(clean_part(sheet.cell(1, col).value).lower() for col in range(1, min(_sheet_max_column(sheet), 5) + 1))
     return any(token in first for token in ("cert", "card", "description", "purchase", "price", "comp", "ladder"))
 
 
 def _cert_column(sheet) -> int | None:
-    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
     for alias in CERT_HEADERS:
         if alias in headers:
             return headers[alias]
     if _looks_like_simple_header(sheet):
         return None
-    return 1 if sheet.max_column >= 1 else None
+    return 1 if _sheet_max_column(sheet) >= 1 else None
 
 
 def _card_column(sheet) -> int | None:
-    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
     for alias in CARD_HEADERS:
         if alias in headers:
             return headers[alias]
@@ -582,7 +583,7 @@ def _card_column(sheet) -> int | None:
 
 
 def _price_column(sheet) -> int | None:
-    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
     for alias in PURCHASE_PRICE_HEADERS:
         if alias in headers:
             return headers[alias]
@@ -590,7 +591,7 @@ def _price_column(sheet) -> int | None:
 
 
 def _received_column(sheet) -> int | None:
-    headers = _header_map_for_row(sheet, 1) if sheet.max_row else {}
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
     return headers.get(_normalize_header(RECEIVED_HEADER))
 
 
@@ -599,7 +600,7 @@ def _ensure_received_column(sheet, header_row: int | None) -> int:
     existing = headers.get(_normalize_header(RECEIVED_HEADER))
     if existing:
         return existing
-    col = sheet.max_column + 1
+    col = _sheet_max_column(sheet) + 1
     if header_row:
         header_cell = sheet.cell(header_row, col)
         header_cell.value = RECEIVED_HEADER
@@ -637,7 +638,7 @@ def _detect_photo_schema(sheet) -> dict[str, Any]:
     best_row = None
     best_headers: dict[str, int] = {}
     best_score = 0
-    for row_index in range(1, min(sheet.max_row, 10) + 1):
+    for row_index in range(1, min(_sheet_max_row(sheet), 10) + 1):
         headers = _header_map_for_row(sheet, row_index)
         score = _header_score(headers)
         if score > best_score:
@@ -655,11 +656,57 @@ def _header_score(headers: dict[str, int]) -> int:
 
 def _header_map_for_row(sheet, row_index: int) -> dict[str, int]:
     headers: dict[str, int] = {}
-    for col in range(1, sheet.max_column + 1):
+    for col in range(1, _sheet_max_column(sheet) + 1):
         value = sheet.cell(row_index, col).value
         if value:
             headers[_normalize_header(value)] = col
     return headers
+
+
+def _sheet_max_row(sheet) -> int:
+    row_count, _column_count = _sheet_bounds(sheet)
+    return row_count
+
+
+def _sheet_max_column(sheet) -> int:
+    _row_count, column_count = _sheet_bounds(sheet)
+    return column_count
+
+
+def _sheet_bounds(sheet) -> tuple[int, int]:
+    max_row = getattr(sheet, "max_row", None)
+    max_column = getattr(sheet, "max_column", None)
+    row_count = max_row if isinstance(max_row, int) and max_row >= 1 else 0
+    column_count = max_column if isinstance(max_column, int) and max_column >= 1 else 0
+    if row_count and column_count:
+        return row_count, column_count
+
+    dimension = ""
+    for kwargs in ({}, {"force": True}):
+        try:
+            dimension = str(sheet.calculate_dimension(**kwargs) or "")
+            break
+        except TypeError:
+            continue
+        except Exception:
+            dimension = ""
+            break
+    if not dimension:
+        try:
+            reset = getattr(sheet, "reset_dimensions", None)
+            if callable(reset):
+                reset()
+                dimension = str(sheet.calculate_dimension(force=True) or "")
+        except Exception:
+            dimension = ""
+    if dimension:
+        try:
+            min_col, min_row, max_col, max_row = range_boundaries(dimension)
+            row_count = row_count or max(max_row, min_row)
+            column_count = column_count or max(max_col, min_col)
+        except Exception:
+            pass
+    return row_count, column_count
 
 
 def _source_row(sheet, row_index: int, headers: dict[str, int]) -> dict[str, Any]:
@@ -672,17 +719,21 @@ def _source_row(sheet, row_index: int, headers: dict[str, int]) -> dict[str, Any
 def _cell(sheet, row_index: int, headers: dict[str, int], aliases: tuple[str, ...], fallback_col: int | None) -> Any:
     for alias in aliases:
         col = headers.get(alias)
-        if col:
+        if _valid_column(col):
             return sheet.cell(row_index, col).value
-    return sheet.cell(row_index, fallback_col).value if fallback_col else ""
+    return sheet.cell(row_index, fallback_col).value if _valid_column(fallback_col) else ""
 
 
 def _cell_by_header(sheet, row_index: int, headers: dict[str, int], aliases: tuple[str, ...], fallback_col: int | None) -> Any:
     for alias in aliases:
         col = headers.get(alias)
-        if col:
+        if _valid_column(col):
             return sheet.cell(row_index, col).value
-    return sheet.cell(row_index, fallback_col).value if fallback_col else ""
+    return sheet.cell(row_index, fallback_col).value if _valid_column(fallback_col) else ""
+
+
+def _valid_column(value: Any) -> bool:
+    return isinstance(value, int) and value >= 1
 
 
 def _normalize_header(value: Any) -> str:

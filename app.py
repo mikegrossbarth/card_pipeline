@@ -1814,10 +1814,32 @@ class CardPipelineApp(tk.Tk):
             else:
                 rows = read_simple_spreadsheet(path, self.sheet_name.get() or None)
         except Exception as error:
-            messagebox.showerror("Load failed", str(error))
+            messagebox.showerror("Load failed", self._create_sheet_load_error(error))
+            return
+        if not rows:
+            messagebox.showinfo("No usable rows", self._create_sheet_no_rows_message(path))
+            self.status_var.set(f"No usable rows found in {path.name}.")
             return
         self._append_rows(rows)
         self.status_var.set(f"Loaded {len(rows)} row(s) from {path.name}.")
+
+    def _create_sheet_load_error(self, error: Exception) -> str:
+        raw = str(error).strip()
+        if isinstance(error, (TypeError, ValueError, KeyError, IndexError)):
+            return (
+                "This sheet does not match the Create import format.\n\n"
+                "Expected either a simple sheet with Cert #, Card Description, and Purchase Price columns, "
+                "or a Photo OCR export with certification/card fields.\n\n"
+                f"Details: {raw or type(error).__name__}"
+            )
+        return raw or type(error).__name__
+
+    def _create_sheet_no_rows_message(self, path: Path) -> str:
+        return (
+            f"No usable card rows were found in {path.name}.\n\n"
+            "Create can import a simple sheet with Cert #, Card Description, and Purchase Price columns, "
+            "or a Photo OCR export with certification/card fields."
+        )
 
     def toggle_scanning_station(self) -> None:
         self.scanning_station_active = not self.scanning_station_active
