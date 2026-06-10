@@ -2090,9 +2090,14 @@ class CardPipelineApp(tk.Tk):
         existing = list(self.review_rows)
         start = len(existing) + 2
         added_excel_rows: list[int] = []
+        refreshed_incoming_index = False
         for offset, row in enumerate(rows):
             cert = scan_to_cert(row.get("cert_number"))
             match = self._incoming_match(cert)
+            if cert and not match and not refreshed_incoming_index:
+                self.refresh_incoming_index()
+                refreshed_incoming_index = True
+                match = self._incoming_match(cert)
             grader = str(row.get("grader") or match.get("grader") or infer_grader(str(row.get("card_title") or ""))).upper()
             card = str(row.get("card_title") or match.get("card_title") or "").strip()
             purchase_price = row.get("purchase_price") if row.get("purchase_price") is not None else match.get("purchase_price")
