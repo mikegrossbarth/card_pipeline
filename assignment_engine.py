@@ -15,7 +15,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
-from google_sheets_import import GoogleSheetsAuthError, read_google_sheet_tabs, read_google_sheet_text
+from google_sheets_import import GoogleSheetsAuthError, export_google_sheet_to_xlsx, read_google_sheet_tabs, read_google_sheet_text
 
 
 ROOT = Path(__file__).resolve().parent
@@ -695,7 +695,12 @@ def materialize_gsheet_shortcut(path: Path, output_dir: Path) -> Path:
     url = gsheet_shortcut_url(shortcut)
     if not url:
         raise ValueError("This .gsheet shortcut does not contain a Google Sheet URL or document id.")
-    return materialize_google_sheet_url(url, output_dir, str(shortcut.get("name") or path.stem or "google-sheet"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{safe_filename(str(shortcut.get('name') or path.stem or 'google-sheet'))}.xlsx"
+    try:
+        return export_google_sheet_to_xlsx(url, output_path, interactive=False)
+    except Exception:
+        return materialize_google_sheet_url(url, output_dir, str(shortcut.get("name") or path.stem or "google-sheet"), unique=False)
 
 
 def materialize_google_sheet_url(url: str, output_dir: Path, name: str = "google-sheet", unique: bool = True) -> Path:

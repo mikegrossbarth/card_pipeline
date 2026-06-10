@@ -34,7 +34,10 @@ from bridge_server import (  # noqa: E402
 )
 from workbook_io import WorkbookRow  # noqa: E402
 from assignment_engine import AssignmentEngine  # noqa: E402
+from assignment_engine import CONFIG_PATH as ASSIGNMENT_CONFIG_PATH  # noqa: E402
+from assignment_engine import gsheet_shortcut_url, load_gsheet_shortcut, normalize_source_value, path_from_source_value, safe_filename  # noqa: E402
 from assignment_config_ui import open_assignment_rules_dialog  # noqa: E402
+from google_sheets_import import export_google_sheet_to_xlsx  # noqa: E402
 from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
 
 from intake_io import (  # noqa: E402
@@ -1213,6 +1216,82 @@ class CardPipelineApp(tk.Tk):
         thread = threading.Thread(target=self._startup_refresh_worker, daemon=True)
         thread.start()
 
+    def _refresh_startup_google_sheet_caches(self) -> dict[str, object]:
+        result = {"refreshed": 0, "errors": []}
+        sources = self._saved_google_sheet_sources()
+        if not sources:
+            return result
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "google-sheet-cache", self.lucas_identity):
+                for source in sources:
+                    url = str(source.get("url") or "").strip()
+                    path = source.get("path")
+                    name = str(source.get("name") or "google-sheet")
+                    if not url or not path:
+                        continue
+                    try:
+                        output_path = path_from_source_value(path, ASSIGNMENT_CONFIG_PATH.parent)
+                        export_google_sheet_to_xlsx(url, output_path, interactive=False)
+                        result["refreshed"] = int(result["refreshed"]) + 1
+                    except Exception as error:
+                        result["errors"].append(f"{name}: {error}")
+        except Exception as error:
+            result["errors"].append(str(error))
+        return result
+
+    def _saved_google_sheet_sources(self) -> list[dict[str, object]]:
+        try:
+            raw = json.loads(ASSIGNMENT_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        entries = raw.get("companies", raw) if isinstance(raw, dict) else raw
+        if not isinstance(entries, list):
+            return []
+        output_dir = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "SHEET EXPORTS"
+        sources: list[dict[str, object]] = []
+        seen: set[tuple[str, str]] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for source in (
+                entry.get("rules") or entry.get("rules_source") or entry.get("rulesSource"),
+                entry.get("payout") or entry.get("payout_source") or entry.get("payoutSource"),
+            ):
+                prepared = self._google_sheet_cache_source(source, output_dir)
+                if not prepared:
+                    continue
+                key = (str(prepared.get("url") or ""), str(prepared.get("path") or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                sources.append(prepared)
+        return sources
+
+    def _google_sheet_cache_source(self, source: object, output_dir: Path) -> dict[str, object] | None:
+        if isinstance(source, dict):
+            url = str(source.get("url") or "").strip()
+            path = source.get("path") or source.get("file")
+            if str(source.get("kind") or "").strip() == "google_sheet" and url and path:
+                return {"url": url, "path": str(path), "name": str(source.get("name") or Path(str(path)).stem or "google-sheet")}
+            return None
+        raw = normalize_source_value(source)
+        if not raw:
+            return None
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = ASSIGNMENT_CONFIG_PATH.parent / path
+        if path.suffix.lower() != ".gsheet":
+            return None
+        try:
+            shortcut = load_gsheet_shortcut(path)
+            url = gsheet_shortcut_url(shortcut)
+        except Exception:
+            return None
+        if not url:
+            return None
+        name = str(shortcut.get("name") or path.stem or "google-sheet")
+        return {"url": url, "path": str(output_dir / f"{safe_filename(name)}.xlsx"), "name": name}
+
     def _startup_refresh_worker(self) -> None:
         payload = {
             "working_paths": {},
@@ -1221,9 +1300,13 @@ class CardPipelineApp(tk.Tk):
             "incoming_path_count": 0,
             "home_paths": {"Incoming": {}, "Working": {}, "Received": {}},
             "home_summaries": {},
+            "google_sheet_cache": {"refreshed": 0, "errors": []},
             "errors": [],
         }
         errors: list[str] = payload["errors"]
+        google_cache_result = self._refresh_startup_google_sheet_caches()
+        payload["google_sheet_cache"] = google_cache_result
+        errors.extend(google_cache_result.get("errors") or [])
 
         try:
             CARD_PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1320,10 +1403,17 @@ class CardPipelineApp(tk.Tk):
         self._refresh_home_metrics()
         self.refresh_payouts_tab()
         self._update_home_sheet_tabs()
+        google_cache = payload.get("google_sheet_cache") if isinstance(payload.get("google_sheet_cache"), dict) else {}
+        refreshed_google_sheets = int((google_cache or {}).get("refreshed") or 0)
+        if refreshed_google_sheets:
+            self.assignment_engine = AssignmentEngine.load()
+            self.assignment_config_status.set(self._assignment_config_status())
 
         errors = list(payload.get("errors") or [])
         if errors:
             self.status_var.set(f"Startup sheet refresh finished with {len(errors)} issue(s).")
+        elif refreshed_google_sheets:
+            self.status_var.set(f"Sheet lists loaded. Refreshed {refreshed_google_sheets} Google Sheet cache(s).")
         else:
             self.status_var.set("Sheet lists loaded.")
 

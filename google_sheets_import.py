@@ -12,6 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from openpyxl import Workbook
+
 
 ROOT = Path(__file__).resolve().parent
 TOKEN_PATH = ROOT / "lucas_google_sheets_token.json"
@@ -76,6 +78,45 @@ def read_google_sheet_tabs(url: str, interactive: bool = False, sheet_name: str 
     if sheet_name and not found_sheet:
         raise ValueError(f"Google Sheet does not contain a tab named {sheet_name}.")
     return tabs
+
+
+def export_google_sheet_to_xlsx(url: str, output_path: Path, interactive: bool = False) -> Path:
+    tabs = read_google_sheet_tabs(url, interactive=interactive)
+    if not tabs:
+        raise ValueError("Google Sheet returned no tabs to export.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
+    used_titles: set[str] = set()
+    for title, values in tabs:
+        sheet = workbook.create_sheet(unique_sheet_title(title, used_titles))
+        for row in values:
+            sheet.append(list(row))
+        if sheet.max_row:
+            sheet.freeze_panes = "A2"
+            sheet.auto_filter.ref = sheet.dimensions
+    workbook.save(output_path)
+    workbook.close()
+    return output_path
+
+
+def unique_sheet_title(title: str, used_titles: set[str]) -> str:
+    cleaned = clean_sheet_title(title)
+    candidate = cleaned
+    index = 2
+    while candidate.lower() in used_titles:
+        suffix = f" {index}"
+        candidate = f"{cleaned[:31 - len(suffix)]}{suffix}"
+        index += 1
+    used_titles.add(candidate.lower())
+    return candidate
+
+
+def clean_sheet_title(title: str) -> str:
+    cleaned = "".join(" " if char in "[]:*?/\\\\" else char for char in str(title or "").strip())
+    cleaned = " ".join(cleaned.split()) or "Sheet"
+    return cleaned[:31]
 
 
 def spreadsheet_id_from_url(value: str) -> str:
