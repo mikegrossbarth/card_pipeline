@@ -1,0 +1,21 @@
+{
+  "companies": [
+    {
+      "name": "Arena Club",
+      "rules": "G:\\My Drive\\CARD_PIPELINE\\ASSIGNMENT RULES\\arena-club-rules.xlsx",
+      "payout": "G:\\My Drive\\CARD_PIPELINE\\ASSIGNMENT RULES\\arena-club-payout.xlsx"
+    },
+    {
+      "name": "Courtyard",
+      "rules": "G:\\My Drive\\CARD_PIPELINE\\ASSIGNMENT RULES\\courtyard-rules.txt",
+      "payout": {
+        "path": "G:\\My Drive\\CARD_PIPELINE\\ASSIGNMENT RULES\\courtyard-payout.csv"
+      }
+    },
+    {
+      "name": "ALT",
+      "accept_all": true,
+      "rate": 0.76
+    }
+  ]
+}

@@ -59,6 +59,21 @@ Sheet movement rules:
 - Home has a `Received` tab. Select a received sheet, open `Edit Markers`, uncheck `All Received`, and save to move it back to `INCOMING SHEETS`.
 - Fully received sheets are also moved to `RECEIVED SHEETS` automatically after receive marking when all rows have been received.
 
+## Assignment Company Recommendations
+
+Assignment supports local company recommendation config through `assignment_companies.json` (ignored by git; example file is `assignment_companies.example.json`).
+
+For each company, configure:
+
+- `name`
+- `rules` or `rules_source`
+- `payout` or `payout_source`
+- optional `accept_all` and `rate` fallback
+
+The app reads local `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, and `.xlsm` files, including synced Google Drive paths such as `G:\My Drive\...`. Native `.gsheet` shortcuts are recognized and converted to Google Sheets CSV export URLs when accessible. Private Google Keep notes are not directly readable by desktop Python without a browser/OAuth bridge; for now Keep-backed rules should be copied/exported to a synced local text file. The Assignment tab has `Reload Assignment Rules` so local rule/payout edits can be picked up without restarting.
+
+Recommendation value uses Card Ladder comps average first, then Card Ladder value. A company must accept the card by rules and have a matching payout tier/rate; the highest estimated payout wins.
+
 ## Card Ladder
 
 Card Ladder automation requires Chrome, the unpacked extension, and a logged-in Card Ladder account.

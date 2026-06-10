@@ -68,6 +68,20 @@ Use `Stop Run` to request cancellation of an active Card Ladder run. The Chrome 
 
 Use the `Assignment` tab for receiving and source matching. Assignment rows are checked against sheets in `INCOMING SHEETS`, marked received when matched, and can be loaded from `RECEIVED SHEETS` for follow-up assignment work.
 
+Assignment can calculate `Best Company` and `Est. Payout` from the Card Ladder comps average, falling back to Card Ladder value when comps are blank. To enable this, copy `assignment_companies.example.json` to local-only `assignment_companies.json` and point each company at a rules file and payout file.
+
+Supported local source files include `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, and `.xlsm`. Files in synced Google Drive folders work directly, for example:
+
+```json
+{
+  "name": "Arena Club",
+  "rules": "G:\\My Drive\\CARD_PIPELINE\\ASSIGNMENT RULES\\arena-club-rules.xlsx",
+  "payout": "G:\\My Drive\\CARD_PIPELINE\\ASSIGNMENT RULES\\arena-club-payout.xlsx"
+}
+```
+
+Native Google Sheets shortcuts (`.gsheet`) are recognized and converted to CSV export URLs when the sheet is accessible to the app. Private Google Keep notes do not expose local file contents to a desktop Python app, so Keep-backed rules should be exported or copied to a synced local text file for now. After editing source files, click `Reload Assignment Rules` in the Assignment tab.
+
 ## Included Photo Tool
 
 The photo OCR helper used by L.U.C.A.S is bundled in `photo_tool`. It uses the same project `.env`, so there is no separate photo-tool setup or private machine path required.

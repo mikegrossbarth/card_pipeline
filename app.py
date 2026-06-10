@@ -30,6 +30,7 @@ from bridge_server import (  # noqa: E402
     row_has_comp_data,
 )
 from workbook_io import WorkbookRow  # noqa: E402
+from assignment_engine import AssignmentEngine  # noqa: E402
 
 from intake_io import (  # noqa: E402
     build_card_title,
@@ -84,7 +85,6 @@ LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 APP_TITLE = "L.U.C.A.S"
 APP_SUBTITLE = "Lot Upload, Comping & Assignment System"
 
-PAYOUT_RATES = {"Arena Club": 0.82, "Courtyard": 0.78, "ALT": 0.76}
 COMP_STRATEGY_DISPLAY = {
     "Average last 5": COMP_STRATEGY_AVERAGE,
     "Highest of last 5": COMP_STRATEGY_HIGH,
@@ -296,6 +296,8 @@ class CardPipelineApp(tk.Tk):
         self.review_photo_paths: list[Path] = []
         self.review_photo_status = tk.StringVar(value="No assignment photos selected.")
         self.review_photo_worker: threading.Thread | None = None
+        self.assignment_engine = AssignmentEngine.load()
+        self.assignment_config_status = tk.StringVar(value=self._assignment_config_status())
         self.received_sheet_paths: dict[str, Path] = {}
         self.selected_received_sheet = tk.StringVar()
         self.working_sheet_paths: dict[str, Path] = {}
@@ -597,8 +599,10 @@ class CardPipelineApp(tk.Tk):
         self.received_sheet_combo.grid(row=0, column=3, sticky="ew", padx=(8, 8))
         ttk.Button(review_controls, text="Load", command=self.load_selected_received_sheet_for_review, style="Primary.TButton").grid(row=0, column=4, sticky="w", padx=(0, 8))
         ttk.Button(review_controls, text="Refresh", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=5, sticky="w")
+        ttk.Button(review_controls, text="Reload Assignment Rules", command=self.reload_assignment_rules, style="Soft.TButton").grid(row=0, column=6, sticky="w", padx=(8, 0))
         review_controls.columnconfigure(3, weight=1)
-        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=7, sticky="w", pady=(10, 0))
+        ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
         self.review_mode_host = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         self.review_mode_host.pack(fill=tk.X, pady=(0, 10))
         self.review_tree = self._build_table(self.review_tab, editable=True, columns=REVIEW_COLUMNS)
@@ -2104,15 +2108,29 @@ class CardPipelineApp(tk.Tk):
         return added_excel_rows
 
     def _apply_recommendations(self) -> None:
-        for row in self.state.rows:
-            source_value = first_number(row.card_ladder_value, row.alt_value, row.cy_value)
-            if source_value is None:
+        for row in [*self.state.rows, *self.review_rows]:
+            recommendation = self.assignment_engine.recommend(row)
+            if recommendation.payout is None:
                 row.best_company = ""
                 row.estimated_payout = None
                 continue
-            best_name, best_rate = max(PAYOUT_RATES.items(), key=lambda item: item[1])
-            row.best_company = best_name
-            row.estimated_payout = round(source_value * best_rate, 2)
+            row.best_company = recommendation.company
+            row.estimated_payout = recommendation.payout
+
+    def reload_assignment_rules(self) -> None:
+        self.assignment_engine = AssignmentEngine.load()
+        self.assignment_config_status.set(self._assignment_config_status())
+        self._refresh_table()
+        self.review_status.set("Assignment rules reloaded.")
+        self.status_var.set("Assignment rules reloaded.")
+
+    def _assignment_config_status(self) -> str:
+        if self.assignment_engine.error:
+            return f"Assignment config error: {self.assignment_engine.error}"
+        count = len(self.assignment_engine.companies)
+        if not count:
+            return "Assignment companies: none configured. Add assignment_companies.json to enable best-company payouts."
+        return f"Assignment companies loaded: {count}"
 
     def _refresh_table(self) -> None:
         self._apply_recommendations()

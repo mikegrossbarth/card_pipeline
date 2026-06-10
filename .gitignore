@@ -10,6 +10,7 @@ outputs/
 *.log
 .env
 lucas_settings.json
+assignment_companies.json
 
 .DS_Store
 Thumbs.db
