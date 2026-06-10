@@ -2289,7 +2289,7 @@ class CardPipelineApp(tk.Tk):
                 for row in self.review_rows
                 if row.company_pile and scan_to_cert(row.cert_number) in result.get("certs_marked", set())
             ]
-            self._apply_recommendations_to_rows(company_rows)
+            self._apply_recommendations_to_rows(company_rows, force=True)
             eligible_company_rows = [row for row in company_rows if str(row.best_company or "").strip()]
             company_rows_missing_company = len(company_rows) - len(eligible_company_rows)
             if eligible_company_rows:
@@ -2340,12 +2340,15 @@ class CardPipelineApp(tk.Tk):
         else:
             messagebox.showinfo("Mark received complete", "\n".join(summary_lines))
 
-    def _apply_recommendations_to_rows(self, rows: list[WorkbookRow]) -> None:
+    def _apply_recommendations_to_rows(self, rows: list[WorkbookRow], force: bool = False) -> None:
         for row in rows:
-            if row.best_company and row.estimated_payout is not None:
+            if not force and row.best_company and row.estimated_payout is not None:
                 continue
             recommendation = self.assignment_engine.recommend(row)
             if recommendation.payout is None:
+                if force:
+                    row.best_company = ""
+                    row.estimated_payout = None
                 continue
             row.best_company = recommendation.company
             row.estimated_payout = recommendation.payout
@@ -2681,11 +2684,15 @@ class CardPipelineApp(tk.Tk):
         total = len(rows)
         results: list[tuple[int, str, float | None]] = []
         progress_step = max(1, total // 25)
-        for index, row in enumerate(rows, start=1):
-            recommendation = self.assignment_engine.recommend(row)
-            results.append((id(row), recommendation.company, recommendation.payout))
-            if index == total or index % progress_step == 0:
-                self.events.put(("assignment_recommendations_progress", {"job_id": job_id, "done": index, "total": total}))
+        try:
+            for index, row in enumerate(rows, start=1):
+                recommendation = self.assignment_engine.recommend(row)
+                results.append((id(row), recommendation.company, recommendation.payout))
+                if index == total or index % progress_step == 0:
+                    self.events.put(("assignment_recommendations_progress", {"job_id": job_id, "done": index, "total": total}))
+        except Exception as error:
+            self.events.put(("assignment_recommendations_error", {"job_id": job_id, "error": str(error)}))
+            return
         self.events.put(("assignment_recommendations_done", {"job_id": job_id, "total": total, "results": results}))
 
     def _apply_assignment_recommendation_results(self, payload: dict[str, object]) -> None:
@@ -2723,6 +2730,15 @@ class CardPipelineApp(tk.Tk):
         percent = (done / total * 100) if total else 0
         self.assignment_progress_value.set(percent)
         self.review_status.set(f"Calculating assignment recommendations: {done}/{total}...")
+
+    def _handle_assignment_recommendation_error(self, payload: dict[str, object]) -> None:
+        if int(payload.get("job_id") or 0) != self.assignment_recommendation_job:
+            return
+        error = str(payload.get("error") or "Unknown error")
+        self.assignment_recommendation_running = False
+        self.assignment_progress_value.set(0)
+        self.review_status.set(f"Assignment recommendations failed: {error}")
+        self.status_var.set(f"Assignment recommendations failed: {error}")
 
     def reload_assignment_rules(self) -> None:
         self.assignment_engine = AssignmentEngine.load()
@@ -3121,6 +3137,8 @@ class CardPipelineApp(tk.Tk):
                         self._update_assignment_recommendation_progress(payload)
                     elif kind == "assignment_recommendations_done":
                         self._apply_assignment_recommendation_results(payload)
+                    elif kind == "assignment_recommendations_error":
+                        self._handle_assignment_recommendation_error(payload)
         except queue.Empty:
             pass
         self.after(200, self._poll_events)

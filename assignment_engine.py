@@ -1329,6 +1329,8 @@ def parse_payout_table_line(line: str) -> PayoutTier | None:
         return None
     range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|â€“|â€”)\s*\$?\s*([\d,.]+k?)", text, re.I)
     if not range_match:
+        range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|\u2013|\u2014|to|through|thru)\s*\$?\s*([\d,.]+k?)", text, re.I)
+    if not range_match:
         return None
     before = text[:range_match.start()].strip(" -:|")
     after = text[range_match.end():].strip()

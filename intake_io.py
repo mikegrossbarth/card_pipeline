@@ -300,12 +300,13 @@ def week_start(day: date) -> date:
 
 
 def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dict[int, str] | None = None, sheet_source_lookup: dict[int, str] | None = None) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
     headers = [
         "Date Added",
         "Source Sheet",
         "Source",
         "Certification Number",
-        "Company",
+        "Grader",
         "Card Description",
         "Purchase Price",
         "Card Ladder Value",

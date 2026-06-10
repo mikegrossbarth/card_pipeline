@@ -56,6 +56,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.on_saved = on_saved
         self.pipeline_root = Path(pipeline_root)
         self.rules_dir = self.pipeline_root / "ASSIGNMENT RULES"
+        self.company_sheets_dir = self.pipeline_root / "COMPANY SHEETS"
         self.config_path = CONFIG_PATH
         self.companies = self._load_config()
         self.selected_index: int | None = None
@@ -660,10 +661,23 @@ class AssignmentRulesDialog(tk.Toplevel):
         else:
             self.companies[self.selected_index] = company
         self._write_config()
+        folder_error = self._ensure_company_sheet_folder(name)
         self._refresh_company_list()
         self._select_company(self.selected_index)
-        self.status.set(f"Saved {name}.")
+        if folder_error:
+            self.status.set(f"Saved {name}. Company sheet folder failed: {folder_error}")
+        else:
+            self.status.set(f"Saved {name}. Company sheet folder ready.")
         return True
+
+    def _ensure_company_sheet_folder(self, name: str) -> str:
+        try:
+            folder_name = safe_filename(name)
+            self.company_sheets_dir.mkdir(parents=True, exist_ok=True)
+            (self.company_sheets_dir / folder_name).mkdir(parents=True, exist_ok=True)
+            return ""
+        except Exception as error:
+            return str(error)
 
     def _save_or_link_rules(self, name: str) -> str | dict[str, Any]:
         mode = self.rule_source_mode.get()
