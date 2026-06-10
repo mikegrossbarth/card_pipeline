@@ -6,6 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
+const CARDLADDER_BACKGROUND_VERSION = "2026-06-10-no-results-ocr-fallback-v2";
 
 let runInProgress = false;
 let activeWindowId = null;
@@ -189,7 +190,7 @@ async function runRows(tabId, rows, options = {}) {
       },
     });
 
-    const result = await lookupRowWithRetries(tabId, row);
+    const result = stampResult(await lookupRowWithRetries(tabId, row));
     await throwIfCancelled(options);
 
     results.push(result);
@@ -264,7 +265,10 @@ async function lookupRowWithRetries(tabId, row) {
 
   if (["error", "invalid_cert"].includes(pageResult?.status)) return pageResult;
   if (pageResult?.status === "no_results") {
-    if (pageResult?.ocr?.profileTitle) return pageResult;
+    if (pageResult?.ocr?.profileTitle) return {
+      ...pageResult,
+      noResultsFallback: "submit-response-profile",
+    };
     const noResultsDomResult = await captureValueFromDom(tabId, row, pageResult);
     if (noResultsDomResult?.ocr?.profileTitle) {
       return {
@@ -276,6 +280,7 @@ async function lookupRowWithRetries(tabId, row) {
         },
         pageUrl: pageResult.pageUrl || noResultsDomResult.pageUrl || "",
         capturedAt: noResultsDomResult.capturedAt || pageResult.capturedAt || new Date().toISOString(),
+        noResultsFallback: "dom-profile",
       };
     }
     const noResultsOcrResult = await captureValueWithOcr(tabId, row, pageResult);
@@ -289,9 +294,21 @@ async function lookupRowWithRetries(tabId, row) {
         },
         pageUrl: pageResult.pageUrl || noResultsOcrResult.pageUrl || "",
         capturedAt: noResultsOcrResult.capturedAt || pageResult.capturedAt || new Date().toISOString(),
+        noResultsFallback: "ocr-profile",
       };
     }
-    return pageResult;
+    return {
+      ...pageResult,
+      ocr: {
+        ...(pageResult.ocr || {}),
+        ...(noResultsDomResult?.ocr || {}),
+        ...(noResultsOcrResult?.ocr || {}),
+        comps: [],
+      },
+      noResultsFallback: "profile-not-found",
+      noResultsFallbackError: noResultsOcrResult?.ocr?.error || noResultsOcrResult?.error || noResultsDomResult?.error || "",
+      noResultsFallbackDebugImage: noResultsOcrResult?.ocr?.debugImage || "",
+    };
   }
 
   const domResult = await captureValueFromDom(tabId, row, pageResult);
@@ -308,6 +325,13 @@ async function lookupRowWithRetries(tabId, row) {
     await delay(OCR_RETRY_MS);
   }
   return markPartialCapture(lastResult || domResult, expectedResultCount);
+}
+
+function stampResult(result) {
+  return {
+    ...(result || {}),
+    extensionVersion: CARDLADDER_BACKGROUND_VERSION,
+  };
 }
 
 function domResultLooksComplete(result) {
