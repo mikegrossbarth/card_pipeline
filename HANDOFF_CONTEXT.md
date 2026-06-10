@@ -19,9 +19,10 @@ Python must be a normal Python 3.11+ install with Tkinter available. The Windows
 Copy `.env.example` to `.env` for local configuration:
 
 - `GOOGLE_API_KEY`: required for Photo OCR and Card Ladder screenshot OCR fallback.
-- `LUCAS_PIPELINE_DIR`: optional preconfigured sheet root. Users can also set this in-app with `Folders`.
+- `LUCAS_WORKING_SHEETS_DIR`: optional preconfigured working-sheets folder. Users can also set this in-app with `Working Folder`.
+- `LUCAS_PIPELINE_DIR`: legacy optional preconfigured sheet root for setups that keep the default folder names under one parent.
 
-The selected sheet root is saved in `lucas_settings.json`, which is local-only and ignored by git.
+The selected working folder and derived sheet root are saved in `lucas_settings.json`, which is local-only and ignored by git.
 
 The launcher order is:
 
@@ -31,7 +32,7 @@ The launcher order is:
 
 ## Sheet Folders
 
-The configured sheet root contains:
+The selected working folder is used directly. Its parent contains:
 
 - `WORKING SHEETS`
 - `INCOMING SHEETS`
@@ -49,7 +50,7 @@ The bridge binds to the first open port from `8765` through `8772`. The extensio
 
 ## Notes For Future Work
 
-- Keep machine-specific folders out of source. Use `.env`, `lucas_settings.json`, or the `Folders` button.
+- Keep machine-specific folders out of source. Use `.env`, `lucas_settings.json`, or the `Working Folder` button.
 - Do not commit `.env`, `.venv`, `work`, `outputs`, or generated debug screenshots.
 - Rows with `invalid_cert` are intentional non-empty statuses and should be skipped by empty-comps-only comp runs.
 - The Card Ladder extension is plain unpacked Chrome extension code. There is no Node/npm build step for normal install.

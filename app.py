@@ -76,7 +76,7 @@ except Exception:
 SETTINGS_PATH = ROOT / "lucas_settings.json"
 DEFAULT_CARD_PIPELINE_DIR = ROOT / "CARD_PIPELINE"
 CARD_PIPELINE_DIR = Path(os.environ.get("LUCAS_PIPELINE_DIR") or DEFAULT_CARD_PIPELINE_DIR)
-WORKING_SHEETS_DIR = CARD_PIPELINE_DIR / "WORKING SHEETS"
+WORKING_SHEETS_DIR = Path(os.environ.get("LUCAS_WORKING_SHEETS_DIR") or CARD_PIPELINE_DIR / "WORKING SHEETS")
 INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
 RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
 SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
@@ -109,17 +109,33 @@ def save_app_settings(settings: dict[str, object]) -> None:
     SETTINGS_PATH.write_text(json.dumps(settings, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def set_pipeline_root(path: Path) -> None:
+def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
     global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, SHEET_MARKERS_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
-    WORKING_SHEETS_DIR = CARD_PIPELINE_DIR / "WORKING SHEETS"
+    WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
     RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
     SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 
 
+def set_pipeline_from_working_dir(path: Path) -> None:
+    working_dir = normalize_working_dir_selection(Path(path).expanduser())
+    set_pipeline_root(working_dir.parent, working_dir)
+
+
+def normalize_working_dir_selection(path: Path) -> Path:
+    child = path / "WORKING SHEETS"
+    if path.name.upper() != "WORKING SHEETS" and child.exists() and child.is_dir():
+        return child
+    return path
+
+
 def initialize_pipeline_root() -> None:
     settings = load_app_settings()
+    configured_working = str(settings.get("working_sheets_dir") or os.environ.get("LUCAS_WORKING_SHEETS_DIR") or "").strip()
+    if configured_working:
+        set_pipeline_from_working_dir(Path(configured_working))
+        return
     configured = str(settings.get("pipeline_root") or "").strip()
     if configured:
         set_pipeline_root(Path(configured))
@@ -467,7 +483,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(title_group, text=APP_TITLE, style="HeaderTitle.TLabel").pack(anchor=tk.W)
         ttk.Label(title_group, text=APP_SUBTITLE, style="HeaderSub.TLabel").pack(anchor=tk.W, pady=(3, 0))
         ttk.Label(header, textvariable=self.bridge_status_var, style="BridgeBadge.TLabel").pack(side=tk.RIGHT, padx=(16, 0))
-        ttk.Button(header, text="Folders", command=self.choose_pipeline_root, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
+        ttk.Button(header, text="Working Folder", command=self.choose_working_folder, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill=tk.BOTH, expand=True, padx=18, pady=(16, 12))
@@ -705,26 +721,30 @@ class CardPipelineApp(tk.Tk):
         tree.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         return tree
 
-    def choose_pipeline_root(self) -> None:
+    def choose_working_folder(self) -> None:
         selected = filedialog.askdirectory(
-            title="Choose L.U.C.A.S folder",
-            initialdir=str(CARD_PIPELINE_DIR if CARD_PIPELINE_DIR.exists() else ROOT),
+            title="Choose WORKING SHEETS folder",
+            initialdir=str(WORKING_SHEETS_DIR if WORKING_SHEETS_DIR.exists() else CARD_PIPELINE_DIR if CARD_PIPELINE_DIR.exists() else ROOT),
         )
         if not selected:
             return
-        set_pipeline_root(Path(selected))
+        set_pipeline_from_working_dir(Path(selected))
         settings = load_app_settings()
         settings["pipeline_root"] = str(CARD_PIPELINE_DIR)
+        settings["working_sheets_dir"] = str(WORKING_SHEETS_DIR)
         save_app_settings(settings)
         self.pipeline_root_var.set(str(CARD_PIPELINE_DIR))
         for directory in (WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR):
             directory.mkdir(parents=True, exist_ok=True)
         self.home_sheet_markers = self._load_sheet_markers()
-        self.status_var.set(f"L.U.C.A.S folders set to {CARD_PIPELINE_DIR}")
+        self.status_var.set(f"Working folder set to {WORKING_SHEETS_DIR}")
         self.refresh_home()
         self.refresh_working_sheets()
         self.refresh_incoming_index()
         self.refresh_received_sheets()
+
+    def choose_pipeline_root(self) -> None:
+        self.choose_working_folder()
 
     def _build_home_tab_button(self, parent: tk.Frame, text: str, command) -> tk.Button:
         palette = self.home_tab_palette

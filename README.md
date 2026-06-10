@@ -19,20 +19,20 @@ L.U.C.A.S is a desktop workflow app for intake, receiving, working-sheet trackin
 
 ```env
 GOOGLE_API_KEY=your_google_ai_studio_key
-LUCAS_PIPELINE_DIR=G:\My Drive\CARD_PIPELINE
+LUCAS_WORKING_SHEETS_DIR=G:\My Drive\CARD_PIPELINE\WORKING SHEETS
 ```
 
-`GOOGLE_API_KEY` can be created or copied from Google AI Studio's API key page. `LUCAS_PIPELINE_DIR` is optional because the same folder can be selected with the in-app `Folders` button.
+`GOOGLE_API_KEY` can be created or copied from Google AI Studio's API key page. `LUCAS_WORKING_SHEETS_DIR` is optional because the same folder can be selected with the in-app `Working Folder` button. `LUCAS_PIPELINE_DIR` is still supported for older setups that point at the parent pipeline folder.
 
 ## Data Folder
 
-On first run, click `Folders` in the top-right header and choose the folder where L.U.C.A.S should store sheet data. The app creates and uses:
+On first run, click `Working Folder` in the top-right header and choose your working-sheets folder. The app uses that folder for working sheets and creates sibling folders/files beside it:
 
 - `WORKING SHEETS`
 - `INCOMING SHEETS`
 - `RECEIVED SHEETS`
 
-The chosen folder is saved locally in `lucas_settings.json`, which is intentionally not committed. To preconfigure this for another user, set `LUCAS_PIPELINE_DIR` in `.env`.
+The chosen working folder is saved locally in `lucas_settings.json`, which is intentionally not committed. To preconfigure this for another user, set `LUCAS_WORKING_SHEETS_DIR` in `.env`.
 
 ## Card Ladder Extension
 
