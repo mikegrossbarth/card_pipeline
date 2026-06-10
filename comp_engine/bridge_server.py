@@ -11,11 +11,14 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
+from urllib.parse import parse_qs, urlparse
 
 from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
 
 BRIDGE_VERSION = "2026-06-01-cardladder-result-log-v3"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-10-no-results-ocr-fallback-v2"
+EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.3"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 COMP_STRATEGY_AVERAGE = "average_last_5"
 COMP_STRATEGY_HIGH = "highest_last_5"
@@ -37,6 +40,11 @@ class BridgeState:
         self.command: dict | None = None
         self.command_id = int(time.time() * 1000)
         self.last_seen_extension = ""
+        self.extension_version = ""
+        self.extension_manifest_version = ""
+        self.extension_name = ""
+        self.extension_url = ""
+        self.last_result_extension_version = ""
         self.cardladder_running = False
         self.cancel_requested = False
         self.comp_strategy = COMP_STRATEGY_AVERAGE
@@ -95,9 +103,14 @@ class BridgeState:
         if self.on_update:
             self.on_update()
 
-    def extension_poll(self) -> dict:
+    def extension_poll(self, metadata: dict[str, str] | None = None) -> dict:
         with self.lock:
             self.last_seen_extension = time.strftime("%H:%M:%S")
+            if metadata:
+                self.extension_version = metadata.get("extensionVersion") or self.extension_version
+                self.extension_manifest_version = metadata.get("manifestVersion") or self.extension_manifest_version
+                self.extension_name = metadata.get("extensionName") or self.extension_name
+                self.extension_url = metadata.get("extensionUrl") or self.extension_url
             return {"instanceId": self.instance_id, "command": self.command}
 
     def acknowledge_command(self, command_id: int) -> None:
@@ -113,6 +126,10 @@ class BridgeState:
             encoding="utf-8",
         )
         with self.lock:
+            result_extension_version = str(result.get("extensionVersion") or "")
+            if result_extension_version:
+                self.last_result_extension_version = result_extension_version
+                self.extension_version = result_extension_version
             cert = str(result.get("certNumber") or "")
             excel_row = int(result.get("excelRow") or 0)
             target_row = next((row for row in self.rows if excel_row and row.excel_row == excel_row), None)
@@ -154,6 +171,18 @@ class BridgeState:
             row.status = "Card Ladder invalid cert"
             row.notes = str(result.get("error") or "Card Ladder showed no information with this cert.")
             return
+        if (
+            result_status == "no_results"
+            and not result.get("extensionVersion")
+            and not profile_title
+            and not ocr
+        ):
+            row.status = "Reload Card Ladder extension"
+            row.notes = (
+                "The Card Ladder result came from an older Chrome extension that cannot capture "
+                "profile names on no-result pages. Reload the bundled Card Ladder Auto-Comp extension."
+            )
+            return
         if profile_title:
             row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
         row.card_ladder_comps_average = comp_price(comps, self.comp_strategy)
@@ -181,6 +210,13 @@ class BridgeState:
                 "bridgeVersion": BRIDGE_VERSION,
                 "instanceId": self.instance_id,
                 "extensionLastSeen": self.last_seen_extension,
+                "extensionVersion": self.extension_version,
+                "extensionManifestVersion": self.extension_manifest_version,
+                "extensionName": self.extension_name,
+                "extensionUrl": self.extension_url,
+                "expectedExtensionVersion": EXPECTED_CARDLADDER_EXTENSION_VERSION,
+                "expectedManifestVersion": EXPECTED_CARDLADDER_MANIFEST_VERSION,
+                "lastResultExtensionVersion": self.last_result_extension_version,
                 "cardladderRunning": self.cardladder_running,
                 "cancelRequested": self.cancel_requested,
                 "compStrategy": self.comp_strategy,
@@ -482,7 +518,15 @@ class BridgeServer:
 
             def do_GET(self):
                 if self.path.startswith("/command"):
-                    self._send_json(state.extension_poll())
+                    parsed = urlparse(self.path)
+                    query = parse_qs(parsed.query)
+                    metadata = {
+                        "extensionVersion": query.get("extensionVersion", [""])[0],
+                        "manifestVersion": query.get("manifestVersion", [""])[0],
+                        "extensionName": query.get("extensionName", [""])[0],
+                        "extensionUrl": query.get("extensionUrl", [""])[0],
+                    }
+                    self._send_json(state.extension_poll(metadata))
                     return
                 if self.path.startswith("/status"):
                     self._send_json(state.snapshot())

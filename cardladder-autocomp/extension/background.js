@@ -103,7 +103,7 @@ async function pollDesktopBridge() {
   try {
     if (runInProgress) return;
     for (const bridgeUrl of prioritizedBridgeUrls()) {
-      const response = await fetch(`${bridgeUrl}/command`).then((r) => r.json()).catch(() => null);
+      const response = await fetch(`${bridgeUrl}/command?${extensionMetadataParams()}`).then((r) => r.json()).catch(() => null);
       const command = response?.command;
       if (!response) continue;
       activeBridgeUrl = bridgeUrl;
@@ -123,6 +123,16 @@ async function pollDesktopBridge() {
 
 function prioritizedBridgeUrls() {
   return [activeBridgeUrl, ...BRIDGE_URLS.filter((url) => url !== activeBridgeUrl)];
+}
+
+function extensionMetadataParams() {
+  const manifest = chrome.runtime.getManifest?.() || {};
+  return new URLSearchParams({
+    extensionVersion: CARDLADDER_BACKGROUND_VERSION,
+    manifestVersion: manifest.version || "",
+    extensionName: manifest.name || "",
+    extensionUrl: chrome.runtime.getURL?.("") || "",
+  }).toString();
 }
 
 async function startBridgeRun(rows, bridgeUrl = activeBridgeUrl) {

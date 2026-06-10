@@ -4,6 +4,7 @@ import queue
 import base64
 import json
 import os
+import re
 import shutil
 import sys
 import threading
@@ -21,6 +22,8 @@ from bridge_server import (  # noqa: E402
     COMP_STRATEGY_HIGH,
     COMP_STRATEGY_LOW,
     COMP_STRATEGY_STALE_NEWEST,
+    EXPECTED_CARDLADDER_EXTENSION_VERSION,
+    EXPECTED_CARDLADDER_MANIFEST_VERSION,
     BridgeServer,
     BridgeState,
     comp_price,
@@ -84,6 +87,7 @@ RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
 COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
 SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
+CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
 APP_TITLE = "L.U.C.A.S"
 APP_SUBTITLE = "Lot Upload, Comping & Assignment System"
 
@@ -2397,9 +2401,38 @@ class CardPipelineApp(tk.Tk):
         except tk.TclError:
             pass
 
+    def _cardladder_extension_warning(self) -> str:
+        with self.state.lock:
+            last_seen = self.state.last_seen_extension
+            extension_version = self.state.extension_version
+            manifest_version = self.state.extension_manifest_version
+            extension_name = self.state.extension_name
+            extension_url = self.state.extension_url
+        if not last_seen:
+            return ""
+        loaded_label = extension_name or "Card Ladder extension"
+        version_label = extension_version or "unversioned/old"
+        manifest_label = manifest_version or "unknown"
+        if extension_version != EXPECTED_CARDLADDER_EXTENSION_VERSION:
+            return (
+                f"{loaded_label} checked in at {last_seen}, but it is {version_label} "
+                f"(manifest {manifest_label}).\n\n"
+                f"Expected helper version: {EXPECTED_CARDLADDER_EXTENSION_VERSION} "
+                f"(manifest {EXPECTED_CARDLADDER_MANIFEST_VERSION}).\n\n"
+                "Open chrome://extensions, remove or disable the old Card Ladder Auto-Comp helper, "
+                f"then Load unpacked from:\n{CARDLADDER_EXTENSION_DIR}\n\n"
+                f"Chrome extension URL seen by the app: {extension_url or 'unknown'}"
+            )
+        return ""
+
     def run_all_comps(self) -> None:
         if not self.state.rows:
             messagebox.showinfo("No comp sheet loaded", "Choose and load a working sheet in the Comp tab first.")
+            return
+        extension_warning = self._cardladder_extension_warning()
+        if extension_warning:
+            messagebox.showwarning("Reload Card Ladder extension", extension_warning)
+            self.status_var.set("Reload the Card Ladder Chrome extension before comping.")
             return
         requery_all = self.comp_scope_label.get() == COMP_SCOPE_ALL
         eligible = [
@@ -2423,6 +2456,11 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(f"Queued {len(eligible)} Card Ladder row(s) using {self.comp_scope_label.get()} with {self.comp_strategy_label.get()} as command #{command_id}.")
 
     def _warn_if_extension_not_checked_in(self, command_id: int) -> None:
+        extension_warning = self._cardladder_extension_warning()
+        if extension_warning:
+            messagebox.showwarning("Reload Card Ladder extension", extension_warning)
+            self.status_var.set("Reload the Card Ladder Chrome extension before comping.")
+            return
         with self.state.lock:
             command_pending = bool(self.state.command and self.state.command.get("id") == command_id)
         if not command_pending:
