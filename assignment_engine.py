@@ -73,6 +73,7 @@ PLAYER_SPORT_HINTS = {
     "shoehi ohtani": "baseball",
     "mike trout": "baseball",
     "aaron judge": "baseball",
+    "luis robert": "baseball",
     "babe ruth": "baseball",
     "mickey mantle": "baseball",
     "lou gehrig": "baseball",
@@ -158,6 +159,7 @@ AMBIGUOUS_PARTIAL_TOKENS = {
     "david",
     "chris",
     "paul",
+    "luis",
     "james",
     "thomas",
     "johnson",
@@ -333,6 +335,12 @@ def load_extension_player_sport_data() -> None:
         PLAYER_DISPLAY_NAMES[key] = display_name
         if teams:
             PLAYER_TEAM_HINTS[key] = teams
+        base_key = player_base_name(key)
+        if base_key and base_key != key:
+            PLAYER_SPORT_HINTS.setdefault(base_key, sport)
+            PLAYER_DISPLAY_NAMES.setdefault(base_key, re.sub(r"\s+(?:jr|sr|ii|iii|iv|v)\.?$", "", display_name, flags=re.I).strip())
+            if teams:
+                PLAYER_TEAM_HINTS.setdefault(base_key, teams)
 
 
 def rebuild_partial_player_hints() -> None:
@@ -364,6 +372,10 @@ def rebuild_partial_player_hints() -> None:
 
 def normalize_player_key(value: Any) -> str:
     return clean_rule_text(value)
+
+
+def player_base_name(value: Any) -> str:
+    return re.sub(r"\s+(?:jr|sr|ii|iii|iv|v)\.?$", "", clean_rule_text(value)).strip()
 
 
 def is_distinctive_first_name(token: str) -> bool:
