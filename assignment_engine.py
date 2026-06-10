@@ -1402,7 +1402,14 @@ def infer_sport(raw: str, player_name: str = "") -> str:
     for sport, aliases in CATEGORY_ALIASES.items():
         if any(text_contains_clean_term(haystack, alias) for alias in aliases):
             return sport
-    return PLAYER_SPORT_HINTS.get(clean_rule_text(player_name), "")
+    player_key = clean_rule_text(player_name)
+    if player_key in PLAYER_SPORT_HINTS:
+        return PLAYER_SPORT_HINTS[player_key]
+    compact_player_key = compact_name_key(player_name)
+    for candidate, sport in PLAYER_SPORT_HINTS.items():
+        if compact_name_key(candidate) == compact_player_key:
+            return sport
+    return ""
 
 
 def find_known_player_sports(raw: str) -> list[dict[str, str]]:
@@ -1412,12 +1419,14 @@ def find_known_player_sports(raw: str) -> list[dict[str, str]]:
 @lru_cache(maxsize=4096)
 def _find_known_player_sports_cached(raw: str) -> tuple[tuple[tuple[str, str], ...], ...]:
     haystack = f" {clean_rule_text(raw)} "
+    compact_haystack = compact_name_key(raw)
     seen: set[str] = set()
     exact_matches: list[dict[str, str]] = []
     player_keys = SORTED_PLAYER_KEYS or sorted(PLAYER_SPORT_HINTS, key=len, reverse=True)
     for player in player_keys:
         key = clean_rule_text(player)
-        if f" {key} " not in haystack:
+        compact_key = compact_name_key(player)
+        if f" {key} " not in haystack and (not compact_key or compact_key not in compact_haystack):
             continue
         if any(player_name_contains(existing["key"], key) for existing in exact_matches):
             continue
@@ -1470,7 +1479,11 @@ def find_known_player_teams(raw: str, sport_correlations: list[dict[str, str]] |
 def player_name_contains(longer_player: str, shorter_player: str) -> bool:
     longer = clean_rule_text(longer_player)
     shorter = clean_rule_text(shorter_player)
-    return longer != shorter and shorter in longer
+    if longer != shorter and shorter in longer:
+        return True
+    compact_longer = compact_name_key(longer_player)
+    compact_shorter = compact_name_key(shorter_player)
+    return bool(compact_longer and compact_shorter and compact_longer != compact_shorter and compact_shorter in compact_longer)
 
 
 def matcher_matches_text(matcher: str, haystack: str) -> bool:
@@ -1487,11 +1500,17 @@ def player_matches_value(expected_player: str, value: dict[str, Any]) -> bool:
     if not expected:
         return False
     parsed_player = clean_rule_text(value.get("playerName") or "")
+    compact_expected = compact_name_key(expected_player)
+    compact_parsed_player = compact_name_key(value.get("playerName") or "")
     if parsed_player and parsed_player == expected:
+        return True
+    if compact_expected and compact_parsed_player and compact_parsed_player == compact_expected:
         return True
     return any(
         clean_rule_text(correlation.get("playerName") or "") == expected
         or clean_rule_text(correlation.get("key") or "") == expected
+        or compact_name_key(correlation.get("playerName") or "") == compact_expected
+        or compact_name_key(correlation.get("key") or "") == compact_expected
         for correlation in value.get("sportCorrelations") or []
     )
 
@@ -1562,6 +1581,10 @@ def strip_accents(value: str) -> str:
         for char in unicodedata.normalize("NFKD", str(value or ""))
         if not unicodedata.combining(char)
     )
+
+
+def compact_name_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", clean_rule_text(value))
 
 
 def source_lines(text: str) -> list[str]:
