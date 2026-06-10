@@ -767,6 +767,7 @@ class CardPipelineApp(tk.Tk):
             widths={"sheet": 320, "person": 130, "cards": 80, "received": 95, "volume": 130, "status": 150},
             height=9,
         )
+        self.incoming_volume_tree.tag_configure("total_row", background="#242424", foreground="#ffffff")
 
         partial_panel = ttk.Frame(metrics, style="Panel.TFrame", padding=(12, 12))
         partial_panel.pack(fill=tk.BOTH, expand=True)
@@ -811,6 +812,7 @@ class CardPipelineApp(tk.Tk):
             widths={"person": 220, "sheets": 80, "cards": 80, "balance": 130},
             height=18,
         )
+        self.payout_summary_tree.tag_configure("total_row", background="#242424", foreground="#ffffff")
         self.payout_summary_tree.bind("<ButtonRelease-1>", self.mark_payout_person_paid)
 
         detail_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 12))
@@ -1063,6 +1065,9 @@ class CardPipelineApp(tk.Tk):
         for tree in (self.incoming_volume_tree, self.partial_received_tree):
             tree.delete(*tree.get_children())
         incoming_names = self.home_sheet_paths.get("Incoming", {})
+        total_cards = 0
+        total_received = 0
+        total_volume = 0.0
         for name in incoming_names:
             key = self._home_sheet_key("Incoming", name)
             summary = self.home_sheet_summaries.get(key, {})
@@ -1070,6 +1075,9 @@ class CardPipelineApp(tk.Tk):
             total = int(summary.get("row_count") or 0)
             received = int(summary.get("received_count") or 0)
             volume = float(summary.get("purchase_total") or 0.0)
+            total_cards += total
+            total_received += received
+            total_volume += volume
             self.incoming_volume_tree.insert(
                 "",
                 tk.END,
@@ -1096,6 +1104,13 @@ class CardPipelineApp(tk.Tk):
                         "Yes" if marker.get("all_received") else "",
                     ),
                 )
+        if incoming_names:
+            self.incoming_volume_tree.insert(
+                "",
+                tk.END,
+                tags=("total_row",),
+                values=("TOTAL", "", total_cards, total_received, format_money(total_volume), ""),
+            )
 
     def _incoming_sheet_status(self, marker: dict[str, object], summary: dict[str, object]) -> str:
         has_tracking = bool(str(marker.get("tracking_number") or "").strip())
@@ -1159,6 +1174,15 @@ class CardPipelineApp(tk.Tk):
             )
 
         total_balance = sum(float(values["balance"]) for values in balances.values())
+        total_sheets = sum(int(values["sheets"]) for values in balances.values())
+        total_cards = sum(int(values["cards"]) for values in balances.values())
+        if balances:
+            self.payout_summary_tree.insert(
+                "",
+                tk.END,
+                tags=("total_row",),
+                values=("TOTAL", total_sheets, total_cards, format_money(total_balance)),
+            )
         filter_label = self.payout_person_var.get().strip()
         suffix = f" | Filter: {filter_label}" if filter_label else ""
         self.payout_status_var.set(f"{detail_count} payment sheet(s) | Active balance: {format_money(total_balance)}{suffix}")
@@ -1251,6 +1275,8 @@ class CardPipelineApp(tk.Tk):
             return
         person = self.payout_summary_people.get(selected[0])
         if not person:
+            return
+        if person == "TOTAL":
             return
         matching_items = [
             item
