@@ -90,6 +90,10 @@ PLAYER_SPORT_HINTS = {
     "jackie robinson": "baseball",
     "clayton kershaw": "baseball",
     "mookie betts": "baseball",
+    "ronald acuna jr": "baseball",
+    "ronald acuna jr.": "baseball",
+    "ronald acuña jr": "baseball",
+    "ronald acuña jr.": "baseball",
     "lionel messi": "soccer",
     "cristiano ronaldo": "soccer",
     "erling haaland": "soccer",
@@ -1544,12 +1548,20 @@ def text_contains_clean_term(haystack: str, term: str) -> bool:
 
 
 def clean_rule_text(value: Any) -> str:
-    text = str(value or "").lower()
+    text = strip_accents(str(value or "")).lower()
     text = re.sub(r"[\u0300-\u036f]", "", text)
     text = re.sub(r"\b(fill|bid|range|buy|pay|up to|acceptable|target|min|max|price)\b", " ", text)
     text = re.sub(r"[:|,;()[\]{}]+", " ", text)
     text = re.sub(r"[^a-z0-9/.' -]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def strip_accents(value: str) -> str:
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFKD", str(value or ""))
+        if not unicodedata.combining(char)
+    )
 
 
 def source_lines(text: str) -> list[str]:
@@ -1659,7 +1671,7 @@ def normalize_key(value: Any) -> str:
 
 
 def clean_text(value: Any) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9/.' -]+", " ", str(value or "").lower())).strip()
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9/.' -]+", " ", strip_accents(str(value or "")).lower())).strip()
 
 
 initialize_player_sport_data()
