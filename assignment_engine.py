@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -172,7 +173,7 @@ def payout_for_value(tiers: list[PayoutTier], value: float) -> float | None:
 def read_source_text(source: Any, base_dir: Path) -> str:
     if isinstance(source, dict):
         return read_source_text(source.get("path") or source.get("file") or source.get("url") or source.get("doc_id"), base_dir)
-    raw = str(source or "").strip()
+    raw = normalize_source_value(source)
     if not raw:
         return ""
     if raw.startswith(("http://", "https://")):
@@ -180,17 +181,44 @@ def read_source_text(source: Any, base_dir: Path) -> str:
     path = Path(raw).expanduser()
     if not path.is_absolute():
         path = base_dir / path
-    if not path.exists():
-        return ""
+    try:
+        if not path.exists():
+            return ""
+    except OSError as error:
+        raise ValueError(f"Invalid local source path: {raw}") from error
     if path.suffix.lower() == ".gsheet":
         return read_gsheet_shortcut_text(path)
     if path.suffix.lower() in {".xlsx", ".xlsm"}:
         return read_workbook_text(path)
-    return path.read_text(encoding="utf-8-sig")
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except OSError as error:
+        raise ValueError(f"Could not open local source path: {raw}") from error
+
+
+def normalize_source_value(source: Any) -> str:
+    raw = str(source or "").strip().strip('"').strip("'")
+    if raw.startswith("file://"):
+        parsed = urllib.parse.urlparse(raw)
+        raw = urllib.parse.unquote(parsed.path or "")
+        if os.name == "nt" and re.match(r"^/[A-Za-z]:/", raw):
+            raw = raw[1:]
+    if os.name == "nt" and re.match(r"^/[A-Za-z]:[\\/]", raw):
+        raw = raw[1:]
+    return raw
 
 
 def read_gsheet_shortcut_text(path: Path) -> str:
-    shortcut = json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        shortcut = json.loads(path.read_text(encoding="utf-8-sig"))
+    except OSError as error:
+        raise ValueError(
+            "Could not open this .gsheet shortcut locally. Choose a synced/exported .xlsx or .csv copy from Google Drive."
+        ) from error
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            "This .gsheet file is not readable shortcut JSON. Choose a synced/exported .xlsx or .csv copy from Google Drive."
+        ) from error
     url = gsheet_shortcut_url(shortcut)
     if not url:
         raise ValueError(
