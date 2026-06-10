@@ -656,12 +656,38 @@ def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
     text = str(line or "").strip()
     over_match = re.match(r"(.+?)\s+(?:over|above)\s+\$?\s*([\d,.]+k?)\+?$", text, re.I)
     if over_match:
-        return AssignmentRule(matcher=over_match.group(1).strip(), min_price=parse_money(over_match.group(2)), block=block)
+        return AssignmentRule(matcher=rule_matcher_label(over_match.group(1)), min_price=parse_money(over_match.group(2)), block=block)
     range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|–|—)\s*\$?\s*([\d,.]+k?)", text, re.I)
     if range_match:
         matcher = f"{text[:range_match.start()]} {text[range_match.end():]}".strip(" -:|")
-        return AssignmentRule(matcher=matcher, min_price=parse_money(range_match.group(1)), max_price=parse_money(range_match.group(2)), block=block)
+        return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=parse_money(range_match.group(1)), max_price=parse_money(range_match.group(2)), block=block)
     return AssignmentRule(matcher=text, block=block)
+
+
+def rule_matcher_label(value: Any) -> str:
+    label = str(value or "").strip()
+    if is_generic_rule_label(label):
+        return ""
+    return label
+
+
+def is_generic_rule_label(value: Any) -> bool:
+    text = clean_rule_text(value).lower()
+    return text in {
+        "price",
+        "prices",
+        "price range",
+        "price ranges",
+        "range",
+        "ranges",
+        "value",
+        "value range",
+        "value ranges",
+        "comp",
+        "comps",
+        "comp range",
+        "comp ranges",
+    }
 
 
 def parse_payouts(text: str) -> list[PayoutTier]:
