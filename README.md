@@ -68,7 +68,7 @@ Use `Stop Run` to request cancellation of an active Card Ladder run. The Chrome 
 
 Use the `Assignment` tab for receiving and source matching. Assignment rows are checked against sheets in `INCOMING SHEETS`, marked received when matched, and can be loaded from `RECEIVED SHEETS` for follow-up assignment work.
 
-Assignment can calculate `Best Company` and `Est. Payout` from the Card Ladder comps average, falling back to Card Ladder value when comps are blank. Click `Assignment Rules` in the Assignment tab to create companies, acceptance rule files, and payout files. L.U.C.A.S writes those local files under the configured pipeline folder and updates local-only `assignment_companies.json`.
+Assignment can calculate `Best Company` and `Est. Payout` from the Card Ladder comps average, falling back to Card Ladder value when comps are blank. Click `Assignment Rules` in the Assignment tab to create companies, acceptance rule files, and payout files. L.U.C.A.S writes manual files under the configured pipeline folder and updates local-only `assignment_companies.json`.
 
 Supported local source files include `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, and `.xlsm`. Files in synced Google Drive folders work directly, for example:
 
@@ -80,7 +80,7 @@ Supported local source files include `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, an
 }
 ```
 
-Native Google Sheets shortcuts (`.gsheet`) are recognized and converted to CSV export URLs when the sheet is accessible to the app. Private Google Keep notes do not expose local file contents to a desktop Python app, so Keep-backed rules should be exported or copied to a synced local text file for now. The built-in Assignment Rules manager uses the same basic custom-filter shape as the Sheet Filtering Tool: sports, value ranges, grade-company allow/block settings, block rules, and payout tiers.
+The Assignment Rules manager supports three rule sources: manual rules, a local Google Keep export/text file, or a local synced Google Sheets/workbook file from Google Drive. Payouts can be manual tiers or a local payout file. Native Google Sheets shortcuts (`.gsheet`) are recognized and converted to CSV export URLs when the sheet is accessible to the app, but the preferred path is the file already synced into `G:\My Drive\...`. The built-in manager uses the same basic custom-filter shape as the Sheet Filtering Tool: sports, value ranges, grade-company allow/block settings, block rules, and payout tiers.
 
 ## Included Photo Tool
 
