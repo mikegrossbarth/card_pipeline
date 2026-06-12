@@ -89,6 +89,16 @@ Supported local source files include `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, an
 
 The Assignment Rules manager supports three rule sources: manual rules, a local Google Keep export/text file, or a local synced Google Sheets/workbook file from Google Drive. Payouts can be manual tiers, a local payout file, or the same rules workbook when `Link Payouts to Same File` is selected and that workbook has a `Payouts` tab. `Payouts` tabs may use `CATEGORY`, `VALUE RANGE`, and `YOUR PAYOUT %`; L.U.C.A.S matches category by player, sport, or insert name and multiplies the card's comp value by the matched payout percentage. When a native Google Sheets shortcut (`.gsheet`) is selected, L.U.C.A.S stores the sheet URL and reads it through the Google Sheets API, matching the authenticated approach used by the Sheet Filtering Tool extension. Click `Connect Google` once in Assignment Rules to create the local token cache. If Google Drive exposes the shortcut as an unreadable placeholder, the app asks for the Google Sheet URL and then reads that same live sheet through the authenticated connection. Saved Google Sheet URL sources are refreshed from Google Sheets when L.U.C.A.S opens and when assignment rules load, with the latest local XLSX cache used as the fallback copy. The built-in manager uses the same basic custom-filter shape as the Sheet Filtering Tool: categories, value ranges, grade-company allow/block settings, block rules, and payout tiers.
 
+## Tests
+
+Run the committed offline test suite with:
+
+```bat
+python -m unittest discover -s tests -v
+```
+
+The tests cover shared-folder locks, atomic JSON writes, marker merging, Google Sheet cache export/discovery, company-sheet append deduping, and profit ledger recording.
+
 ## Included Photo Tool
 
 The photo OCR helper used by L.U.C.A.S is bundled in `photo_tool`. It uses the same project `.env`, so there is no separate photo-tool setup or private machine path required.
