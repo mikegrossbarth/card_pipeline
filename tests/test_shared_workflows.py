@@ -375,6 +375,59 @@ class PhotoOcrSpeedTests(unittest.TestCase):
         self.assertTrue(any("Detected 2 card(s)" in message for message in callbacks))
         self.assertTrue(any("Read 2/2" in message for message in callbacks))
 
+    def test_identify_cards_keeps_detected_slab_when_crop_ocr_fails(self) -> None:
+        regions = [
+            {"card_index": 1, "position": "left", "bbox": [0, 0, 200, 400], "detection_confidence": "high"},
+            {"card_index": 2, "position": "right", "bbox": [220, 0, 420, 400], "detection_confidence": "medium"},
+        ]
+
+        def fake_identify(_client, crop_b64):
+            if crop_b64 == "crop-2":
+                raise RuntimeError("label unreadable")
+            return {
+                "is_graded_slab": True,
+                "grading_company": "PSA",
+                "cert_number": "111",
+                "player": "Player",
+                "year": "2020",
+                "set": "Test",
+                "card_number": "",
+                "parallel": "",
+                "subset": "",
+                "grade": "10",
+                "category": "baseball",
+                "confidence": "high",
+                "label_text": "label",
+            }
+
+        with patch.object(multi_card_extraction, "_prepare_image", return_value=(b"image", "image/jpeg")), \
+                patch.object(multi_card_extraction, "_detect_regions_sync", return_value=regions), \
+                patch.object(multi_card_extraction, "_decode_image", return_value=object()), \
+                patch.object(multi_card_extraction, "_crop_region_to_base64", side_effect=["crop-1", "crop-2"]), \
+                patch.object(multi_card_extraction, "_identify_crop_sync", side_effect=fake_identify):
+            cards = multi_card_extraction.identify_cards_sync(object(), "fake-b64")
+
+        self.assertEqual(len(cards), 2)
+        self.assertEqual(cards[0]["cert_number"], "111")
+        self.assertEqual(cards[1]["card_index"], 2)
+        self.assertTrue(cards[1]["is_graded_slab"])
+        self.assertIn("label unreadable", cards[1]["error"])
+
+    def test_photo_table_accepts_detected_slab_without_readable_inventory(self) -> None:
+        card = {
+            "card_index": 2,
+            "position": "right",
+            "is_graded_slab": True,
+            "detection_confidence": "medium",
+            "error": "label unreadable",
+        }
+
+        self.assertTrue(app.CardPipelineApp._photo_card_has_inventory(object(), card))
+        row = app.CardPipelineApp._photo_card_to_row(object(), Path("dense.jpg"), card)
+        self.assertEqual(row["source"], "Photo: dense.jpg")
+        self.assertIn("right", row["notes"])
+        self.assertIn("OCR review needed", row["notes"])
+
 
 if __name__ == "__main__":
     unittest.main()

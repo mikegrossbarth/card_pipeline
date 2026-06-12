@@ -885,11 +885,14 @@ def _is_same_subject_card(a: dict, b: dict) -> bool:
     return bool((set_a and set_a == set_b) or (year_a and year_a == year_b) or (category_a and category_a == category_b))
 
 
+def _card_has_inventory_or_detected_slab(card: dict) -> bool:
+    if any(card.get(key) for key in ("cert_number", "player", "year", "set", "card_number", "parallel", "subset", "grade", "label_text")):
+        return True
+    return bool(card.get("is_graded_slab") or card.get("detection_confidence") or card.get("error"))
+
+
 def _dedupe_card_results(cards: list[dict]) -> list[dict]:
-    useful = [
-        card for card in cards
-        if any(card.get(key) for key in ("cert_number", "player", "year", "set", "card_number", "parallel", "subset", "grade", "label_text"))
-    ]
+    useful = [card for card in cards if _card_has_inventory_or_detected_slab(card)]
     ordered = sorted(enumerate(useful), key=lambda item: (-_card_read_score(item[1]), item[0]))
     kept: list[tuple[int, dict]] = []
     for original_index, card in ordered:

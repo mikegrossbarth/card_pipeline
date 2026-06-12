@@ -2331,17 +2331,23 @@ class CardPipelineApp(tk.Tk):
             }
         )
         cert = scan_to_cert(card.get("cert_number"))
+        notes = clean_part(card.get("position") or "")
+        if not any(card.get(key) for key in ("cert_number", "player", "year", "set", "card_number", "parallel", "subset", "grade", "label_text")):
+            review_note = f"OCR review needed: {card.get('error')}" if card.get("error") else "detected slab - review needed"
+            notes = clean_part("; ".join(part for part in (notes, review_note) if part))
         return {
             "cert_number": cert,
             "grader": grader or infer_grader(title),
             "card_title": title,
             "purchase_price": None,
             "source": f"Photo: {path.name}",
-            "notes": clean_part(card.get("position") or ""),
+            "notes": notes,
         }
 
     def _photo_card_has_inventory(self, card: dict) -> bool:
-        return any(card.get(key) for key in ("cert_number", "player", "year", "set", "card_number", "parallel", "subset", "grade", "label_text"))
+        if any(card.get(key) for key in ("cert_number", "player", "year", "set", "card_number", "parallel", "subset", "grade", "label_text")):
+            return True
+        return bool(card.get("is_graded_slab") or card.get("detection_confidence") or card.get("error"))
 
     def _load_photo_env(self) -> None:
         if not load_dotenv:
