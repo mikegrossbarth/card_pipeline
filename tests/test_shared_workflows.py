@@ -291,7 +291,29 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
 
 class PhotoOcrSpeedTests(unittest.TestCase):
-    def test_detect_regions_skips_extra_label_sweeps_when_enough_regions_found(self) -> None:
+    def test_detect_regions_skips_extra_label_sweeps_when_dense_target_is_met(self) -> None:
+        calls: list[str] = []
+
+        def fake_detect(_client, _bytes, _mime, prompt):
+            calls.append(prompt)
+            if prompt == multi_card_extraction.DETECTION_PROMPT:
+                return [
+                    {"card_index": index + 1, "position": f"slot {index + 1}", "bbox": [index * 50, 0, index * 50 + 40, 400], "detection_confidence": "high"}
+                    for index in range(multi_card_extraction.PHOTO_OCR_REGION_TARGET)
+                ]
+            return []
+
+        with patch.object(multi_card_extraction, "_detect_regions_for_prompt", side_effect=fake_detect), \
+                patch.object(multi_card_extraction, "_detect_best_row_regions", return_value=[]), \
+                patch.object(multi_card_extraction, "_add_uncovered_edge_regions", side_effect=lambda regions: regions):
+            regions = multi_card_extraction._detect_regions_sync(object(), b"image", "image/jpeg")
+
+        self.assertEqual(len(regions), multi_card_extraction.PHOTO_OCR_REGION_TARGET)
+        self.assertIn(multi_card_extraction.DETECTION_PROMPT, calls)
+        self.assertNotIn(multi_card_extraction.LABEL_DETECTION_PROMPT, calls)
+        self.assertNotIn(multi_card_extraction.LABEL_SWEEP_PROMPT, calls)
+
+    def test_detect_regions_uses_label_sweeps_below_dense_target(self) -> None:
         calls: list[str] = []
 
         def fake_detect(_client, _bytes, _mime, prompt):
@@ -302,17 +324,21 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                     {"card_index": 2, "position": "middle", "bbox": [220, 0, 420, 400], "detection_confidence": "high"},
                     {"card_index": 3, "position": "right", "bbox": [440, 0, 640, 400], "detection_confidence": "high"},
                 ]
+            if prompt == multi_card_extraction.LABEL_DETECTION_PROMPT:
+                return [
+                    {"card_index": index + 1, "position": f"label {index + 1}", "bbox": [index * 50, 0, index * 50 + 40, 100], "detection_confidence": "high"}
+                    for index in range(6)
+                ]
             return []
 
         with patch.object(multi_card_extraction, "_detect_regions_for_prompt", side_effect=fake_detect), \
                 patch.object(multi_card_extraction, "_detect_best_row_regions", return_value=[]), \
+                patch.object(multi_card_extraction, "_detect_best_prompt_regions", return_value=[]), \
                 patch.object(multi_card_extraction, "_add_uncovered_edge_regions", side_effect=lambda regions: regions):
             regions = multi_card_extraction._detect_regions_sync(object(), b"image", "image/jpeg")
 
-        self.assertEqual(len(regions), 3)
-        self.assertIn(multi_card_extraction.DETECTION_PROMPT, calls)
-        self.assertNotIn(multi_card_extraction.LABEL_DETECTION_PROMPT, calls)
-        self.assertNotIn(multi_card_extraction.LABEL_SWEEP_PROMPT, calls)
+        self.assertTrue(regions)
+        self.assertIn(multi_card_extraction.LABEL_DETECTION_PROMPT, calls)
 
     def test_identify_cards_reports_crop_progress_and_preserves_order(self) -> None:
         callbacks: list[str] = []

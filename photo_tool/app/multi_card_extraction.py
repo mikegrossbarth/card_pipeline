@@ -36,6 +36,16 @@ def _photo_ocr_crop_workers() -> int:
 PHOTO_OCR_CROP_WORKERS = max(1, min(4, _photo_ocr_crop_workers()))
 
 
+def _photo_ocr_region_target() -> int:
+    try:
+        return int(os.environ.get("LUCAS_PHOTO_OCR_REGION_TARGET", "10") or "10")
+    except ValueError:
+        return 10
+
+
+PHOTO_OCR_REGION_TARGET = max(3, min(16, _photo_ocr_region_target()))
+
+
 GRADE_WORDS_RE = re.compile(
     r"\b(?:GEM[-\s]?MT|MINT|NM[-\s]?MT\+?|NM|EX[-\s]?MT|EX|VG[-\s]?EX|VG|GOOD|FR|PR|HALF[-\s]?POINT)\b",
     re.IGNORECASE,
@@ -70,6 +80,7 @@ DETECTION_PROMPT = (
     "Locate every visible graded trading card slab or slab-like card holder in this photo. "
     "This is only a detection task: do not identify players or read certification numbers. "
     "Return one object per visible slab, including partial slabs when enough of the slab/card is visible to inventory it. "
+    "Dense inventory photos may show two or more rows of slabs, such as 2 rows of 6 cards; in those cases return every visible slab, not just a representative row. "
     "Yellow sticky notes, handwritten prices, glare, shadows, screen overlays, or price stickers may cover part of a slab; still return the slab if its holder or label is visible. "
     "Ignore black side bars or phone screenshot padding; they are not part of the slab layout. "
     "Detect slabs from PSA, BGS/Beckett, SGC, CGC, TAG, and unknown grading companies equally. "
@@ -86,7 +97,7 @@ DETECTION_PROMPT = (
 ROW_DETECTION_PROMPT = (
     "Locate each visible graded trading card slab/card holder in this photo, with special attention to slabs standing side-by-side in a simple horizontal row. "
     "Return one box around each full plastic slab holder. Do not use grading label boxes only. Do not merge touching slabs. "
-    "If three separate slab holders are visible left, middle, and right, return exactly three separate full-slab boxes. "
+    "If multiple rows are visible, return every slab in every row. If six slabs are visible across a row, return six separate boxes for that row. "
     "Cards may still be tilted, partially cropped, or different grading companies. Ignore background boxes, table surfaces, and handwriting. "
     "Use normalized integer coordinates from 0 to 1000 with [x_min, y_min, x_max, y_max]. "
     "Return JSON only with this exact shape: "
@@ -723,7 +734,7 @@ def _detect_best_row_regions(gclient: genai.Client, image_bytes: bytes, mime_typ
             continue
         if len(candidate) > len(best):
             best = candidate
-        if len(best) >= 3:
+        if len(best) >= PHOTO_OCR_REGION_TARGET:
             break
     return best
 
@@ -738,7 +749,7 @@ def _detect_best_prompt_regions(gclient: genai.Client, image_bytes: bytes, mime_
             continue
         if len(candidate) > len(best):
             best = candidate
-        if len(best) >= 3:
+        if len(best) >= PHOTO_OCR_REGION_TARGET:
             break
     return best
 
@@ -746,13 +757,13 @@ def _detect_best_prompt_regions(gclient: genai.Client, image_bytes: bytes, mime_
 def _detect_regions_sync(gclient: genai.Client, image_bytes: bytes, mime_type: str) -> list[dict]:
     regions = _detect_regions_for_prompt(gclient, image_bytes, mime_type, DETECTION_PROMPT)
     row_regions = []
-    if len(regions) < 4:
+    if len(regions) < PHOTO_OCR_REGION_TARGET:
         row_regions = _detect_best_row_regions(gclient, image_bytes, mime_type)
     if len(row_regions) > len(regions):
         regions = row_regions
     elif row_regions:
         regions = _merge_regions(regions, row_regions)
-    if len(regions) < 3:
+    if len(regions) < PHOTO_OCR_REGION_TARGET:
         label_regions = []
         try:
             label_regions.extend(_detect_regions_for_prompt(gclient, image_bytes, mime_type, LABEL_DETECTION_PROMPT))
@@ -767,7 +778,7 @@ def _detect_regions_sync(gclient: genai.Client, image_bytes: bytes, mime_type: s
                 else:
                     regions = _merge_regions(expanded_labels, regions)
     regions = _dedupe_regions(regions)
-    if len(regions) < 3 and row_regions:
+    if len(regions) < PHOTO_OCR_REGION_TARGET and row_regions:
         regions = _merge_regions(regions, row_regions)
         regions = _dedupe_regions(regions)
     regions = _add_uncovered_edge_regions(regions)
