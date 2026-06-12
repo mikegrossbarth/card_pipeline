@@ -4,6 +4,7 @@ import json
 import sys
 import threading
 import time
+import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,12 +13,49 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+PHOTO_APP = ROOT / "photo_tool" / "app"
+if str(PHOTO_APP) not in sys.path:
+    sys.path.insert(0, str(PHOTO_APP))
 
 import app
 import google_sheets_import
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
+
+
+if "google" not in sys.modules:
+    google_module = types.ModuleType("google")
+    genai_module = types.ModuleType("google.genai")
+    genai_types_module = types.ModuleType("google.genai.types")
+
+    class _Client:
+        pass
+
+    class _Part:
+        @staticmethod
+        def from_bytes(data=None, mime_type=None):
+            return {"data": data, "mime_type": mime_type}
+
+    class _GenerateContentConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class _ThinkingConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    genai_module.Client = _Client
+    genai_types_module.Part = _Part
+    genai_types_module.GenerateContentConfig = _GenerateContentConfig
+    genai_types_module.ThinkingConfig = _ThinkingConfig
+    genai_module.types = genai_types_module
+    google_module.genai = genai_module
+    sys.modules["google"] = google_module
+    sys.modules["google.genai"] = genai_module
+    sys.modules["google.genai.types"] = genai_types_module
+
+import multi_card_extraction
 
 
 class SharedStateTests(unittest.TestCase):
@@ -250,6 +288,66 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
+
+
+class PhotoOcrSpeedTests(unittest.TestCase):
+    def test_detect_regions_skips_extra_label_sweeps_when_enough_regions_found(self) -> None:
+        calls: list[str] = []
+
+        def fake_detect(_client, _bytes, _mime, prompt):
+            calls.append(prompt)
+            if prompt == multi_card_extraction.DETECTION_PROMPT:
+                return [
+                    {"card_index": 1, "position": "left", "bbox": [0, 0, 200, 400], "detection_confidence": "high"},
+                    {"card_index": 2, "position": "middle", "bbox": [220, 0, 420, 400], "detection_confidence": "high"},
+                    {"card_index": 3, "position": "right", "bbox": [440, 0, 640, 400], "detection_confidence": "high"},
+                ]
+            return []
+
+        with patch.object(multi_card_extraction, "_detect_regions_for_prompt", side_effect=fake_detect), \
+                patch.object(multi_card_extraction, "_detect_best_row_regions", return_value=[]), \
+                patch.object(multi_card_extraction, "_add_uncovered_edge_regions", side_effect=lambda regions: regions):
+            regions = multi_card_extraction._detect_regions_sync(object(), b"image", "image/jpeg")
+
+        self.assertEqual(len(regions), 3)
+        self.assertIn(multi_card_extraction.DETECTION_PROMPT, calls)
+        self.assertNotIn(multi_card_extraction.LABEL_DETECTION_PROMPT, calls)
+        self.assertNotIn(multi_card_extraction.LABEL_SWEEP_PROMPT, calls)
+
+    def test_identify_cards_reports_crop_progress_and_preserves_order(self) -> None:
+        callbacks: list[str] = []
+        regions = [
+            {"card_index": 1, "position": "left", "bbox": [0, 0, 200, 400], "detection_confidence": "high"},
+            {"card_index": 2, "position": "right", "bbox": [220, 0, 420, 400], "detection_confidence": "medium"},
+        ]
+
+        def fake_identify(_client, crop_b64):
+            return {
+                "is_graded_slab": True,
+                "grading_company": "PSA",
+                "cert_number": "111" if crop_b64 == "crop-1" else "222",
+                "player": "Player",
+                "year": "2020",
+                "set": "Test",
+                "card_number": "",
+                "parallel": "",
+                "subset": "",
+                "grade": "10",
+                "category": "baseball",
+                "confidence": "high",
+                "label_text": "label",
+            }
+
+        with patch.object(multi_card_extraction, "_prepare_image", return_value=(b"image", "image/jpeg")), \
+                patch.object(multi_card_extraction, "_detect_regions_sync", return_value=regions), \
+                patch.object(multi_card_extraction, "_decode_image", return_value=object()), \
+                patch.object(multi_card_extraction, "_crop_region_to_base64", side_effect=["crop-1", "crop-2"]), \
+                patch.object(multi_card_extraction, "_identify_crop_sync", side_effect=fake_identify):
+            cards = multi_card_extraction.identify_cards_sync(object(), "fake-b64", progress_callback=callbacks.append)
+
+        self.assertEqual([card["cert_number"] for card in cards], ["111", "222"])
+        self.assertTrue(any("Detected 2 card(s)" in message for message in callbacks))
+        self.assertTrue(any("Read 2/2" in message for message in callbacks))
 
 
 if __name__ == "__main__":

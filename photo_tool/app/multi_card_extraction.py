@@ -4,9 +4,11 @@ import base64
 import io
 import json
 import logging
+import os
 import random
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from google import genai
 from google.genai import types as genai_types
@@ -22,6 +24,16 @@ from live_comps_ocr.cert_extraction import (
     _strip_json_fence,
 )
 from sport_lookup import lookup_sport
+
+
+def _photo_ocr_crop_workers() -> int:
+    try:
+        return int(os.environ.get("LUCAS_PHOTO_OCR_CROP_WORKERS", "3") or "3")
+    except ValueError:
+        return 3
+
+
+PHOTO_OCR_CROP_WORKERS = max(1, min(4, _photo_ocr_crop_workers()))
 
 
 GRADE_WORDS_RE = re.compile(
@@ -740,19 +752,20 @@ def _detect_regions_sync(gclient: genai.Client, image_bytes: bytes, mime_type: s
         regions = row_regions
     elif row_regions:
         regions = _merge_regions(regions, row_regions)
-    label_regions = []
-    try:
-        label_regions.extend(_detect_regions_for_prompt(gclient, image_bytes, mime_type, LABEL_DETECTION_PROMPT))
-    except Exception as error:
-        logging.info(f"[label detection skipped] {str(error)[:160]}")
-    label_regions.extend(_detect_best_prompt_regions(gclient, image_bytes, mime_type, LABEL_SWEEP_PROMPT))
-    if label_regions:
-        expanded_labels = _expand_label_regions(_dedupe_regions(label_regions))
-        if expanded_labels:
-            if len(expanded_labels) > len(regions):
-                regions = expanded_labels
-            else:
-                regions = _merge_regions(expanded_labels, regions)
+    if len(regions) < 3:
+        label_regions = []
+        try:
+            label_regions.extend(_detect_regions_for_prompt(gclient, image_bytes, mime_type, LABEL_DETECTION_PROMPT))
+        except Exception as error:
+            logging.info(f"[label detection skipped] {str(error)[:160]}")
+        label_regions.extend(_detect_best_prompt_regions(gclient, image_bytes, mime_type, LABEL_SWEEP_PROMPT))
+        if label_regions:
+            expanded_labels = _expand_label_regions(_dedupe_regions(label_regions))
+            if expanded_labels:
+                if len(expanded_labels) > len(regions):
+                    regions = expanded_labels
+                else:
+                    regions = _merge_regions(expanded_labels, regions)
     regions = _dedupe_regions(regions)
     if len(regions) < 3 and row_regions:
         regions = _merge_regions(regions, row_regions)
@@ -878,7 +891,7 @@ def _dedupe_card_results(cards: list[dict]) -> list[dict]:
     return [card for _, card in sorted(kept, key=lambda item: item[0])]
 
 
-def identify_cards_sync(gclient: genai.Client, image_b64: str) -> list[dict]:
+def identify_cards_sync(gclient: genai.Client, image_b64: str, progress_callback=None) -> list[dict]:
     t0 = time.time()
     image_bytes, mime_type = _prepare_image(image_b64)
     logging.info(f"[multi resize] {time.time() - t0:.2f}s ({len(image_bytes) // 1024}KB)")
@@ -887,41 +900,57 @@ def identify_cards_sync(gclient: genai.Client, image_b64: str) -> list[dict]:
     regions = _detect_regions_sync(gclient, image_bytes, mime_type)
     logging.info(f"[region gemini] {time.time() - t1:.2f}s")
     if regions:
+        if progress_callback:
+            progress_callback(f"Detected {len(regions)} card(s); reading labels with {min(PHOTO_OCR_CROP_WORKERS, len(regions))} worker(s)...")
         source_image = _decode_image(image_b64)
-        cards = []
-        for region in regions:
-            try:
-                crop_b64 = _crop_region_to_base64(source_image, region["bbox"])
-                card = _identify_crop_sync(gclient, crop_b64)
-                card["card_index"] = region["card_index"]
-                card["position"] = region["position"]
-                card["detection_confidence"] = region["detection_confidence"]
-                cards.append(card)
-            except Exception as error:
-                logging.info(f"[region OCR error] card={region['card_index']} error={str(error)[:160]}")
-                cards.append({
-                    "card_index": region["card_index"],
-                    "position": region["position"],
-                    "is_graded_slab": True,
-                    "grading_company": "unknown",
-                    "cert_number": "",
-                    "player": "",
-                    "year": "",
-                    "set": "",
-                    "card_number": "",
-                    "parallel": "",
-                    "subset": "",
-                    "grade": "",
-                    "category": "",
-                    "confidence": "low",
-                    "label_text": "",
-                    "detection_confidence": region["detection_confidence"],
-                    "error": str(error),
-                })
+        crop_jobs = [(region, _crop_region_to_base64(source_image, region["bbox"])) for region in regions]
+        cards_by_index: dict[int, dict] = {}
+        worker_count = min(PHOTO_OCR_CROP_WORKERS, len(crop_jobs))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_to_region = {
+                executor.submit(_identify_crop_sync, gclient, crop_b64): region
+                for region, crop_b64 in crop_jobs
+            }
+            completed = 0
+            for future in as_completed(future_to_region):
+                region = future_to_region[future]
+                completed += 1
+                try:
+                    card = future.result()
+                    card["card_index"] = region["card_index"]
+                    card["position"] = region["position"]
+                    card["detection_confidence"] = region["detection_confidence"]
+                    cards_by_index[int(region["card_index"])] = card
+                except Exception as error:
+                    logging.info(f"[region OCR error] card={region['card_index']} error={str(error)[:160]}")
+                    cards_by_index[int(region["card_index"])] = {
+                        "card_index": region["card_index"],
+                        "position": region["position"],
+                        "is_graded_slab": True,
+                        "grading_company": "unknown",
+                        "cert_number": "",
+                        "player": "",
+                        "year": "",
+                        "set": "",
+                        "card_number": "",
+                        "parallel": "",
+                        "subset": "",
+                        "grade": "",
+                        "category": "",
+                        "confidence": "low",
+                        "label_text": "",
+                        "detection_confidence": region["detection_confidence"],
+                        "error": str(error),
+                    }
+                if progress_callback:
+                    progress_callback(f"Read {completed}/{len(regions)} detected card label(s)...")
+        cards = [cards_by_index[index] for index in sorted(cards_by_index)]
         logging.info(f"[multi identified via crops] {len(cards)} card(s)")
         return _dedupe_card_results(cards)
 
     logging.info("[multi identified] region detection returned 0 cards; retrying whole-photo fallback prompt")
+    if progress_callback:
+        progress_callback("No regions detected; trying whole-photo OCR fallback...")
     try:
         t2 = time.time()
         response = _generate_with_retry(gclient, image_bytes, mime_type, FALLBACK_MULTI_CARD_PROMPT)

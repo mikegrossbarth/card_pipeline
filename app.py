@@ -2296,8 +2296,15 @@ class CardPipelineApp(tk.Tk):
         detected_total = 0
         for index, path in enumerate(list(self.photo_paths), start=1):
             try:
+                self.events.put(("photo_status", f"Scanning {index}/{total}: {path.name}..."))
                 image_b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
-                cards = identify_cards_sync(self.photo_client, image_b64)
+                cards = identify_cards_sync(
+                    self.photo_client,
+                    image_b64,
+                    progress_callback=lambda message, i=index, n=total, p=path: self.events.put(
+                        ("photo_status", f"Scanning {i}/{n}: {p.name} - {message}")
+                    ),
+                )
                 rows = [self._photo_card_to_row(path, card) for card in cards if self._photo_card_has_inventory(card)]
                 detected_total += len(rows)
                 self.events.put(("photo_rows", rows))
@@ -2549,8 +2556,15 @@ class CardPipelineApp(tk.Tk):
         detected_total = 0
         for index, path in enumerate(list(self.review_photo_paths), start=1):
             try:
+                self.events.put(("review_status", f"Scanning {index}/{total}: {path.name}..."))
                 image_b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
-                cards = identify_cards_sync(self.photo_client, image_b64)
+                cards = identify_cards_sync(
+                    self.photo_client,
+                    image_b64,
+                    progress_callback=lambda message, i=index, n=total, p=path: self.events.put(
+                        ("review_status", f"Scanning {i}/{n}: {p.name} - {message}")
+                    ),
+                )
                 rows = [self._photo_card_to_review_row(path, card) for card in cards if self._photo_card_has_inventory(card)]
                 detected_total += len(rows)
                 self.events.put(("review_rows", rows))
