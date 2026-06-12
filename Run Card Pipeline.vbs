@@ -6,10 +6,25 @@ shell.CurrentDirectory = appDir
 
 pythonwPath = appDir & "\.venv\Scripts\pythonw.exe"
 pythonPath = appDir & "\.venv\Scripts\python.exe"
+venvConfigPath = appDir & "\.venv\pyvenv.cfg"
+venvOk = False
 
-If fso.FileExists(pythonwPath) Then
+If fso.FileExists(venvConfigPath) Then
+    Set configFile = fso.OpenTextFile(venvConfigPath, 1)
+    Do Until configFile.AtEndOfStream
+        line = configFile.ReadLine
+        If LCase(Left(line, 12)) = "executable =" Then
+            basePython = Trim(Mid(line, 13))
+            If fso.FileExists(basePython) Then venvOk = True
+            Exit Do
+        End If
+    Loop
+    configFile.Close
+End If
+
+If venvOk And fso.FileExists(pythonwPath) Then
     shell.Run """" & pythonwPath & """ """ & appDir & "\app.py""", 0, False
-ElseIf fso.FileExists(pythonPath) Then
+ElseIf venvOk And fso.FileExists(pythonPath) Then
     shell.Run """" & pythonPath & """ """ & appDir & "\app.py""", 1, False
 Else
     pythonwPath = "pythonw.exe"
