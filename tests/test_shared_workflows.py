@@ -444,10 +444,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_unassigned_players = app.CardPipelineApp._save_unassigned_players
             _auto_categorize_unassigned_players = app.CardPipelineApp._auto_categorize_unassigned_players
             _search_unassigned_player_category = app.CardPipelineApp._search_unassigned_player_category
+            _category_research_text = app.CardPipelineApp._category_research_text
             _infer_category_from_web_text = app.CardPipelineApp._infer_category_from_web_text
             _write_player_category_override = app.CardPipelineApp._write_player_category_override
-            def _web_search_text(self, _query: str) -> str:
+            def _wikipedia_search_text(self, _player: str) -> str:
                 return "Example Player is an NBA basketball guard who appears on Panini basketball cards."
+            def _wikidata_search_text(self, _player: str) -> str:
+                return ""
+            def _duckduckgo_search_text(self, _query: str) -> str:
+                return ""
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR

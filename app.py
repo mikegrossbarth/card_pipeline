@@ -3281,11 +3281,79 @@ class CardPipelineApp(tk.Tk):
         player = str(entry.get("player") or "").strip()
         title = str(entry.get("last_title") or "").strip()
         query = " ".join(part for part in (player, title, "sports cards category") if part)
-        text = " ".join(part for part in (player, title, self._web_search_text(query)) if part)
+        text = " ".join(part for part in (player, title, self._category_research_text(player, query)) if part)
         return self._infer_category_from_web_text(text)
 
+    def _category_research_text(self, player: str, query: str) -> str:
+        parts: list[str] = []
+        for fetcher in (
+            lambda: self._wikipedia_search_text(player),
+            lambda: self._wikidata_search_text(player),
+            lambda: self._duckduckgo_search_text(query),
+        ):
+            try:
+                text = fetcher()
+            except Exception:
+                continue
+            if text:
+                parts.append(text)
+        return " ".join(parts)
+
+    def _wikipedia_search_text(self, player: str) -> str:
+        search_url = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode({
+            "action": "query",
+            "list": "search",
+            "srsearch": player,
+            "format": "json",
+            "srlimit": "3",
+        })
+        payload = self._read_json_url(search_url)
+        snippets: list[str] = []
+        for item in ((payload.get("query") or {}).get("search") or [])[:3]:
+            title = str(item.get("title") or "")
+            snippet = re.sub(r"<[^>]+>", " ", str(item.get("snippet") or ""))
+            snippets.append(f"{title} {snippet}")
+            if title:
+                summary_url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(title.replace(" ", "_"), safe="")
+                try:
+                    summary = self._read_json_url(summary_url)
+                    snippets.append(" ".join(str(summary.get(key) or "") for key in ("title", "description", "extract")))
+                except Exception:
+                    pass
+        return " ".join(snippets)
+
+    def _wikidata_search_text(self, player: str) -> str:
+        search_url = "https://www.wikidata.org/w/api.php?" + urllib.parse.urlencode({
+            "action": "wbsearchentities",
+            "search": player,
+            "language": "en",
+            "format": "json",
+            "limit": "5",
+        })
+        payload = self._read_json_url(search_url)
+        return " ".join(
+            " ".join(str(item.get(key) or "") for key in ("label", "description"))
+            for item in payload.get("search") or []
+        )
+
+    def _duckduckgo_search_text(self, query: str) -> str:
+        return self._html_search_text(f"https://duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}")
+
     def _web_search_text(self, query: str) -> str:
-        url = f"https://duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}"
+        return self._duckduckgo_search_text(query)
+
+    def _read_json_url(self, url: str) -> dict[str, object]:
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LUCAS/1.0",
+                "Accept": "application/json,text/plain,*/*",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=12) as response:
+            return json.loads(response.read(200000).decode("utf-8", errors="replace"))
+
+    def _html_search_text(self, url: str) -> str:
         request = urllib.request.Request(
             url,
             headers={
@@ -3438,6 +3506,7 @@ class CardPipelineApp(tk.Tk):
                     messagebox.showwarning("Auto Categorize", "\n".join([f"Resolved: {resolved}", f"Left: {unresolved}", "", "Issues:", *[str(error) for error in errors[:8]]]))
                 else:
                     self.status_var.set(f"Auto-categorized {resolved} unassigned player(s); {unresolved} left.")
+                    messagebox.showinfo("Auto Categorize", f"Resolved: {resolved}\nLeft unresolved: {unresolved}")
 
             threading.Thread(target=worker, daemon=True).start()
 
