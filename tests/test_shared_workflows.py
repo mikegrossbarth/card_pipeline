@@ -226,6 +226,19 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertFalse(any(match["sport"] in {"disney", "marvel", "star wars"} for match in matches))
         self.assertEqual(assignment_engine.infer_sport(title, "Kemba Walker"), "basketball")
 
+    def test_player_sport_overrides_teach_unknown_players(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "overrides.json"
+            path.write_text(
+                json.dumps({"players": {"Test Override Player": {"sport": "basketball", "displayName": "Test Override Player"}}}),
+                encoding="utf-8",
+            )
+
+            loaded = assignment_engine.load_player_sport_overrides(path)
+
+        self.assertEqual(loaded, 1)
+        self.assertEqual(assignment_engine.infer_sport("2024 Panini Test Override Player PSA 10", "Test Override Player"), "basketball")
+
     def test_recommendation_chooses_highest_payout_among_accepted_companies(self) -> None:
         row = WorkbookRow(
             excel_row=2,
@@ -394,6 +407,37 @@ class AssignmentEngineTests(unittest.TestCase):
 
 
 class AppSharedWorkflowLogicTests(unittest.TestCase):
+    def test_unassigned_player_is_recorded_for_unmatched_valued_row(self) -> None:
+        class Dummy:
+            _load_unassigned_players = app.CardPipelineApp._load_unassigned_players
+            _save_unassigned_players = app.CardPipelineApp._save_unassigned_players
+            _record_unassigned_player = app.CardPipelineApp._record_unassigned_player
+            _append_unique_sample = app.CardPipelineApp._append_unique_sample
+            _guess_unassigned_player = app.CardPipelineApp._guess_unassigned_player
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_unassigned = app.UNASSIGNED_PLAYERS_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.UNASSIGNED_PLAYERS_PATH = Path(tmp) / "unassigned_players.json"
+            dummy = Dummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            row = WorkbookRow(
+                excel_row=2,
+                cert_number="",
+                grader="PSA",
+                card_title="2024 Panini Prizm 12 Jalen Madeup PSA 10",
+                card_ladder_comps_average=25,
+            )
+            try:
+                dummy._record_unassigned_player(row)
+                entries = json.loads(app.UNASSIGNED_PLAYERS_PATH.read_text(encoding="utf-8"))["entries"]
+                self.assertIn("jalen madeup", entries)
+                self.assertEqual(entries["jalen madeup"]["player"], "Jalen Madeup")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.UNASSIGNED_PLAYERS_PATH = old_unassigned
+
     def test_sheet_marker_save_merges_latest_and_honors_tombstones(self) -> None:
         class MarkerDummy:
             _load_sheet_markers = app.CardPipelineApp._load_sheet_markers

@@ -353,6 +353,50 @@ def load_extension_player_sport_data() -> None:
                 PLAYER_TEAM_HINTS.setdefault(base_key, teams)
 
 
+def load_player_sport_overrides(path: Path) -> int:
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return 0
+    players = payload.get("players") if isinstance(payload, dict) else payload
+    if not isinstance(players, dict):
+        return 0
+    loaded = 0
+    for player, value in players.items():
+        if isinstance(value, str):
+            sport = value
+            display_name = title_case_name(clean_rule_text(player))
+        elif isinstance(value, dict):
+            sport = value.get("sport") or value.get("category") or ""
+            display_name = str(value.get("displayName") or value.get("display_name") or player).strip()
+        else:
+            continue
+        if add_player_sport_hint(player, sport, display_name=display_name):
+            loaded += 1
+    if loaded:
+        rebuild_partial_player_hints()
+        SORTED_PLAYER_KEYS[:] = sorted(PLAYER_SPORT_HINTS, key=len, reverse=True)
+        _find_known_player_sports_cached.cache_clear()
+    return loaded
+
+
+def add_player_sport_hint(player: Any, sport: Any, display_name: str = "") -> bool:
+    key = normalize_player_key(player)
+    category = canonical_sport_label(str(sport or "")) or clean_rule_text(sport)
+    if not key or not category:
+        return False
+    PLAYER_SPORT_HINTS[key] = category
+    PLAYER_DISPLAY_NAMES[key] = str(display_name or title_case_name(key)).strip()
+    base_key = player_base_name(key)
+    if base_key and base_key != key:
+        PLAYER_SPORT_HINTS.setdefault(base_key, category)
+        PLAYER_DISPLAY_NAMES.setdefault(base_key, re.sub(r"\s+(?:jr|sr|ii|iii|iv|v)\.?$", "", PLAYER_DISPLAY_NAMES[key], flags=re.I).strip())
+    rebuild_partial_player_hints()
+    SORTED_PLAYER_KEYS[:] = sorted(PLAYER_SPORT_HINTS, key=len, reverse=True)
+    _find_known_player_sports_cached.cache_clear()
+    return True
+
+
 def rebuild_partial_player_hints() -> None:
     token_map: dict[str, list[dict[str, str]]] = {}
     for player, sport in PLAYER_SPORT_HINTS.items():

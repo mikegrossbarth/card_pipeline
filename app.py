@@ -9,6 +9,8 @@ import shutil
 import sys
 import threading
 import tkinter as tk
+import urllib.parse
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -33,9 +35,10 @@ from bridge_server import (  # noqa: E402
     row_has_comp_data,
 )
 from workbook_io import WorkbookRow  # noqa: E402
+import assignment_engine  # noqa: E402
 from assignment_engine import AssignmentEngine  # noqa: E402
 from assignment_engine import CONFIG_PATH as ASSIGNMENT_CONFIG_PATH  # noqa: E402
-from assignment_engine import gsheet_shortcut_url, load_gsheet_shortcut, normalize_source_value, path_from_source_value, safe_filename  # noqa: E402
+from assignment_engine import gsheet_shortcut_url, load_gsheet_shortcut, normalize_source_value, parse_card_for_matching, path_from_source_value, safe_filename  # noqa: E402
 from assignment_config_ui import open_assignment_rules_dialog  # noqa: E402
 from google_sheets_import import export_google_sheet_to_xlsx  # noqa: E402
 from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
@@ -93,6 +96,8 @@ RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
 COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
 SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
+UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
+PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
 APP_TITLE = "L.U.C.A.S"
@@ -106,6 +111,21 @@ COMP_STRATEGY_DISPLAY = {
 }
 COMP_SCOPE_EMPTY = "Empty Comps Only"
 COMP_SCOPE_ALL = "Recomp All"
+ASSIGNMENT_CATEGORY_OPTIONS = (
+    "basketball",
+    "football",
+    "baseball",
+    "soccer",
+    "hockey",
+    "pokemon",
+    "one piece",
+    "wwe",
+    "f1",
+    "marvel",
+    "disney",
+    "star wars",
+    "ufc",
+)
 
 
 def load_app_settings() -> dict[str, object]:
@@ -123,7 +143,7 @@ def save_app_settings(settings: dict[str, object]) -> None:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, PROFIT_LEDGER_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, PROFIT_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -131,6 +151,8 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
     SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
     PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
+    UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
+    PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 
 
 def set_pipeline_from_working_dir(path: Path) -> None:
@@ -329,6 +351,7 @@ class CardPipelineApp(tk.Tk):
         self.review_photo_paths: list[Path] = []
         self.review_photo_status = tk.StringVar(value="No receive photos selected.")
         self.review_photo_worker: threading.Thread | None = None
+        self._load_player_overrides()
         self.assignment_engine = AssignmentEngine.load()
         self.assignment_recommendation_job = 0
         self.assignment_recommendation_running = False
@@ -675,9 +698,10 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(review_controls, text="Load", command=self.load_selected_received_sheet_for_review, style="Primary.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
         ttk.Button(review_controls, text="Refresh", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=3, sticky="w")
         ttk.Button(review_controls, text="Assignment Rules", command=self.open_assignment_rules, style="Soft.TButton").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ttk.Button(review_controls, text="Unassigned Players", command=self.open_unassigned_players_dialog, style="Soft.TButton").grid(row=0, column=5, sticky="w", padx=(8, 0))
         review_controls.columnconfigure(1, weight=1)
-        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(10, 0))
-        ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=5, sticky="w", pady=(4, 0))
+        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
         self.assignment_progress = ttk.Progressbar(
             review_controls,
             style="Assignment.Horizontal.TProgressbar",
@@ -685,7 +709,7 @@ class CardPipelineApp(tk.Tk):
             maximum=100,
             mode="determinate",
         )
-        self.assignment_progress.grid(row=3, column=0, columnspan=5, sticky="ew", pady=(8, 0))
+        self.assignment_progress.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(8, 0))
         self.review_tree = self._build_table(self.review_tab, editable=True, columns=REVIEW_COLUMNS)
         review_bottom = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         review_bottom.pack(fill=tk.X, pady=(10, 0))
@@ -1121,6 +1145,9 @@ class CardPipelineApp(tk.Tk):
         for directory in (WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR):
             directory.mkdir(parents=True, exist_ok=True)
         COMPANY_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        self._load_player_overrides()
+        self.assignment_engine = AssignmentEngine.load()
+        self.assignment_config_status.set(self._assignment_config_status())
         self.home_sheet_markers = self._load_sheet_markers()
         self.refresh_profit_tab()
         self.status_var.set(f"Working folder set to {WORKING_SHEETS_DIR}")
@@ -2776,6 +2803,7 @@ class CardPipelineApp(tk.Tk):
                 if force:
                     row.best_company = ""
                     row.estimated_payout = None
+                self._record_unassigned_player(row)
                 continue
             row.best_company = recommendation.company
             row.estimated_payout = recommendation.payout
@@ -3117,9 +3145,217 @@ class CardPipelineApp(tk.Tk):
             if recommendation.payout is None:
                 row.best_company = ""
                 row.estimated_payout = None
+                self._record_unassigned_player(row)
                 continue
             row.best_company = recommendation.company
             row.estimated_payout = recommendation.payout
+
+    def _load_player_overrides(self) -> int:
+        return assignment_engine.load_player_sport_overrides(PLAYER_OVERRIDES_PATH)
+
+    def _load_unassigned_players(self) -> dict[str, dict[str, object]]:
+        try:
+            raw = json.loads(UNASSIGNED_PLAYERS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        entries = raw.get("entries", raw) if isinstance(raw, dict) else {}
+        return entries if isinstance(entries, dict) else {}
+
+    def _save_unassigned_players(self, entries: dict[str, dict[str, object]]) -> None:
+        UNASSIGNED_PLAYERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(UNASSIGNED_PLAYERS_PATH, {"entries": entries})
+
+    def _record_unassigned_players(self, rows: list[WorkbookRow]) -> None:
+        for row in rows:
+            self._record_unassigned_player(row)
+
+    def _record_unassigned_player(self, row: WorkbookRow) -> None:
+        if row.estimated_payout is not None or row.best_company:
+            return
+        if row.card_ladder_comps_average is None and row.card_ladder_value is None:
+            return
+        title = str(row.card_title or "").strip()
+        if not title:
+            return
+        player_guess = self._guess_unassigned_player(row)
+        if not player_guess:
+            return
+        parsed = parse_card_for_matching(title)
+        if parsed.get("sport") and parsed.get("playerName"):
+            return
+        key = re.sub(r"[^a-z0-9]+", " ", player_guess.lower()).strip() or re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+        if not key:
+            return
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "unassigned-players", self.lucas_identity):
+                entries = self._load_unassigned_players()
+                existing = dict(entries.get(key, {}))
+                existing["player"] = existing.get("player") or player_guess
+                existing["last_title"] = title
+                existing["sample_titles"] = self._append_unique_sample(existing.get("sample_titles"), title)
+                existing["count"] = int(existing.get("count") or 0) + 1
+                existing["last_seen"] = datetime.now().isoformat(timespec="seconds")
+                existing["source"] = str(row.cert_number or "")
+                entries[key] = existing
+                self._save_unassigned_players(entries)
+        except Exception:
+            pass
+
+    def _append_unique_sample(self, samples: object, value: str) -> list[str]:
+        result = [str(item) for item in samples] if isinstance(samples, list) else []
+        if value not in result:
+            result.append(value)
+        return result[-5:]
+
+    def _guess_unassigned_player(self, row: WorkbookRow) -> str:
+        title = str(row.card_title or "").strip()
+        if not title:
+            return ""
+        grader_pattern = r"\b(?:PSA|BGS|SGC|CGC)\b"
+        before_grader = re.split(grader_pattern, title, flags=re.I)[0].strip()
+        number_match = re.search(r"\b\d+[A-Za-z]?\s+([A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,3})\s*$", before_grader)
+        if number_match:
+            return number_match.group(1).strip()
+        words = re.findall(r"[A-Z][A-Za-z'.-]+", before_grader)
+        stop_words = {
+            "Topps", "Panini", "Bowman", "Donruss", "Optic", "Prizm", "Select", "Mosaic", "Contenders",
+            "Chrome", "Finest", "Upper", "Deck", "Fleer", "Score", "Absolute", "Elite", "Stadium",
+            "Club", "Uniformity", "Dominance", "Rookie", "Prospect", "Autographs", "Variation",
+        }
+        candidates = [word for word in words if word not in stop_words and not re.fullmatch(r"[IVX]+", word)]
+        return " ".join(candidates[-2:]).strip() if len(candidates) >= 2 else ""
+
+    def open_unassigned_players_dialog(self) -> None:
+        entries = self._load_unassigned_players()
+        popup = tk.Toplevel(self)
+        popup.title("Unassigned Players")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.geometry("980x560")
+        popup.minsize(860, 480)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(16, 14))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Unassigned Players", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, columnspan=4, sticky="w")
+        ttk.Label(frame, text="Search the player, choose a category, then save to teach assignment matching.", style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(2, 12))
+
+        tree = ttk.Treeview(frame, columns=("player", "count", "last_seen", "title"), show="headings", selectmode="browse")
+        headings = {"player": "Player", "count": "Count", "last_seen": "Last Seen", "title": "Sample Card"}
+        widths = {"player": 180, "count": 60, "last_seen": 150, "title": 510}
+        for column in headings:
+            tree.heading(column, text=headings[column], anchor=tk.W)
+            tree.column(column, width=widths[column], minwidth=50, stretch=column == "title")
+        tree.grid(row=2, column=0, columnspan=4, sticky="nsew")
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.grid(row=2, column=4, sticky="ns")
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        player_var = tk.StringVar()
+        category_var = tk.StringVar(value=ASSIGNMENT_CATEGORY_OPTIONS[0])
+        selected_key = tk.StringVar()
+        ttk.Label(frame, text="Player", style="Panel.TLabel").grid(row=3, column=0, sticky="w", pady=(12, 4))
+        player_entry = ttk.Entry(frame, textvariable=player_var)
+        player_entry.grid(row=4, column=0, sticky="ew", padx=(0, 10))
+        ttk.Label(frame, text="Category", style="Panel.TLabel").grid(row=3, column=1, sticky="w", pady=(12, 4))
+        category_combo = ttk.Combobox(frame, textvariable=category_var, values=ASSIGNMENT_CATEGORY_OPTIONS, state="readonly", width=18)
+        category_combo.grid(row=4, column=1, sticky="ew", padx=(0, 10))
+
+        entry_by_iid: dict[str, dict[str, object]] = {}
+
+        def refresh_tree() -> None:
+            tree.delete(*tree.get_children())
+            entry_by_iid.clear()
+            latest = self._load_unassigned_players()
+            for key, entry in sorted(latest.items(), key=lambda item: str(item[1].get("last_seen") or ""), reverse=True):
+                iid = str(key)
+                entry_by_iid[iid] = entry
+                tree.insert("", tk.END, iid=iid, values=(
+                    entry.get("player") or "",
+                    entry.get("count") or 0,
+                    entry.get("last_seen") or "",
+                    entry.get("last_title") or "",
+                ))
+
+        def select_entry(_event=None) -> None:
+            selected = tree.selection()
+            if not selected:
+                return
+            iid = selected[0]
+            selected_key.set(iid)
+            entry = entry_by_iid.get(iid, {})
+            player_var.set(str(entry.get("player") or ""))
+
+        def search_selected() -> None:
+            key = selected_key.get()
+            entry = entry_by_iid.get(key, {})
+            query = " ".join(part for part in (player_var.get().strip(), "sports cards", str(entry.get("last_title") or "")) if part)
+            if not query.strip():
+                return
+            webbrowser.open(f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}")
+
+        def save_mapping() -> None:
+            player = player_var.get().strip()
+            category = category_var.get().strip()
+            key = selected_key.get()
+            if not player or not category or not key:
+                messagebox.showinfo("Unassigned player", "Choose an entry, enter the player name, and choose a category.")
+                return
+            self.save_player_category_override(player, category, key)
+            refresh_tree()
+
+        def remove_entry() -> None:
+            key = selected_key.get()
+            if not key:
+                return
+            with shared_lock(CARD_PIPELINE_DIR, "unassigned-players", self.lucas_identity):
+                latest = self._load_unassigned_players()
+                latest.pop(key, None)
+                self._save_unassigned_players(latest)
+            selected_key.set("")
+            player_var.set("")
+            refresh_tree()
+
+        tree.bind("<<TreeviewSelect>>", select_entry)
+        ttk.Button(frame, text="Web Search", command=search_selected, style="Soft.TButton").grid(row=4, column=2, sticky="ew", padx=(0, 10))
+        ttk.Button(frame, text="Save Category", command=save_mapping, style="Primary.TButton").grid(row=4, column=3, sticky="ew")
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=5, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Remove", command=remove_entry, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT)
+        frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(3, weight=1)
+        frame.rowconfigure(2, weight=1)
+        refresh_tree()
+        if tree.get_children():
+            first = tree.get_children()[0]
+            tree.selection_set(first)
+            tree.focus(first)
+            select_entry()
+
+    def save_player_category_override(self, player: str, category: str, unassigned_key: str = "") -> None:
+        with shared_lock(CARD_PIPELINE_DIR, "assignment-player-overrides", self.lucas_identity):
+            try:
+                payload = json.loads(PLAYER_OVERRIDES_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                payload = {}
+            players = payload.get("players") if isinstance(payload, dict) else {}
+            if not isinstance(players, dict):
+                players = {}
+            players[player] = {"sport": category, "displayName": player}
+            payload = {"players": players}
+            PLAYER_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(PLAYER_OVERRIDES_PATH, payload)
+        assignment_engine.add_player_sport_hint(player, category, display_name=player)
+        self.assignment_engine = AssignmentEngine.load()
+        if unassigned_key:
+            with shared_lock(CARD_PIPELINE_DIR, "unassigned-players", self.lucas_identity):
+                entries = self._load_unassigned_players()
+                entries.pop(unassigned_key, None)
+                self._save_unassigned_players(entries)
+        self.assignment_config_status.set(self._assignment_config_status())
+        self._schedule_assignment_recommendations(delay_ms=50)
+        self.status_var.set(f"Saved {player} as {category}. Assignment will recalculate.")
 
     def _queue_assignment_recommendations(self) -> None:
         rows = [*self.state.rows, *self.review_rows]
@@ -3171,6 +3407,7 @@ class CardPipelineApp(tk.Tk):
         }
         filled = 0
         comp_rows_updated = False
+        unresolved_rows: list[WorkbookRow] = []
         state_row_ids = {id(row) for row in self.state.rows}
         for row in [*self.state.rows, *self.review_rows]:
             company, payout = results.get(id(row), ("", None))
@@ -3180,6 +3417,9 @@ class CardPipelineApp(tk.Tk):
                 filled += 1
                 if id(row) in state_row_ids:
                     comp_rows_updated = True
+            else:
+                unresolved_rows.append(row)
+        self._record_unassigned_players(unresolved_rows)
         if comp_rows_updated:
             self.comp_output_saved = False
         total = int(payload.get("total") or 0)
@@ -3208,6 +3448,7 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(f"Assignment recommendations failed: {error}")
 
     def reload_assignment_rules(self) -> None:
+        self._load_player_overrides()
         self.assignment_engine = AssignmentEngine.load()
         self._ensure_company_sheet_folders()
         self.assignment_config_status.set(self._assignment_config_status())
