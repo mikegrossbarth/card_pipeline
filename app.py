@@ -1624,21 +1624,21 @@ class CardPipelineApp(tk.Tk):
 
     def _bind_person_autocomplete(self, combo: ttk.Combobox, refresh_callback=None) -> None:
         combo["values"] = self._known_assigned_people()
+        combo.configure(postcommand=lambda widget=combo: self._refresh_person_combo_widget(widget))
+        combo.bind("<FocusIn>", lambda _event, widget=combo: self._refresh_person_combo_widget(widget), add="+")
         combo.bind("<KeyRelease>", lambda event, widget=combo: self._filter_person_combo(widget, event, refresh_callback=refresh_callback), add="+")
+
+    def _refresh_person_combo_widget(self, combo: ttk.Combobox) -> None:
+        typed = combo.get().strip().lower()
+        people = self._known_assigned_people()
+        if typed:
+            people = [person for person in people if typed in person.lower()]
+        combo["values"] = people
 
     def _filter_person_combo(self, combo: ttk.Combobox, event, refresh_callback=None) -> None:
         if event.keysym in {"Up", "Down", "Left", "Right", "Return", "KP_Enter", "Escape", "Tab"}:
             return
-        typed = combo.get()
-        people = self._known_assigned_people()
-        if typed.strip():
-            people = [person for person in people if typed.strip().lower() in person.lower()]
-        combo["values"] = people
-        if people:
-            try:
-                combo.event_generate("<Down>")
-            except tk.TclError:
-                pass
+        self._refresh_person_combo_widget(combo)
         if refresh_callback:
             refresh_callback()
 
