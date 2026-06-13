@@ -551,7 +551,7 @@ def company_assignment_value(row: Any, company: AssignmentCompany) -> float | No
     comps = to_number(getattr(row, "card_ladder_comps_average", None))
     cl_value = to_number(getattr(row, "card_ladder_value", None))
     if company.value_source == "card_ladder":
-        return cl_value if cl_value is not None else comps
+        return cl_value
     return comps if comps is not None else cl_value
 
 

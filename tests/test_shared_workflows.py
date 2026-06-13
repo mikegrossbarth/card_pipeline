@@ -291,6 +291,41 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(recommendation.company, "CL Buyer")
         self.assertEqual(recommendation.payout, 135)
 
+    def test_card_ladder_value_source_rejects_company_when_cl_missing(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="5",
+            grader="PSA",
+            card_title="2020 Panini Prizm Patrick Mahomes PSA 10",
+            card_ladder_comps_average=100,
+            card_ladder_value=None,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Comps Buyer",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("football", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 0.9, "NFL")],
+                    value_source="comps",
+                ),
+                assignment_engine.AssignmentCompany(
+                    "CL Required Buyer",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("football", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 1.0, "NFL")],
+                    value_source="card_ladder",
+                ),
+            ]
+        )
+
+        recommendation = engine.recommend(row)
+        decisions = {decision.company: decision for decision in engine.evaluate(row)}
+
+        self.assertEqual(recommendation.company, "Comps Buyer")
+        self.assertEqual(recommendation.payout, 90)
+        self.assertFalse(decisions["CL Required Buyer"].accepted)
+        self.assertIsNone(decisions["CL Required Buyer"].source_value)
+        self.assertIn("missing", decisions["CL Required Buyer"].reason)
+
     def test_goat_payout_category_uses_payout_range_not_rule_goat_range(self) -> None:
         row = WorkbookRow(
             excel_row=2,

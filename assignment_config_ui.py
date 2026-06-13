@@ -156,7 +156,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         ttk.Entry(details, textvariable=self.company_name, style="Assign.TEntry").grid(row=0, column=1, sticky="ew")
         ttk.Checkbutton(
             details,
-            text="Use Card Ladder value instead of Comps",
+            text="Require Card Ladder value instead of Comps",
             variable=self.use_card_ladder_value,
             style="Assign.TCheckbutton",
         ).grid(row=1, column=1, sticky=tk.W, pady=(8, 0))
