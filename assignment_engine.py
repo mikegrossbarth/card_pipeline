@@ -49,6 +49,7 @@ PLAYER_SPORT_HINTS = {
     "ja morant": "basketball",
     "jayson tatum": "basketball",
     "shai gilgeous alexander": "basketball",
+    "kemba walker": "basketball",
     "lebron james": "basketball",
     "michael jordan": "basketball",
     "kobe bryant": "basketball",
@@ -1505,7 +1506,8 @@ def _find_known_player_sports_cached(raw: str) -> tuple[tuple[tuple[str, str], .
     for player in player_keys:
         key = clean_rule_text(player)
         compact_key = compact_name_key(player)
-        if f" {key} " not in haystack and (not compact_key or compact_key not in compact_haystack):
+        compact_match_allowed = bool(compact_key and len(compact_key) >= 6)
+        if f" {key} " not in haystack and not (compact_match_allowed and compact_key in compact_haystack):
             continue
         if any(player_name_contains(existing["key"], key) for existing in exact_matches):
             continue

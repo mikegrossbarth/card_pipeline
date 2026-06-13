@@ -218,6 +218,14 @@ class GoogleSheetCacheTests(unittest.TestCase):
 
 
 class AssignmentEngineTests(unittest.TestCase):
+    def test_kemba_walker_title_infers_basketball_without_short_name_false_matches(self) -> None:
+        title = "2019 Panini Contenders Optic Uniformity 21 Kemba Walker PSA 10"
+        matches = assignment_engine.find_known_player_sports(title)
+
+        self.assertTrue(any(match["key"] == "kemba walker" and match["sport"] == "basketball" for match in matches))
+        self.assertFalse(any(match["sport"] in {"disney", "marvel", "star wars"} for match in matches))
+        self.assertEqual(assignment_engine.infer_sport(title, "Kemba Walker"), "basketball")
+
     def test_recommendation_chooses_highest_payout_among_accepted_companies(self) -> None:
         row = WorkbookRow(
             excel_row=2,
