@@ -18,6 +18,7 @@ if str(PHOTO_APP) not in sys.path:
     sys.path.insert(0, str(PHOTO_APP))
 
 import app
+import assignment_engine
 import google_sheets_import
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_working_sheet
@@ -214,6 +215,103 @@ class GoogleSheetCacheTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.ASSIGNMENT_CONFIG_PATH = old_config
+
+
+class AssignmentEngineTests(unittest.TestCase):
+    def test_recommendation_chooses_highest_payout_among_accepted_companies(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="1",
+            grader="PSA",
+            card_title="2019 Panini Prizm Stephen Curry Silver PSA 10",
+            card_ladder_comps_average=100,
+            card_ladder_value=150,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Lower",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("basketball", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 0.9, "NBA")],
+                ),
+                assignment_engine.AssignmentCompany(
+                    "Higher",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("basketball", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 0.95, "NBA")],
+                ),
+                assignment_engine.AssignmentCompany(
+                    "Rejected",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("baseball", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 1.0, "MLB")],
+                ),
+            ]
+        )
+
+        recommendation = engine.recommend(row)
+        decisions = {decision.company: decision for decision in engine.evaluate(row)}
+
+        self.assertEqual(recommendation.company, "Higher")
+        self.assertEqual(recommendation.payout, 95)
+        self.assertTrue(decisions["Lower"].accepted)
+        self.assertFalse(decisions["Rejected"].accepted)
+
+    def test_goat_payout_category_uses_payout_range_not_rule_goat_range(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="2",
+            grader="PSA",
+            card_title="2019 Panini Mosaic Stephen Curry Green Mosaic PSA 10",
+            card_ladder_comps_average=85.61,
+        )
+        rules = assignment_engine.CompanyRules(
+            ranges=[assignment_engine.AssignmentRule("basketball", 10, 500)],
+            goat_players={"stephen curry"},
+            goat_ranges=[assignment_engine.AssignmentRule("Stephen Curry", 100, 7500)],
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Goat Buyer",
+                    rules,
+                    [assignment_engine.PayoutTier(50, 99, 0.95, "GOATS")],
+                )
+            ]
+        )
+
+        recommendation = engine.recommend(row)
+
+        self.assertEqual(recommendation.company, "Goat Buyer")
+        self.assertEqual(recommendation.payout, 81.33)
+
+    def test_accepted_company_without_matching_payout_cannot_win(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="3",
+            grader="PSA",
+            card_title="2022 Panini Prizm Patrick Mahomes PSA 10",
+            card_ladder_comps_average=80,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "No Payout Match",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("football", 10, 500)]),
+                    [assignment_engine.PayoutTier(100, 500, 1.0, "NFL")],
+                ),
+                assignment_engine.AssignmentCompany(
+                    "Valid Payout",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("football", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 99, 0.9, "NFL")],
+                ),
+            ]
+        )
+
+        recommendation = engine.recommend(row)
+        decisions = {decision.company: decision for decision in engine.evaluate(row)}
+
+        self.assertEqual(recommendation.company, "Valid Payout")
+        self.assertIsNone(decisions["No Payout Match"].payout)
+        self.assertIn("no payout tier", decisions["No Payout Match"].reason)
 
 
 class AppSharedWorkflowLogicTests(unittest.TestCase):

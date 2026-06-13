@@ -449,6 +449,14 @@ class AssignmentRecommendation:
     source_value: float | None = None
 
 
+@dataclass
+class AssignmentDecision:
+    company: str
+    accepted: bool
+    payout: float | None = None
+    reason: str = ""
+
+
 class AssignmentEngine:
     def __init__(self, companies: list[AssignmentCompany] | None = None, error: str = "") -> None:
         self.companies = companies or []
@@ -486,14 +494,33 @@ class AssignmentEngine:
 
         card_text = card_row_text(row, source_value)
         candidates: list[AssignmentRecommendation] = []
+        for decision in self.evaluate(row):
+            if not decision.accepted or decision.payout is None:
+                continue
+            candidates.append(AssignmentRecommendation(decision.company, round(decision.payout, 2), source_value))
+        return max(candidates, key=lambda item: item.payout or 0) if candidates else AssignmentRecommendation(source_value=source_value)
+
+    def evaluate(self, row: Any) -> list[AssignmentDecision]:
+        source_value = assignment_value(row)
+        if source_value is None:
+            return [
+                AssignmentDecision(company.name, False, reason="missing comp/card ladder value")
+                for company in self.companies
+            ]
+
+        card_text = card_row_text(row, source_value)
+        grader = str(getattr(row, "grader", "") or "")
+        decisions: list[AssignmentDecision] = []
         for company in self.companies:
-            if not company_accepts(company.rules, card_text, source_value, str(getattr(row, "grader", "") or "")):
+            if not company_accepts(company.rules, card_text, source_value, grader):
+                decisions.append(AssignmentDecision(company.name, False, reason="card does not match company rules"))
                 continue
             payout = payout_for_value(company.payout_tiers, source_value, card_text, company.rules)
             if payout is None:
+                decisions.append(AssignmentDecision(company.name, True, None, "accepted, but no payout tier matched"))
                 continue
-            candidates.append(AssignmentRecommendation(company.name, round(payout, 2), source_value))
-        return max(candidates, key=lambda item: item.payout or 0) if candidates else AssignmentRecommendation(source_value=source_value)
+            decisions.append(AssignmentDecision(company.name, True, payout, "accepted and payout tier matched"))
+        return decisions
 
 
 def load_company(entry: dict[str, Any], base_dir: Path) -> AssignmentCompany | None:
@@ -1389,20 +1416,24 @@ def payout_category_matches(category: str, haystack: str, rules: CompanyRules | 
     if not expected:
         return True
     parsed_value = parse_card_for_matching(haystack)
-    if expected in {"goats", "8 main goats"}:
-        goat_players = rules.goat_players if rules else set()
-        if not goat_players or value is None:
+    if is_goat_payout_category(category):
+        goat_players = (rules.goat_players if rules and rules.goat_players else set()) or GOAT_PAYOUT_PLAYERS
+        if not goat_players:
             return False
-        goat_haystack = clean_text(haystack)
         return any(
             player_matches_value(player, parsed_value)
             for player in goat_players
-        ) and any(rule_matches(rule, goat_haystack, value) for rule in rules.goat_ranges)
+        )
     return (
         matcher_matches_text(category, haystack)
         or player_matches_value(category, parsed_value)
         or sport_label_matches_value(category, parsed_value, haystack)
     )
+
+
+def is_goat_payout_category(category: Any) -> bool:
+    text = clean_rule_text(category)
+    return bool(re.search(r"\bgoats?\b", text))
 
 
 def parse_card_for_matching(text: str) -> dict[str, Any]:
