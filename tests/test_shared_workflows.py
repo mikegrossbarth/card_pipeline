@@ -438,6 +438,44 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.UNASSIGNED_PLAYERS_PATH = old_unassigned
 
+    def test_unassigned_auto_categorize_uses_web_text_and_saves_override(self) -> None:
+        class Dummy:
+            _load_unassigned_players = app.CardPipelineApp._load_unassigned_players
+            _save_unassigned_players = app.CardPipelineApp._save_unassigned_players
+            _auto_categorize_unassigned_players = app.CardPipelineApp._auto_categorize_unassigned_players
+            _search_unassigned_player_category = app.CardPipelineApp._search_unassigned_player_category
+            _infer_category_from_web_text = app.CardPipelineApp._infer_category_from_web_text
+            _write_player_category_override = app.CardPipelineApp._write_player_category_override
+            def _web_search_text(self, _query: str) -> str:
+                return "Example Player is an NBA basketball guard who appears on Panini basketball cards."
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_unassigned = app.UNASSIGNED_PLAYERS_PATH
+            old_overrides = app.PLAYER_OVERRIDES_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.UNASSIGNED_PLAYERS_PATH = Path(tmp) / "unassigned_players.json"
+            app.PLAYER_OVERRIDES_PATH = Path(tmp) / "assignment_player_overrides.json"
+            dummy = Dummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            try:
+                dummy._save_unassigned_players({
+                    "example player": {
+                        "player": "Example Player",
+                        "last_title": "2024 Panini Prizm 12 Example Player PSA 10",
+                    }
+                })
+                result = dummy._auto_categorize_unassigned_players()
+                overrides = json.loads(app.PLAYER_OVERRIDES_PATH.read_text(encoding="utf-8"))
+                remaining = json.loads(app.UNASSIGNED_PLAYERS_PATH.read_text(encoding="utf-8"))["entries"]
+                self.assertEqual(result["resolved"], 1)
+                self.assertEqual(overrides["players"]["Example Player"]["sport"], "basketball")
+                self.assertEqual(remaining, {})
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.UNASSIGNED_PLAYERS_PATH = old_unassigned
+                app.PLAYER_OVERRIDES_PATH = old_overrides
+
     def test_sheet_marker_save_merges_latest_and_honors_tombstones(self) -> None:
         class MarkerDummy:
             _load_sheet_markers = app.CardPipelineApp._load_sheet_markers

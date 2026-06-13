@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import queue
 import base64
 import json
@@ -10,6 +11,7 @@ import sys
 import threading
 import tkinter as tk
 import urllib.parse
+import urllib.request
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -126,6 +128,21 @@ ASSIGNMENT_CATEGORY_OPTIONS = (
     "star wars",
     "ufc",
 )
+ASSIGNMENT_CATEGORY_WEB_SIGNALS = {
+    "basketball": ("basketball", "nba", "wnba", "ncaa basketball", "point guard", "shooting guard", "small forward", "power forward", "center"),
+    "football": ("football", "nfl", "quarterback", "running back", "wide receiver", "linebacker", "cornerback", "defensive end"),
+    "baseball": ("baseball", "mlb", "pitcher", "catcher", "shortstop", "outfielder", "first baseman", "second baseman", "third baseman"),
+    "soccer": ("soccer", "footballer", "futbol", "fifa", "uefa", "premier league", "la liga", "serie a", "bundesliga"),
+    "hockey": ("hockey", "nhl", "goaltender", "defenceman", "defenseman", "left wing", "right wing"),
+    "pokemon": ("pokemon", "pokémon", "trading card game", "tcg", "pokédex", "pokedex"),
+    "one piece": ("one piece", "straw hat", "manga", "anime", "pirate crew"),
+    "wwe": ("wwe", "wwf", "professional wrestler", "pro wrestler", "wrestling"),
+    "f1": ("formula 1", "formula one", "f1 driver", "grand prix", "racing driver", "motorsport"),
+    "marvel": ("marvel", "marvel comics", "marvel cinematic", "superhero", "supervillain"),
+    "disney": ("disney", "pixar", "disney character", "animated character"),
+    "star wars": ("star wars", "jedi", "sith", "galactic", "lucasfilm"),
+    "ufc": ("ufc", "mma", "mixed martial artist", "mixed martial arts", "ultimate fighting championship"),
+}
 
 
 def load_app_settings() -> dict[str, object]:
@@ -3225,6 +3242,85 @@ class CardPipelineApp(tk.Tk):
         candidates = [word for word in words if word not in stop_words and not re.fullmatch(r"[IVX]+", word)]
         return " ".join(candidates[-2:]).strip() if len(candidates) >= 2 else ""
 
+    def _auto_categorize_unassigned_players(self) -> dict[str, object]:
+        entries = self._load_unassigned_players()
+        resolved: list[tuple[str, str, str, str]] = []
+        unresolved: list[str] = []
+        errors: list[str] = []
+        for key, entry in list(entries.items()):
+            player = str(entry.get("player") or "").strip()
+            if not player:
+                unresolved.append(str(key))
+                continue
+            try:
+                category, evidence = self._search_unassigned_player_category(entry)
+            except Exception as error:
+                errors.append(f"{player}: {error}")
+                continue
+            if category:
+                resolved.append((str(key), player, category, evidence))
+            else:
+                unresolved.append(str(key))
+        if resolved:
+            for _key, player, category, _evidence in resolved:
+                self._write_player_category_override(player, category)
+            with shared_lock(CARD_PIPELINE_DIR, "unassigned-players", self.lucas_identity):
+                latest = self._load_unassigned_players()
+                for key, _player, _category, _evidence in resolved:
+                    latest.pop(key, None)
+                self._save_unassigned_players(latest)
+            self.assignment_engine = AssignmentEngine.load()
+        return {
+            "resolved": len(resolved),
+            "unresolved": len(unresolved),
+            "errors": errors,
+            "details": resolved,
+        }
+
+    def _search_unassigned_player_category(self, entry: dict[str, object]) -> tuple[str, str]:
+        player = str(entry.get("player") or "").strip()
+        title = str(entry.get("last_title") or "").strip()
+        query = " ".join(part for part in (player, title, "sports cards category") if part)
+        text = " ".join(part for part in (player, title, self._web_search_text(query)) if part)
+        return self._infer_category_from_web_text(text)
+
+    def _web_search_text(self, query: str) -> str:
+        url = f"https://duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LUCAS/1.0",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=12) as response:
+            raw = response.read(200000).decode("utf-8", errors="replace")
+        text = re.sub(r"<script\b.*?</script>|<style\b.*?</style>", " ", raw, flags=re.I | re.S)
+        text = re.sub(r"<[^>]+>", " ", text)
+        return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+    def _infer_category_from_web_text(self, text: str) -> tuple[str, str]:
+        haystack = re.sub(r"\s+", " ", str(text or "").lower())
+        scores: dict[str, int] = {}
+        for category, terms in ASSIGNMENT_CATEGORY_WEB_SIGNALS.items():
+            score = 0
+            for term in terms:
+                cleaned = str(term).lower()
+                matches = len(re.findall(rf"\b{re.escape(cleaned)}\b", haystack))
+                if not matches:
+                    continue
+                score += matches * (4 if cleaned == category else 2 if " " in cleaned else 1)
+            if score:
+                scores[category] = score
+        if not scores:
+            return "", ""
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        best_category, best_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0
+        if best_score < 2 or (second_score and best_score < second_score + 2):
+            return "", ""
+        return best_category, f"score {best_score}"
+
     def open_unassigned_players_dialog(self) -> None:
         entries = self._load_unassigned_players()
         popup = tk.Toplevel(self)
@@ -3316,11 +3412,42 @@ class CardPipelineApp(tk.Tk):
             player_var.set("")
             refresh_tree()
 
+        def auto_categorize_all() -> None:
+            auto_button.configure(state=tk.DISABLED)
+            self.status_var.set("Auto-categorizing unassigned players...")
+
+            def worker() -> None:
+                try:
+                    result = self._auto_categorize_unassigned_players()
+                except Exception as error:
+                    self.after(0, lambda: finish_auto({"resolved": 0, "unresolved": 0, "errors": [str(error)]}))
+                    return
+                self.after(0, lambda: finish_auto(result))
+
+            def finish_auto(result: dict[str, object]) -> None:
+                auto_button.configure(state=tk.NORMAL)
+                refresh_tree()
+                resolved = int(result.get("resolved") or 0)
+                unresolved = int(result.get("unresolved") or 0)
+                errors = list(result.get("errors") or [])
+                self.assignment_config_status.set(self._assignment_config_status())
+                if resolved:
+                    self._schedule_assignment_recommendations(delay_ms=50)
+                if errors:
+                    self.status_var.set(f"Auto-categorized {resolved}; {unresolved} left; {len(errors)} search issue(s).")
+                    messagebox.showwarning("Auto Categorize", "\n".join([f"Resolved: {resolved}", f"Left: {unresolved}", "", "Issues:", *[str(error) for error in errors[:8]]]))
+                else:
+                    self.status_var.set(f"Auto-categorized {resolved} unassigned player(s); {unresolved} left.")
+
+            threading.Thread(target=worker, daemon=True).start()
+
         tree.bind("<<TreeviewSelect>>", select_entry)
         ttk.Button(frame, text="Web Search", command=search_selected, style="Soft.TButton").grid(row=4, column=2, sticky="ew", padx=(0, 10))
         ttk.Button(frame, text="Save Category", command=save_mapping, style="Primary.TButton").grid(row=4, column=3, sticky="ew")
         buttons = ttk.Frame(frame, style="Panel.TFrame")
         buttons.grid(row=5, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        auto_button = ttk.Button(buttons, text="Auto Categorize All", command=auto_categorize_all, style="Primary.TButton")
+        auto_button.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(buttons, text="Remove", command=remove_entry, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(buttons, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT)
         frame.columnconfigure(0, weight=1)
@@ -3334,6 +3461,18 @@ class CardPipelineApp(tk.Tk):
             select_entry()
 
     def save_player_category_override(self, player: str, category: str, unassigned_key: str = "") -> None:
+        self._write_player_category_override(player, category)
+        self.assignment_engine = AssignmentEngine.load()
+        if unassigned_key:
+            with shared_lock(CARD_PIPELINE_DIR, "unassigned-players", self.lucas_identity):
+                entries = self._load_unassigned_players()
+                entries.pop(unassigned_key, None)
+                self._save_unassigned_players(entries)
+        self.assignment_config_status.set(self._assignment_config_status())
+        self._schedule_assignment_recommendations(delay_ms=50)
+        self.status_var.set(f"Saved {player} as {category}. Assignment will recalculate.")
+
+    def _write_player_category_override(self, player: str, category: str) -> None:
         with shared_lock(CARD_PIPELINE_DIR, "assignment-player-overrides", self.lucas_identity):
             try:
                 payload = json.loads(PLAYER_OVERRIDES_PATH.read_text(encoding="utf-8"))
@@ -3347,15 +3486,6 @@ class CardPipelineApp(tk.Tk):
             PLAYER_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_json(PLAYER_OVERRIDES_PATH, payload)
         assignment_engine.add_player_sport_hint(player, category, display_name=player)
-        self.assignment_engine = AssignmentEngine.load()
-        if unassigned_key:
-            with shared_lock(CARD_PIPELINE_DIR, "unassigned-players", self.lucas_identity):
-                entries = self._load_unassigned_players()
-                entries.pop(unassigned_key, None)
-                self._save_unassigned_players(entries)
-        self.assignment_config_status.set(self._assignment_config_status())
-        self._schedule_assignment_recommendations(delay_ms=50)
-        self.status_var.set(f"Saved {player} as {category}. Assignment will recalculate.")
 
     def _queue_assignment_recommendations(self) -> None:
         rows = [*self.state.rows, *self.review_rows]
