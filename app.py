@@ -40,7 +40,7 @@ from workbook_io import WorkbookRow  # noqa: E402
 import assignment_engine  # noqa: E402
 from assignment_engine import AssignmentEngine  # noqa: E402
 from assignment_engine import CONFIG_PATH as ASSIGNMENT_CONFIG_PATH  # noqa: E402
-from assignment_engine import gsheet_shortcut_url, load_gsheet_shortcut, normalize_source_value, parse_card_for_matching, path_from_source_value, safe_filename  # noqa: E402
+from assignment_engine import gsheet_shortcut_url, load_gsheet_shortcut, normalize_source_value, path_from_source_value, safe_filename  # noqa: E402
 from assignment_config_ui import open_assignment_rules_dialog  # noqa: E402
 from google_sheets_import import export_google_sheet_to_xlsx  # noqa: E402
 from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
@@ -3197,9 +3197,6 @@ class CardPipelineApp(tk.Tk):
         player_guess = self._guess_unassigned_player(row)
         if not player_guess:
             return
-        parsed = parse_card_for_matching(title)
-        if parsed.get("sport") and parsed.get("playerName"):
-            return
         key = re.sub(r"[^a-z0-9]+", " ", player_guess.lower()).strip() or re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
         if not key:
             return
@@ -3230,6 +3227,7 @@ class CardPipelineApp(tk.Tk):
             return ""
         grader_pattern = r"\b(?:PSA|BGS|SGC|CGC)\b"
         before_grader = re.split(grader_pattern, title, flags=re.I)[0].strip()
+        before_grader = self._strip_card_variant_tail(before_grader)
         number_match = re.search(r"\b\d+[A-Za-z]?\s+([A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,3})\s*$", before_grader)
         if number_match:
             return number_match.group(1).strip()
@@ -3241,6 +3239,41 @@ class CardPipelineApp(tk.Tk):
         }
         candidates = [word for word in words if word not in stop_words and not re.fullmatch(r"[IVX]+", word)]
         return " ".join(candidates[-2:]).strip() if len(candidates) >= 2 else ""
+
+    def _strip_card_variant_tail(self, value: str) -> str:
+        text = str(value or "").strip()
+        tail_terms = (
+            "chrome-refractor",
+            "chrome refractor",
+            "refractor",
+            "silver",
+            "prizm",
+            "mosaic",
+            "green",
+            "blue",
+            "red",
+            "gold",
+            "orange",
+            "purple",
+            "black",
+            "white",
+            "pink",
+            "aqua",
+            "teal",
+            "auto",
+            "autograph",
+            "rookie",
+        )
+        changed = True
+        while changed:
+            changed = False
+            for term in tail_terms:
+                pattern = rf"(?:[- ]+{re.escape(term)})$"
+                stripped = re.sub(pattern, "", text, flags=re.I).strip()
+                if stripped != text:
+                    text = stripped
+                    changed = True
+        return text
 
     def _auto_categorize_unassigned_players(self) -> dict[str, object]:
         entries = self._load_unassigned_players()

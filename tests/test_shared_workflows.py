@@ -422,6 +422,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _record_unassigned_player = app.CardPipelineApp._record_unassigned_player
             _append_unique_sample = app.CardPipelineApp._append_unique_sample
             _guess_unassigned_player = app.CardPipelineApp._guess_unassigned_player
+            _strip_card_variant_tail = app.CardPipelineApp._strip_card_variant_tail
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
@@ -442,6 +443,38 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 entries = json.loads(app.UNASSIGNED_PLAYERS_PATH.read_text(encoding="utf-8"))["entries"]
                 self.assertIn("jalen madeup", entries)
                 self.assertEqual(entries["jalen madeup"]["player"], "Jalen Madeup")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.UNASSIGNED_PLAYERS_PATH = old_unassigned
+
+    def test_unassigned_player_records_failed_assignment_even_with_wrong_partial_match(self) -> None:
+        class Dummy:
+            _load_unassigned_players = app.CardPipelineApp._load_unassigned_players
+            _save_unassigned_players = app.CardPipelineApp._save_unassigned_players
+            _record_unassigned_player = app.CardPipelineApp._record_unassigned_player
+            _append_unique_sample = app.CardPipelineApp._append_unique_sample
+            _guess_unassigned_player = app.CardPipelineApp._guess_unassigned_player
+            _strip_card_variant_tail = app.CardPipelineApp._strip_card_variant_tail
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_unassigned = app.UNASSIGNED_PLAYERS_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.UNASSIGNED_PLAYERS_PATH = Path(tmp) / "unassigned_players.json"
+            dummy = Dummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            row = WorkbookRow(
+                excel_row=2,
+                cert_number="",
+                grader="PSA",
+                card_title="2022 Bowman Npb 82 Shintaro Fujinami Chrome-Refractor PSA 10",
+                card_ladder_comps_average=25,
+            )
+            try:
+                dummy._record_unassigned_player(row)
+                entries = json.loads(app.UNASSIGNED_PLAYERS_PATH.read_text(encoding="utf-8"))["entries"]
+                self.assertIn("shintaro fujinami", entries)
+                self.assertEqual(entries["shintaro fujinami"]["player"], "Shintaro Fujinami")
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.UNASSIGNED_PLAYERS_PATH = old_unassigned
