@@ -234,6 +234,26 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertFalse(any(match["key"] == "tatsumi fujinami" and match["sport"] == "wwe" for match in matches))
         self.assertEqual(assignment_engine.infer_sport(title, "Shintaro Fujinami"), "baseball")
 
+    def test_sports_titles_do_not_match_single_word_entertainment_characters(self) -> None:
+        examples = {
+            "2023 Topps Chrome Platinum Anniversary Autographs Yd Yusniel Diaz PSA 9": ("Yusniel Diaz", "baseball"),
+            "2021 Bowman Chrome Futurist Jd Jasson Dominguez Aqua Refractor PSA 10": ("Jasson Dominguez", "baseball"),
+            "2023 Bowman Chrome Prospect Autographs Cparo Ricardo Olivar Speckle Refractor PSA 10": ("Ricardo Olivar", "baseball"),
+            "1995 Zenith 111 Chipper Jones PSA 9": ("Chipper Jones", "baseball"),
+        }
+
+        for title, expected in examples.items():
+            with self.subTest(title=title):
+                parsed = assignment_engine.parse_card_for_matching(title)
+                self.assertEqual((parsed["playerName"], parsed["sport"]), expected)
+
+    def test_world_series_title_infers_baseball_without_false_character_match(self) -> None:
+        parsed = assignment_engine.parse_card_for_matching("1990 Score #702 World Series Game 3 PSA 9")
+
+        self.assertEqual(parsed["sport"], "baseball")
+        self.assertEqual(parsed["playerName"], "")
+        self.assertNotEqual(parsed["sport"], "disney")
+
     def test_player_sport_overrides_teach_unknown_players(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "overrides.json"
@@ -478,6 +498,62 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.UNASSIGNED_PLAYERS_PATH = old_unassigned
+
+    def test_failed_assignment_is_labeled_nobody_takes_and_recorded(self) -> None:
+        class Dummy:
+            _apply_recommendations = app.CardPipelineApp._apply_recommendations
+            _load_unassigned_players = app.CardPipelineApp._load_unassigned_players
+            _save_unassigned_players = app.CardPipelineApp._save_unassigned_players
+            _record_unassigned_player = app.CardPipelineApp._record_unassigned_player
+            _append_unique_sample = app.CardPipelineApp._append_unique_sample
+            _guess_unassigned_player = app.CardPipelineApp._guess_unassigned_player
+            _strip_card_variant_tail = app.CardPipelineApp._strip_card_variant_tail
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_unassigned = app.UNASSIGNED_PLAYERS_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.UNASSIGNED_PLAYERS_PATH = Path(tmp) / "unassigned_players.json"
+            row = WorkbookRow(
+                excel_row=2,
+                cert_number="",
+                grader="PSA",
+                card_title="2023 Topps Chrome Platinum Anniversary Autographs Yd Yusniel Diaz PSA 9",
+                card_ladder_comps_average=20,
+            )
+            dummy = Dummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.state = types.SimpleNamespace(rows=[row])
+            dummy.review_rows = []
+            dummy.assignment_engine = assignment_engine.AssignmentEngine(
+                [
+                    assignment_engine.AssignmentCompany(
+                        "Basketball Buyer",
+                        assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("basketball", 10, 500)]),
+                        [assignment_engine.PayoutTier(10, 500, 0.9, "NBA")],
+                    )
+                ]
+            )
+            try:
+                dummy._apply_recommendations()
+                self.assertEqual(row.best_company, app.NO_COMPANY_TAKES_LABEL)
+                self.assertIsNone(row.estimated_payout)
+                entries = json.loads(app.UNASSIGNED_PLAYERS_PATH.read_text(encoding="utf-8"))["entries"]
+                self.assertIn("yusniel diaz", entries)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.UNASSIGNED_PLAYERS_PATH = old_unassigned
+
+    def test_nobody_takes_is_not_an_assignable_company(self) -> None:
+        class Dummy:
+            _row_has_assignable_company = app.CardPipelineApp._row_has_assignable_company
+
+        dummy = Dummy()
+        nobody_row = WorkbookRow(excel_row=2, cert_number="", grader="PSA", card_title="Test Card", best_company=app.NO_COMPANY_TAKES_LABEL)
+        buyer_row = WorkbookRow(excel_row=3, cert_number="", grader="PSA", card_title="Test Card", best_company="Arena Club")
+
+        self.assertFalse(dummy._row_has_assignable_company(nobody_row))
+        self.assertTrue(dummy._row_has_assignable_company(buyer_row))
 
     def test_unassigned_auto_categorize_uses_web_text_and_saves_override(self) -> None:
         class Dummy:

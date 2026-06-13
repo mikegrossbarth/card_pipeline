@@ -113,6 +113,7 @@ COMP_STRATEGY_DISPLAY = {
 }
 COMP_SCOPE_EMPTY = "Empty Comps Only"
 COMP_SCOPE_ALL = "Recomp All"
+NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
 ASSIGNMENT_CATEGORY_OPTIONS = (
     "basketball",
     "football",
@@ -2760,7 +2761,7 @@ class CardPipelineApp(tk.Tk):
                         if row.company_pile and scan_to_cert(row.cert_number) in result.get("certs_marked", set())
                     ]
                     self._apply_recommendations_to_rows(company_rows, force=True)
-                    eligible_company_rows = [row for row in company_rows if str(row.best_company or "").strip()]
+                    eligible_company_rows = [row for row in company_rows if self._row_has_assignable_company(row)]
                     company_rows_missing_company = len(company_rows) - len(eligible_company_rows)
                     if eligible_company_rows:
                         company_result = append_company_sheet_rows(
@@ -2817,13 +2818,20 @@ class CardPipelineApp(tk.Tk):
                 continue
             recommendation = self.assignment_engine.recommend(row)
             if recommendation.payout is None:
-                if force:
-                    row.best_company = ""
-                    row.estimated_payout = None
                 self._record_unassigned_player(row)
+                if force:
+                    row.best_company = NO_COMPANY_TAKES_LABEL
+                    row.estimated_payout = None
+                elif not row.best_company:
+                    row.best_company = NO_COMPANY_TAKES_LABEL
+                    row.estimated_payout = None
                 continue
             row.best_company = recommendation.company
             row.estimated_payout = recommendation.payout
+
+    def _row_has_assignable_company(self, row: WorkbookRow) -> bool:
+        company = str(row.best_company or "").strip()
+        return bool(company) and company.upper() != NO_COMPANY_TAKES_LABEL
 
     def _ensure_company_sheet_folders(self) -> None:
         try:
@@ -3160,9 +3168,9 @@ class CardPipelineApp(tk.Tk):
         for row in [*self.state.rows, *self.review_rows]:
             recommendation = self.assignment_engine.recommend(row)
             if recommendation.payout is None:
-                row.best_company = ""
-                row.estimated_payout = None
                 self._record_unassigned_player(row)
+                row.best_company = NO_COMPANY_TAKES_LABEL
+                row.estimated_payout = None
                 continue
             row.best_company = recommendation.company
             row.estimated_payout = recommendation.payout
@@ -3187,7 +3195,8 @@ class CardPipelineApp(tk.Tk):
             self._record_unassigned_player(row)
 
     def _record_unassigned_player(self, row: WorkbookRow) -> None:
-        if row.estimated_payout is not None or row.best_company:
+        best_company = str(row.best_company or "").strip()
+        if row.estimated_payout is not None or (best_company and best_company.upper() != NO_COMPANY_TAKES_LABEL):
             return
         if row.card_ladder_comps_average is None and row.card_ladder_value is None:
             return
@@ -3643,13 +3652,15 @@ class CardPipelineApp(tk.Tk):
         state_row_ids = {id(row) for row in self.state.rows}
         for row in [*self.state.rows, *self.review_rows]:
             company, payout = results.get(id(row), ("", None))
-            row.best_company = company if payout is not None else ""
-            row.estimated_payout = payout if payout is not None else None
             if payout is not None:
+                row.best_company = company
+                row.estimated_payout = payout
                 filled += 1
                 if id(row) in state_row_ids:
                     comp_rows_updated = True
             else:
+                row.best_company = NO_COMPANY_TAKES_LABEL
+                row.estimated_payout = None
                 unresolved_rows.append(row)
         self._record_unassigned_players(unresolved_rows)
         if comp_rows_updated:

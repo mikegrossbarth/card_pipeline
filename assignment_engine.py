@@ -24,7 +24,7 @@ PLAYER_SPORT_DATA_PATH = ROOT / "assignment_player_sport_data.js"
 CATEGORY_ALIASES = {
     "football": ["football", "nfl"],
     "soccer": ["soccer", "futbol", "premier league", "uefa", "fifa"],
-    "baseball": ["baseball", "mlb"],
+    "baseball": ["baseball", "mlb", "world series"],
     "basketball": ["basketball", "b-ball", "bball", "nba"],
     "hockey": ["hockey", "nhl"],
     "wnba": ["wnba"],
@@ -36,6 +36,13 @@ CATEGORY_ALIASES = {
     "disney": ["disney"],
     "star wars": ["star wars", "starwars"],
     "ufc": ["ufc", "mma"],
+}
+SINGLE_TOKEN_CONTEXT_REQUIRED_CATEGORIES = {
+    "pokemon",
+    "one piece",
+    "marvel",
+    "disney",
+    "star wars",
 }
 PLAYER_SPORT_HINTS = {
     "victor wembanyama": "basketball",
@@ -97,6 +104,10 @@ PLAYER_SPORT_HINTS = {
     "clayton kershaw": "baseball",
     "mookie betts": "baseball",
     "shintaro fujinami": "baseball",
+    "yusniel diaz": "baseball",
+    "jasson dominguez": "baseball",
+    "ricardo olivar": "baseball",
+    "chipper jones": "baseball",
     "ronald acuna jr": "baseball",
     "ronald acuna jr.": "baseball",
     "ronald acuña jr": "baseball",
@@ -1551,12 +1562,14 @@ def _find_known_player_sports_cached(raw: str) -> tuple[tuple[tuple[str, str], .
     for player in player_keys:
         key = clean_rule_text(player)
         compact_key = compact_name_key(player)
+        sport = PLAYER_SPORT_HINTS[player]
+        if not single_token_player_match_allowed(key, sport, haystack):
+            continue
         compact_match_allowed = bool(compact_key and len(compact_key) >= 6)
         if f" {key} " not in haystack and not (compact_match_allowed and compact_key in compact_haystack):
             continue
         if any(player_name_contains(existing["key"], key) for existing in exact_matches):
             continue
-        sport = PLAYER_SPORT_HINTS[player]
         unique_key = f"{key}:{sport}"
         if unique_key in seen:
             continue
@@ -1574,12 +1587,24 @@ def _find_known_player_sports_cached(raw: str) -> tuple[tuple[tuple[str, str], .
         if f" {token} " not in haystack:
             continue
         hint = PARTIAL_PLAYER_HINTS[token]
+        if not single_token_player_match_allowed(token, hint["sport"], haystack):
+            continue
         unique_key = f"{hint['key']}:{hint['sport']}"
         if unique_key in seen:
             continue
         seen.add(unique_key)
         partial_matches.append(dict(hint))
     return tuple(tuple(sorted(match.items())) for match in partial_matches)
+
+
+def single_token_player_match_allowed(key: str, sport: str, haystack: str) -> bool:
+    if len(str(key or "").split()) != 1:
+        return True
+    category = canonical_sport_label(sport) or clean_rule_text(sport)
+    if category not in SINGLE_TOKEN_CONTEXT_REQUIRED_CATEGORIES:
+        return True
+    aliases = CATEGORY_ALIASES.get(category, [category])
+    return any(text_contains_clean_term(haystack, alias) for alias in aliases)
 
 
 def find_known_player_teams(raw: str, sport_correlations: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
