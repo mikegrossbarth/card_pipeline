@@ -226,6 +226,14 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertFalse(any(match["sport"] in {"disney", "marvel", "star wars"} for match in matches))
         self.assertEqual(assignment_engine.infer_sport(title, "Kemba Walker"), "basketball")
 
+    def test_shintaro_fujinami_title_infers_baseball_not_wwe(self) -> None:
+        title = "2022 Bowman Npb 82 Shintaro Fujinami Chrome-Refractor PSA 10"
+        matches = assignment_engine.find_known_player_sports(title)
+
+        self.assertTrue(any(match["key"] == "shintaro fujinami" and match["sport"] == "baseball" for match in matches))
+        self.assertFalse(any(match["key"] == "tatsumi fujinami" and match["sport"] == "wwe" for match in matches))
+        self.assertEqual(assignment_engine.infer_sport(title, "Shintaro Fujinami"), "baseball")
+
     def test_player_sport_overrides_teach_unknown_players(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "overrides.json"

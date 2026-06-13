@@ -96,6 +96,7 @@ PLAYER_SPORT_HINTS = {
     "jackie robinson": "baseball",
     "clayton kershaw": "baseball",
     "mookie betts": "baseball",
+    "shintaro fujinami": "baseball",
     "ronald acuna jr": "baseball",
     "ronald acuna jr.": "baseball",
     "ronald acuña jr": "baseball",
