@@ -255,6 +255,42 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertTrue(decisions["Lower"].accepted)
         self.assertFalse(decisions["Rejected"].accepted)
 
+    def test_company_can_prefer_card_ladder_value_over_comps(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="4",
+            grader="PSA",
+            card_title="2020 Panini Prizm Patrick Mahomes PSA 10",
+            card_ladder_comps_average=100,
+            card_ladder_value=150,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Comps Buyer",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("football", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 0.95, "NFL")],
+                    value_source="comps",
+                ),
+                assignment_engine.AssignmentCompany(
+                    "CL Buyer",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("football", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 0.9, "NFL")],
+                    value_source="card_ladder",
+                ),
+            ]
+        )
+
+        recommendation = engine.recommend(row)
+        decisions = {decision.company: decision for decision in engine.evaluate(row)}
+
+        self.assertEqual(decisions["Comps Buyer"].source_value, 100)
+        self.assertEqual(decisions["Comps Buyer"].payout, 95)
+        self.assertEqual(decisions["CL Buyer"].source_value, 150)
+        self.assertEqual(decisions["CL Buyer"].payout, 135)
+        self.assertEqual(recommendation.company, "CL Buyer")
+        self.assertEqual(recommendation.payout, 135)
+
     def test_goat_payout_category_uses_payout_range_not_rule_goat_range(self) -> None:
         row = WorkbookRow(
             excel_row=2,

@@ -440,6 +440,7 @@ class AssignmentCompany:
     name: str
     rules: CompanyRules
     payout_tiers: list[PayoutTier]
+    value_source: str = "comps"
 
 
 @dataclass
@@ -455,6 +456,7 @@ class AssignmentDecision:
     accepted: bool
     payout: float | None = None
     reason: str = ""
+    source_value: float | None = None
 
 
 class AssignmentEngine:
@@ -488,38 +490,34 @@ class AssignmentEngine:
             return cls([], str(error))
 
     def recommend(self, row: Any) -> AssignmentRecommendation:
-        source_value = assignment_value(row)
-        if source_value is None:
+        default_source_value = assignment_value(row)
+        if default_source_value is None:
             return AssignmentRecommendation()
 
-        card_text = card_row_text(row, source_value)
         candidates: list[AssignmentRecommendation] = []
         for decision in self.evaluate(row):
             if not decision.accepted or decision.payout is None:
                 continue
-            candidates.append(AssignmentRecommendation(decision.company, round(decision.payout, 2), source_value))
-        return max(candidates, key=lambda item: item.payout or 0) if candidates else AssignmentRecommendation(source_value=source_value)
+            candidates.append(AssignmentRecommendation(decision.company, round(decision.payout, 2), decision.source_value))
+        return max(candidates, key=lambda item: item.payout or 0) if candidates else AssignmentRecommendation(source_value=default_source_value)
 
     def evaluate(self, row: Any) -> list[AssignmentDecision]:
-        source_value = assignment_value(row)
-        if source_value is None:
-            return [
-                AssignmentDecision(company.name, False, reason="missing comp/card ladder value")
-                for company in self.companies
-            ]
-
-        card_text = card_row_text(row, source_value)
         grader = str(getattr(row, "grader", "") or "")
         decisions: list[AssignmentDecision] = []
         for company in self.companies:
+            source_value = company_assignment_value(row, company)
+            if source_value is None:
+                decisions.append(AssignmentDecision(company.name, False, reason="missing comp/card ladder value"))
+                continue
+            card_text = card_row_text(row, source_value)
             if not company_accepts(company.rules, card_text, source_value, grader):
-                decisions.append(AssignmentDecision(company.name, False, reason="card does not match company rules"))
+                decisions.append(AssignmentDecision(company.name, False, reason="card does not match company rules", source_value=source_value))
                 continue
             payout = payout_for_value(company.payout_tiers, source_value, card_text, company.rules)
             if payout is None:
-                decisions.append(AssignmentDecision(company.name, True, None, "accepted, but no payout tier matched"))
+                decisions.append(AssignmentDecision(company.name, True, None, "accepted, but no payout tier matched", source_value))
                 continue
-            decisions.append(AssignmentDecision(company.name, True, payout, "accepted and payout tier matched"))
+            decisions.append(AssignmentDecision(company.name, True, payout, "accepted and payout tier matched", source_value))
         return decisions
 
 
@@ -535,13 +533,39 @@ def load_company(entry: dict[str, Any], base_dir: Path) -> AssignmentCompany | N
         rate = parse_rate(entry.get("rate"))
         if rate is not None:
             payout_tiers = [PayoutTier(rate=rate)]
-    return AssignmentCompany(name=name, rules=rules, payout_tiers=payout_tiers)
+    return AssignmentCompany(
+        name=name,
+        rules=rules,
+        payout_tiers=payout_tiers,
+        value_source=company_value_source(entry),
+    )
 
 
 def assignment_value(row: Any) -> float | None:
     comps = to_number(getattr(row, "card_ladder_comps_average", None))
     cl_value = to_number(getattr(row, "card_ladder_value", None))
     return comps if comps is not None else cl_value
+
+
+def company_assignment_value(row: Any, company: AssignmentCompany) -> float | None:
+    comps = to_number(getattr(row, "card_ladder_comps_average", None))
+    cl_value = to_number(getattr(row, "card_ladder_value", None))
+    if company.value_source == "card_ladder":
+        return cl_value if cl_value is not None else comps
+    return comps if comps is not None else cl_value
+
+
+def company_value_source(entry: dict[str, Any]) -> str:
+    raw = str(
+        entry.get("value_source")
+        or entry.get("valueSource")
+        or entry.get("assignment_value_source")
+        or entry.get("assignmentValueSource")
+        or ""
+    ).strip().lower()
+    if raw in {"card_ladder", "cardladder", "cl", "card ladder", "card_ladder_value"}:
+        return "card_ladder"
+    return "comps"
 
 
 def card_row_text(row: Any, source_value: float) -> str:
