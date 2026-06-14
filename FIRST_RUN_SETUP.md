@@ -21,6 +21,30 @@ For a complete L.U.C.A.S setup, the computer needs:
 
 This guide treats the full workflow as required. Setup is not complete until every section below is done.
 
+## Important Setup URLs
+
+Keep these official links open during setup:
+
+| Need | URL |
+| --- | --- |
+| L.U.C.A.S repository | `https://github.com/mikegrossbarth/card_pipeline` |
+| Google Chrome download | `https://www.google.com/chrome/` |
+| Python download | `https://www.python.org/downloads/windows/` |
+| Windows Package Manager help | `https://learn.microsoft.com/windows/package-manager/winget/` |
+| Google Drive for desktop | `https://www.google.com/drive/download/` |
+| Card Ladder | `https://app.cardladder.com/` |
+| Chrome extensions page | `chrome://extensions` |
+| Google AI Studio API keys | `https://aistudio.google.com/app/apikey` |
+| Gemini API billing | `https://ai.google.dev/gemini-api/docs/billing` |
+| Gemini API key security | `https://ai.google.dev/gemini-api/docs/api-key` |
+| Google AI Studio spend cap | `https://aistudio.google.com/app/spend` |
+| Google Cloud Console | `https://console.cloud.google.com/` |
+| Google Cloud Billing | `https://console.cloud.google.com/billing` |
+| Google Cloud APIs library | `https://console.cloud.google.com/apis/library` |
+| Google Sheets API | `https://console.cloud.google.com/apis/library/sheets.googleapis.com` |
+| Google Auth Platform | `https://console.cloud.google.com/auth` |
+| Google OAuth clients | `https://console.cloud.google.com/auth/clients` |
+
 ## What Each Requirement Is For
 
 | Requirement | Needed for | Required for complete setup? |
@@ -56,7 +80,13 @@ README.md
 cardladder-autocomp
 ```
 
-If you are using Git, clone the repository. If not, download and unzip the project folder.
+If you are using Git, clone the repository from:
+
+```text
+https://github.com/mikegrossbarth/card_pipeline
+```
+
+If not, open that same URL in a browser, download the project as a ZIP, and unzip the project folder.
 
 ## Shared Team Folder Setup
 
@@ -82,7 +112,11 @@ All users should keep Google Drive for desktop running and fully synced before m
 
 ## Step 2: Install Google Chrome
 
-Install Google Chrome if it is not already installed.
+Install Google Chrome if it is not already installed:
+
+```text
+https://www.google.com/chrome/
+```
 
 Chrome is needed for Card Ladder comping because the app talks to a local Chrome extension.
 
@@ -105,7 +139,13 @@ The installer will:
 
 If Windows asks for permission during Python install, approve it.
 
-If automatic Python install fails, install Python manually from python.org. During manual install, make sure:
+If automatic Python install fails, install Python manually from:
+
+```text
+https://www.python.org/downloads/windows/
+```
+
+During manual install, make sure:
 
 - `Add python.exe to PATH` is checked
 - Tcl/Tk support is included
@@ -201,7 +241,12 @@ GOOGLE_API_KEY=...
 
 To get this key:
 
-1. go to Google AI Studio
+1. go to Google AI Studio:
+
+```text
+https://aistudio.google.com/app/apikey
+```
+
 2. create or copy an API key
 3. paste it into `.env`
 4. save `.env`
@@ -361,28 +406,52 @@ If comping does not start, check:
 
 Google Sheets access is part of the complete setup because company rules and payout files may live in Google Sheets.
 
-1. go to Google Cloud Console
+1. go to Google Cloud Console:
+
+```text
+https://console.cloud.google.com/
+```
+
 2. create or choose a project
-3. enable the Google Sheets API
-4. create an OAuth Client ID
-5. choose application type:
+3. open the Google Sheets API page:
+
+```text
+https://console.cloud.google.com/apis/library/sheets.googleapis.com
+```
+
+4. click `Enable`
+5. open Google Auth Platform:
+
+```text
+https://console.cloud.google.com/auth
+```
+
+6. complete the app setup prompts if Google asks for them
+7. open OAuth clients:
+
+```text
+https://console.cloud.google.com/auth/clients
+```
+
+8. create an OAuth Client ID
+9. choose application type:
 
 ```text
 Desktop app
 ```
 
-6. copy the client ID and client secret into `.env`:
+10. copy the client ID and client secret into `.env`:
 
 ```env
 GOOGLE_SHEETS_OAUTH_CLIENT_ID=...
 GOOGLE_SHEETS_OAUTH_CLIENT_SECRET=...
 ```
 
-7. save `.env`
-8. restart L.U.C.A.S
-9. open Assignment Rules
-10. click `Connect Google`
-11. sign in with the Google account that can access the sheets
+11. save `.env`
+12. restart L.U.C.A.S
+13. open Assignment Rules
+14. click `Connect Google`
+15. sign in with the Google account that can access the sheets
 
 The app creates:
 
@@ -395,6 +464,12 @@ That token file is local and should not be committed to Git.
 ## Step 12: Set Up Google Drive For Desktop
 
 Google Drive for desktop is required for the standard team setup because the pipeline folders and source files can live in synced Drive folders.
+
+Download it here:
+
+```text
+https://www.google.com/drive/download/
+```
 
 Once installed, Google Drive usually creates a drive like:
 
@@ -451,6 +526,7 @@ After setup, test the app in this order:
 6. Open the `Assignment` tab and confirm best company and estimated payout can populate.
 7. Open the `Receive` tab and test marking a row received.
 8. Open `Payouts/Tabs` and confirm assigned-person balances appear when relevant.
+9. Open `Profit` and confirm sold cards/sold sheets appear after company sheets have sold rows.
 
 Do not start with a giant sheet until this small test works.
 

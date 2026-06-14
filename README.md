@@ -73,9 +73,11 @@ Use `Stop Run` to request cancellation of an active Card Ladder run. The Chrome 
 
 ## Assignment
 
-Use the `Assignment` tab for receiving and source matching. Assignment rows are checked against sheets in `INCOMING SHEETS`, marked received when matched, and can be loaded from `RECEIVED SHEETS` for follow-up assignment work.
+Use the `Receive` tab for receiving cards and source matching. Receive rows are checked against sheets in `INCOMING SHEETS`, marked received when matched, and can be added to weekly company sheets when `Company Pile` is checked.
 
-Assignment can calculate `Best Company` and `Est. Payout` from the Card Ladder comps average, falling back to Card Ladder value when comps are blank. Click `Assignment Rules` in the Assignment tab to create companies, acceptance rule files, and payout files. L.U.C.A.S writes manual files under the configured pipeline folder and updates local-only `assignment_companies.json`. Companies can be toggled Active or Inactive in the rules manager; inactive companies are ignored when recommendations are calculated.
+Use the `Assignment` tab for pure assignment review and fallback assignment work. Assignment can load received sheets and calculate or recalculate `Best Company` and `Est. Payout`.
+
+Assignment can calculate `Best Company` and `Est. Payout` from the Card Ladder comps average, falling back to Card Ladder value when comps are blank. Individual companies can be configured to require Card Ladder value instead; when that is selected, the company is ignored if the row has no Card Ladder value. Click `Assignment Rules` to create companies, acceptance rule files, and payout files. L.U.C.A.S writes manual files under the configured pipeline folder and updates local-only `assignment_companies.json`. Companies can be toggled Active or Inactive in the rules manager; inactive companies are ignored when recommendations are calculated. If no company can take a priced row, `Best Company` shows `NOBODY TAKES`.
 
 Supported local source files include `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, and `.xlsm`. Files in synced Google Drive folders work directly, for example:
 
@@ -89,6 +91,12 @@ Supported local source files include `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, an
 
 The Assignment Rules manager supports three rule sources: manual rules, a local Google Keep export/text file, or a local synced Google Sheets/workbook file from Google Drive. Payouts can be manual tiers, a local payout file, or the same rules workbook when `Link Payouts to Same File` is selected and that workbook has a `Payouts` tab. `Payouts` tabs may use `CATEGORY`, `VALUE RANGE`, and `YOUR PAYOUT %`; L.U.C.A.S matches category by player, sport, or insert name and multiplies the card's comp value by the matched payout percentage. When a native Google Sheets shortcut (`.gsheet`) is selected, L.U.C.A.S stores the sheet URL and reads it through the Google Sheets API, matching the authenticated approach used by the Sheet Filtering Tool extension. Click `Connect Google` once in Assignment Rules to create the local token cache. If Google Drive exposes the shortcut as an unreadable placeholder, the app asks for the Google Sheet URL and then reads that same live sheet through the authenticated connection. Saved Google Sheet URL sources are refreshed from Google Sheets when L.U.C.A.S opens and when assignment rules load, with the latest local XLSX cache used as the fallback copy. The built-in manager uses the same basic custom-filter shape as the Sheet Filtering Tool: categories, value ranges, grade-company allow/block settings, block rules, and payout tiers.
 
+## Payouts And Profit
+
+Use `Payouts/Tabs` to track active balances by assigned person and mark person-level balances paid.
+
+Use `Profit` to review sold cards and sold sheets. The Profit tab can filter by assigned person, shows a daily profit line chart, and can toggle between individual sold-card rows and grouped sold-sheet summaries.
+
 ## Tests
 
 Run the committed offline test suite with:
@@ -97,7 +105,7 @@ Run the committed offline test suite with:
 python -m unittest discover -s tests -v
 ```
 
-The tests cover shared-folder locks, atomic JSON writes, marker merging, Google Sheet cache export/discovery, company-sheet append deduping, and profit ledger recording.
+The tests cover shared-folder locks, atomic JSON writes, marker merging, Google Sheet cache export/discovery, company-sheet append deduping, assignment recommendation behavior, unassigned-player capture, photo OCR recovery behavior, and profit ledger/person grouping.
 
 ## Included Photo Tool
 
