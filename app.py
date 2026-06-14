@@ -391,7 +391,10 @@ class CardPipelineApp(tk.Tk):
         self.payout_detail_keys: dict[str, str] = {}
         self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
         self.profit_metric_var = tk.StringVar(value="")
+        self.profit_person_var = tk.StringVar()
+        self.profit_view_mode = tk.StringVar(value="Sold Cards")
         self.profit_rows: list[dict[str, object]] = []
+        self.filtered_profit_rows: list[dict[str, object]] = []
 
         self._build_ui()
         self._show_mode()
@@ -894,10 +897,21 @@ class CardPipelineApp(tk.Tk):
         controls = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(16, 12))
         controls.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(controls, text="Profit", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, sticky="w")
-        ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=1, sticky="w", padx=(12, 0))
-        controls.columnconfigure(2, weight=1)
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=0, column=2, sticky="e")
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Label(controls, text="Person", style="Muted.TLabel").grid(row=0, column=1, sticky="e", padx=(18, 6))
+        self.profit_person_combo = ttk.Combobox(controls, textvariable=self.profit_person_var, width=28)
+        self.profit_person_combo.grid(row=0, column=2, sticky="w")
+        self._bind_person_autocomplete(self.profit_person_combo, refresh_callback=self.refresh_profit_tab)
+        self.profit_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
+        ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=3, sticky="w", padx=(10, 0))
+        view_row = ttk.Frame(controls, style="Panel.TFrame")
+        view_row.grid(row=1, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        self.profit_cards_button = ttk.Button(view_row, text="Sold Cards", command=lambda: self._set_profit_view_mode("Sold Cards"), style="Soft.TButton")
+        self.profit_cards_button.pack(side=tk.LEFT)
+        self.profit_sheets_button = ttk.Button(view_row, text="Sold Sheets", command=lambda: self._set_profit_view_mode("Sold Sheets"), style="Soft.TButton")
+        self.profit_sheets_button.pack(side=tk.LEFT, padx=(8, 0))
+        controls.columnconfigure(4, weight=1)
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=0, column=4, sticky="e")
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=5, sticky="w", pady=(8, 0))
 
         chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
         chart_panel.pack(fill=tk.X, pady=(0, 10))
@@ -914,7 +928,8 @@ class CardPipelineApp(tk.Tk):
 
         ledger_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
         ledger_panel.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(ledger_panel, text="Sold Cards", style="Panel.TLabel").pack(anchor=tk.W)
+        self.profit_table_title_var = tk.StringVar(value="Sold Cards")
+        ttk.Label(ledger_panel, textvariable=self.profit_table_title_var, style="Panel.TLabel").pack(anchor=tk.W)
         self.profit_tree = self._build_home_tree(
             ledger_panel,
             columns=("date", "company", "card", "cert", "purchase", "sale", "profit", "sheet"),
@@ -979,8 +994,131 @@ class CardPipelineApp(tk.Tk):
         normalized["cert_number"] = str(normalized.get("cert_number") or "").strip()
         normalized["weekly_sheet_name"] = str(normalized.get("weekly_sheet_name") or "").strip()
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
+        normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
         normalized["ledger_key"] = self._profit_record_key(normalized)
         return normalized
+
+    def _person_for_profit_record(self, record: dict[str, object]) -> str:
+        existing = str(record.get("assigned_person") or "").strip()
+        if existing:
+            return existing
+        source_sheet = Path(str(record.get("source_sheet") or "")).name
+        if not source_sheet:
+            return ""
+        for stage in ("Incoming", "Received", "Working"):
+            marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_sheet), {})
+            person = str(marker.get("assigned_person") or "").strip()
+            if person:
+                return person
+        for key, marker in self.home_sheet_markers.items():
+            _stage, name = self._split_home_sheet_key(key)
+            if Path(name).name == source_sheet:
+                person = str(marker.get("assigned_person") or "").strip()
+                if person:
+                    return person
+        return ""
+
+    def _enrich_profit_records_with_people(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        enriched: list[dict[str, object]] = []
+        for record in rows:
+            normalized = self._normalize_profit_record(record)
+            normalized["assigned_person"] = self._person_for_profit_record(normalized)
+            enriched.append(normalized)
+        return enriched
+
+    def _filtered_profit_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        needle = self.profit_person_var.get().strip().lower() if hasattr(self, "profit_person_var") else ""
+        if not needle:
+            return list(rows)
+        return [
+            record
+            for record in rows
+            if needle in (str(record.get("assigned_person") or "Unassigned").lower())
+        ]
+
+    def _set_profit_view_mode(self, mode: str) -> None:
+        self.profit_view_mode.set(mode)
+        self.refresh_profit_tab()
+
+    def _configure_profit_tree(self, mode: str) -> None:
+        if not hasattr(self, "profit_tree"):
+            return
+        if mode == "Sold Sheets":
+            columns = ("person", "sheet", "companies", "cards", "purchase", "sale", "profit", "last_sale")
+            headings = {
+                "person": "Person",
+                "sheet": "Sold Sheet",
+                "companies": "Companies",
+                "cards": "Cards",
+                "purchase": "Purchase",
+                "sale": "Sale Price",
+                "profit": "Profit",
+                "last_sale": "Last Sale",
+            }
+            widths = {"person": 150, "sheet": 300, "companies": 220, "cards": 80, "purchase": 105, "sale": 105, "profit": 105, "last_sale": 95}
+        else:
+            columns = ("date", "person", "company", "card", "cert", "purchase", "sale", "profit", "sheet")
+            headings = {
+                "date": "Date",
+                "person": "Person",
+                "company": "Company",
+                "card": "Card",
+                "cert": "Cert",
+                "purchase": "Purchase",
+                "sale": "Sale Price",
+                "profit": "Profit",
+                "sheet": "Company Sheet",
+            }
+            widths = {"date": 95, "person": 135, "company": 140, "card": 390, "cert": 100, "purchase": 105, "sale": 105, "profit": 105, "sheet": 200}
+        self.profit_tree.configure(columns=columns)
+        for column in columns:
+            self.profit_tree.heading(column, text=headings[column], anchor=tk.W)
+            self.profit_tree.column(column, width=widths[column], minwidth=45, stretch=False)
+        self.profit_table_title_var.set(mode)
+
+    def _profit_sheet_rows(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        grouped: dict[tuple[str, str], dict[str, object]] = {}
+        for record in rows:
+            source_sheet = str(record.get("source_sheet") or "").strip() or "Unknown sheet"
+            person = str(record.get("assigned_person") or "").strip() or "Unassigned"
+            key = (person, source_sheet)
+            group = grouped.setdefault(
+                key,
+                {
+                    "person": person,
+                    "sheet": source_sheet,
+                    "companies": set(),
+                    "cards": 0,
+                    "purchase": 0.0,
+                    "sale": 0.0,
+                    "profit": 0.0,
+                    "complete": 0,
+                    "last_sale": "",
+                },
+            )
+            company = str(record.get("company") or "").strip()
+            if company:
+                group["companies"].add(company)
+            group["cards"] = int(group["cards"]) + 1
+            purchase = self._money_value(record.get("purchase_price"))
+            sale = self._money_value(record.get("sale_price"))
+            profit = self._money_value(record.get("profit"))
+            if purchase is not None:
+                group["purchase"] = float(group["purchase"]) + purchase
+            if sale is not None:
+                group["sale"] = float(group["sale"]) + sale
+            if profit is not None:
+                group["profit"] = float(group["profit"]) + profit
+                group["complete"] = int(group["complete"]) + 1
+            date = str(record.get("date_added") or "")[:10]
+            if date and date > str(group["last_sale"]):
+                group["last_sale"] = date
+        result: list[dict[str, object]] = []
+        for group in grouped.values():
+            companies = sorted(group.pop("companies"), key=str.lower)
+            group["companies"] = ", ".join(companies)
+            result.append(group)
+        return sorted(result, key=lambda item: (str(item.get("last_sale") or ""), str(item.get("person") or ""), str(item.get("sheet") or "")), reverse=True)
 
     def record_profit_sales(self, records: list[dict[str, object]]) -> int:
         if not records:
@@ -1027,16 +1165,20 @@ class CardPipelineApp(tk.Tk):
                         current_keys.add(key)
                 self._save_profit_ledger(current)
                 ledger = current
-        self.profit_rows = ledger
+        self.profit_rows = self._enrich_profit_records_with_people(ledger)
         self.profit_rows.sort(key=lambda record: (str(record.get("date_added") or ""), str(record.get("company") or ""), str(record.get("card_title") or "")), reverse=True)
+        self.filtered_profit_rows = self._filtered_profit_records(self.profit_rows)
         if not hasattr(self, "profit_tree"):
             return
+        self._refresh_person_combo_values()
+        mode = self.profit_view_mode.get()
+        self._configure_profit_tree(mode)
         self.profit_tree.delete(*self.profit_tree.get_children())
         total_purchase = 0.0
         total_sale = 0.0
         total_profit = 0.0
         complete_count = 0
-        for record in self.profit_rows:
+        for record in self.filtered_profit_rows:
             purchase = self._money_value(record.get("purchase_price"))
             sale = self._money_value(record.get("sale_price"))
             profit = self._money_value(record.get("profit"))
@@ -1047,36 +1189,64 @@ class CardPipelineApp(tk.Tk):
             if profit is not None:
                 total_profit += profit
                 complete_count += 1
-            tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
-            self.profit_tree.insert(
-                "",
-                tk.END,
-                values=(
-                    record.get("date_added") or "",
-                    record.get("company") or "",
-                    record.get("card_title") or "",
-                    record.get("cert_number") or "",
-                    format_money(purchase),
-                    format_money(sale),
-                    format_money(profit),
-                    record.get("weekly_sheet_name") or "",
-                ),
-                tags=(tag,),
+            if mode != "Sold Sheets":
+                tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
+                self.profit_tree.insert(
+                    "",
+                    tk.END,
+                    values=(
+                        record.get("date_added") or "",
+                        record.get("assigned_person") or "Unassigned",
+                        record.get("company") or "",
+                        record.get("card_title") or "",
+                        record.get("cert_number") or "",
+                        format_money(purchase),
+                        format_money(sale),
+                        format_money(profit),
+                        record.get("weekly_sheet_name") or "",
+                    ),
+                    tags=(tag,),
+                )
+        if mode == "Sold Sheets":
+            for sheet_row in self._profit_sheet_rows(self.filtered_profit_rows):
+                profit = self._money_value(sheet_row.get("profit"))
+                tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
+                self.profit_tree.insert(
+                    "",
+                    tk.END,
+                    values=(
+                        sheet_row.get("person") or "",
+                        sheet_row.get("sheet") or "",
+                        sheet_row.get("companies") or "",
+                        sheet_row.get("cards") or 0,
+                        format_money(sheet_row.get("purchase")),
+                        format_money(sheet_row.get("sale")),
+                        format_money(profit),
+                        sheet_row.get("last_sale") or "",
+                    ),
+                    tags=(tag,),
+                )
+        if self.filtered_profit_rows:
+            total_values = (
+                ("TOTAL", "", "", f"{len(self.filtered_profit_rows)} card(s)", format_money(total_purchase), format_money(total_sale), format_money(total_profit), "")
+                if mode == "Sold Sheets"
+                else ("TOTAL", "", "", f"{len(self.filtered_profit_rows)} card(s)", "", format_money(total_purchase), format_money(total_sale), format_money(total_profit), "")
             )
-        if self.profit_rows:
             self.profit_tree.insert(
                 "",
                 tk.END,
-                values=("TOTAL", "", f"{len(self.profit_rows)} card(s)", "", format_money(total_purchase), format_money(total_sale), format_money(total_profit), ""),
+                values=total_values,
                 tags=("total_row",),
             )
         self.profit_metric_var.set(
-            f"Cards: {len(self.profit_rows)}   Sales: {format_money(total_sale)}   Profit: {format_money(total_profit)}"
+            f"Cards: {len(self.filtered_profit_rows)}   Sales: {format_money(total_sale)}   Profit: {format_money(total_profit)}"
         )
-        missing = len(self.profit_rows) - complete_count
+        missing = len(self.filtered_profit_rows) - complete_count
         suffix = f" | {missing} card(s) missing purchase or sale price" if missing else ""
+        filter_label = self.profit_person_var.get().strip()
+        filter_suffix = f" | Filter: {filter_label}" if filter_label else ""
         backfill_suffix = f" | backfilled {backfilled} from company sheets" if backfilled else ""
-        self.profit_status_var.set(f"Loaded {len(self.profit_rows)} sold card(s) from {PROFIT_LEDGER_PATH.name}{suffix}{backfill_suffix}.")
+        self.profit_status_var.set(f"Loaded {len(self.filtered_profit_rows)}/{len(self.profit_rows)} sold card(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{suffix}{backfill_suffix}.")
         self._draw_profit_chart()
 
     def _profit_month_key(self, value: object) -> str:
@@ -1096,9 +1266,10 @@ class CardPipelineApp(tk.Tk):
         pad_left, pad_right, pad_top, pad_bottom = 62, 22, 26, 44
         plot_w = max(width - pad_left - pad_right, 10)
         plot_h = max(height - pad_top - pad_bottom, 10)
+        chart_rows = self.filtered_profit_rows if hasattr(self, "filtered_profit_rows") else self.profit_rows
         dated = [
             record
-            for record in self.profit_rows
+            for record in chart_rows
             if self._money_value(record.get("profit")) is not None and self._profit_month_key(record.get("date_added")) != "Unknown"
         ]
         if not dated:
@@ -1660,12 +1831,21 @@ class CardPipelineApp(tk.Tk):
         return sorted(people, key=str.lower)
 
     def _refresh_person_combo_values(self, filter_text: str = "") -> None:
-        people = self._known_assigned_people()
+        people_set = set(self._known_assigned_people())
+        if hasattr(self, "profit_rows"):
+            people_set.update(
+                str(record.get("assigned_person") or "").strip()
+                for record in self.profit_rows
+                if str(record.get("assigned_person") or "").strip()
+            )
+        people = sorted(people_set, key=str.lower)
         if filter_text:
             needle = filter_text.strip().lower()
             people = [person for person in people if needle in person.lower()]
         if hasattr(self, "payout_person_combo"):
             self.payout_person_combo["values"] = people
+        if hasattr(self, "profit_person_combo"):
+            self.profit_person_combo["values"] = people
 
     def _bind_person_autocomplete(self, combo: ttk.Combobox, refresh_callback=None) -> None:
         combo["values"] = self._known_assigned_people()

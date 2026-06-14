@@ -670,6 +670,59 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
 
+    def test_profit_records_are_enriched_with_assigned_person_from_sheet_marker(self) -> None:
+        class ProfitDummy:
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _money_value = app.CardPipelineApp._money_value
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
+
+        dummy = ProfitDummy()
+        dummy.home_sheet_markers = {"Received|Lot A.xlsx": {"assigned_person": "Lucas"}}
+        dummy.profit_person_var = types.SimpleNamespace(get=lambda: "luc")
+
+        rows = dummy._enrich_profit_records_with_people([
+            {
+                "date_added": "2026-06-11",
+                "company": "Arena Club",
+                "source_sheet": "Lot A.xlsx",
+                "cert_number": "123",
+                "card_title": "Test Card",
+                "purchase_price": 40,
+                "sale_price": 90,
+            }
+        ])
+
+        self.assertEqual(rows[0]["assigned_person"], "Lucas")
+        self.assertEqual(rows[0]["profit"], 50)
+        self.assertEqual(dummy._filtered_profit_records(rows), rows)
+
+    def test_profit_sheet_rows_group_by_person_and_source_sheet(self) -> None:
+        class ProfitDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_sheet_rows = app.CardPipelineApp._profit_sheet_rows
+
+        dummy = ProfitDummy()
+        rows = [
+            {"assigned_person": "Lucas", "source_sheet": "Lot A.xlsx", "company": "Arena Club", "purchase_price": 40, "sale_price": 90, "profit": 50, "date_added": "2026-06-11"},
+            {"assigned_person": "Lucas", "source_sheet": "Lot A.xlsx", "company": "Fanatics", "purchase_price": 20, "sale_price": 30, "profit": 10, "date_added": "2026-06-12"},
+            {"assigned_person": "Mikey", "source_sheet": "Lot B.xlsx", "company": "Arena Club", "purchase_price": 100, "sale_price": 80, "profit": -20, "date_added": "2026-06-12"},
+        ]
+
+        grouped = dummy._profit_sheet_rows(rows)
+        lot_a = next(item for item in grouped if item["sheet"] == "Lot A.xlsx")
+
+        self.assertEqual(lot_a["person"], "Lucas")
+        self.assertEqual(lot_a["cards"], 2)
+        self.assertEqual(lot_a["purchase"], 60)
+        self.assertEqual(lot_a["sale"], 120)
+        self.assertEqual(lot_a["profit"], 60)
+        self.assertEqual(lot_a["companies"], "Arena Club, Fanatics")
+
 
 class PhotoOcrSpeedTests(unittest.TestCase):
     def test_detect_regions_skips_extra_label_sweeps_when_dense_target_is_met(self) -> None:
