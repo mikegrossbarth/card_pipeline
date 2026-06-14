@@ -16,9 +16,9 @@ from urllib.parse import parse_qs, urlparse
 from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
 
-BRIDGE_VERSION = "2026-06-01-cardladder-result-log-v3"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-10-no-results-ocr-fallback-v3"
-EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
+BRIDGE_VERSION = "2026-06-14-cardladder-partial-diagnostics-v4"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-14-partial-diagnostics-v4"
+EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.5"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 COMP_STRATEGY_AVERAGE = "average_last_5"
 COMP_STRATEGY_HIGH = "highest_last_5"
@@ -48,11 +48,13 @@ class BridgeState:
         self.cardladder_running = False
         self.cancel_requested = False
         self.comp_strategy = COMP_STRATEGY_AVERAGE
+        self.updated_row_ids: set[int] = set()
         self.on_update: Callable[[], None] | None = None
 
     def set_rows(self, rows: list[WorkbookRow]) -> None:
         with self.lock:
             self.rows = rows
+            self.updated_row_ids = set()
 
     def set_comp_strategy(self, strategy: str) -> None:
         with self.lock:
@@ -137,6 +139,7 @@ class BridgeState:
                 target_row = next((row for row in self.rows if row.cert_number == cert), None)
             if target_row is not None:
                 self._apply_cardladder_result_to_row(target_row, result)
+                self.updated_row_ids.add(id(target_row))
         if self.on_update:
             self.on_update()
 
@@ -149,7 +152,19 @@ class BridgeState:
         profile_title = clean_profile_title(ocr.get("profileTitle") or ocr.get("profile_title") or ocr.get("profile"))
         profile_grader = clean_grader(ocr.get("profileGrader") or ocr.get("profile_grader") or row.grader)
         profile_grade = clean_grade(ocr.get("profileGrade") or ocr.get("profile_grade") or "")
+        generic_profile_reason = generic_profile_review_reason(profile_title, profile_grader, profile_grade, ocr)
         if result_status == "partial_comp_capture":
+            if not ocr and result_extension_is_stale(result.get("extensionVersion")):
+                row.card_ladder_value = None
+                row.card_ladder_comps_average = None
+                row.card_ladder_comps = ""
+                row.card_ladder_screenshot = ""
+                row.status = "Reload Card Ladder extension"
+                row.notes = (
+                    "Partial capture came from an older Card Ladder extension that does not preserve "
+                    "partial diagnostics. Reload the unpacked extension, then rerun this row."
+                )
+                return
             if profile_title:
                 row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
             if row_has_comp_data(row):
@@ -182,6 +197,15 @@ class BridgeState:
                 "The Card Ladder result came from an older Chrome extension that cannot capture "
                 "profile names on no-result pages. Reload the bundled Card Ladder Auto-Comp extension."
             )
+            return
+        if generic_profile_reason:
+            row.card_title = ""
+            row.card_ladder_value = None
+            row.card_ladder_comps_average = None
+            row.card_ladder_comps = ""
+            row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
+            row.status = "Card Ladder review"
+            row.notes = generic_profile_reason
             return
         if profile_title:
             row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
@@ -259,11 +283,17 @@ def row_has_comp_data(row: WorkbookRow) -> bool:
     )
 
 
+def result_extension_is_stale(extension_version: object) -> bool:
+    version = str(extension_version or "").strip()
+    return version != EXPECTED_CARDLADDER_EXTENSION_VERSION
+
+
 def clean_profile_title(value) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     text = re.sub(r"^profile\s*:\s*", "", text, flags=re.I)
     tail_patterns = [
         r"\s+\bclose\s+\$?\d[\d,]*(?:\.\d{1,2})?.*$",
+        r"\s+\bclose\s+search[_\s-]*off\b.*$",
         r"\s+[x×]\s*$",
         r"\s+\bthere\s+are\s+no\s+results\b.*$",
         r"\s+\btry\s+searching\b.*$",
@@ -297,6 +327,42 @@ def build_card_title(description: str, grader: str, grade: str) -> str:
     if grade and not re.search(rf"(?<!\d){re.escape(grade)}(?!\d)", " ".join(parts)):
         parts.append(grade)
     return re.sub(r"\s+", " ", " ".join(parts)).strip()
+
+
+def generic_profile_review_reason(profile_title: str, grader: str, grade: str, ocr: dict) -> str:
+    title = clean_profile_title(profile_title)
+    if not title:
+        return ""
+    result_count = safe_int(ocr.get("resultCount") or ocr.get("result_count"))
+    if not is_generic_cardladder_profile_title(title, grader, grade):
+        return ""
+    if result_count is not None and result_count < 25:
+        return ""
+    return (
+        f"Card Ladder returned an overly broad profile title ({build_card_title(title, grader, grade) or title})"
+        + (f" with {result_count} results" if result_count is not None else "")
+        + ". Re-run or verify manually before saving comps."
+    )
+
+
+def is_generic_cardladder_profile_title(title: str, grader: str = "", grade: str = "") -> bool:
+    cleaned = clean_profile_title(title)
+    cleaned = re.sub(rf"\b{re.escape(clean_grader(grader))}\b", " ", cleaned, flags=re.I) if grader else cleaned
+    cleaned = re.sub(rf"(?<!\d){re.escape(clean_grade(grade))}(?!\d)", " ", cleaned) if grade else cleaned
+    cleaned = re.sub(r"\b(?:psa|bgs|sgc|cgc|gem|mint|mt)\b", " ", cleaned, flags=re.I)
+    words = [word for word in re.findall(r"[A-Za-z0-9#'-]+", cleaned) if word]
+    if len(words) <= 2 and any(re.fullmatch(r"19\d{2}|20\d{2}", word) for word in words):
+        return True
+    has_player_or_number = any(re.search(r"#|[A-Za-z]{2,}\d|\d+[A-Za-z]", word) for word in words)
+    has_enough_detail = len(words) >= 4 or has_player_or_number
+    return not has_enough_detail
+
+
+def safe_int(value) -> int | None:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return None
 
 
 def average_comp_prices(comps: list[dict]) -> float | None:

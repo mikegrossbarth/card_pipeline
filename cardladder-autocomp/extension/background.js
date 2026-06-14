@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-06-10-no-results-ocr-fallback-v3";
+const CARDLADDER_BACKGROUND_VERSION = "2026-06-14-partial-diagnostics-v4";
 
 let runInProgress = false;
 let activeWindowId = null;
@@ -334,7 +334,27 @@ async function lookupRowWithRetries(tabId, row) {
     if (captureResultLooksComplete(lastResult, expectedResultCount)) return lastResult;
     await delay(OCR_RETRY_MS);
   }
-  return markPartialCapture(lastResult || domResult, expectedResultCount);
+  return markPartialCapture(mergeCaptureResults(domResult, lastResult), expectedResultCount);
+}
+
+function mergeCaptureResults(primary, fallback) {
+  if (!primary) return fallback || {};
+  if (!fallback) return primary;
+  return {
+    ...primary,
+    ...fallback,
+    pageUrl: fallback.pageUrl || primary.pageUrl || "",
+    capturedAt: fallback.capturedAt || primary.capturedAt || new Date().toISOString(),
+    ocr: {
+      ...(primary.ocr || {}),
+      ...(fallback.ocr || {}),
+      profileTitle: fallback.ocr?.profileTitle || primary.ocr?.profileTitle || "",
+      profileGrader: fallback.ocr?.profileGrader || primary.ocr?.profileGrader || "",
+      profileGrade: fallback.ocr?.profileGrade || primary.ocr?.profileGrade || "",
+      resultCount: fallback.ocr?.resultCount ?? primary.ocr?.resultCount ?? null,
+      comps: Array.isArray(fallback.ocr?.comps) && fallback.ocr.comps.length ? fallback.ocr.comps : (primary.ocr?.comps || []),
+    },
+  };
 }
 
 function stampResult(result) {
@@ -365,11 +385,22 @@ function markPartialCapture(result, expectedResultCount = null) {
   const expected = Number.isFinite(expectedResultCount) && expectedResultCount > 0
     ? Math.min(2, expectedResultCount)
     : 2;
+  const reason = result?.ocr?.error || result?.ocr?.evidence || result?.error || "Card Ladder page did not expose enough value/comp text.";
   return {
     ...(result || {}),
     value: null,
     status: "partial_comp_capture",
-    error: `Only captured ${comps.length} comp(s); expected ${expected}. Re-run this row.`,
+    error: `Only captured ${comps.length} comp(s); expected ${expected}. ${reason} Re-run this row.`,
+    partialDiagnostics: {
+      expectedComps: expected,
+      capturedComps: comps.length,
+      sourceStatus: result?.status || "",
+      sourceError: result?.error || "",
+      ocrError: result?.ocr?.error || "",
+      ocrEvidence: result?.ocr?.evidence || "",
+      profileTitle: result?.ocr?.profileTitle || "",
+      resultCount: result?.ocr?.resultCount ?? null,
+    },
   };
 }
 
@@ -435,6 +466,14 @@ async function captureValueFromDom(tabId, row, pageResult = {}) {
     value: null,
     status: "dom_error",
     error: String(error?.message || error),
+    ocr: {
+      ok: false,
+      value: null,
+      comps: [],
+      error: String(error?.message || error),
+      evidence: "Could not read Card Ladder page text through the content script.",
+      debugImage: "",
+    },
     capturedAt: new Date().toISOString(),
   }));
   return {
@@ -477,6 +516,14 @@ async function captureValueWithOcr(tabId, row, pageResult = {}) {
       value: null,
       status: "ocr_error",
       error: "Could not capture Card Ladder screenshot" + (captureError ? `: ${captureError}` : ""),
+      ocr: {
+        ok: false,
+        value: null,
+        comps: [],
+        error: "Could not capture Card Ladder screenshot" + (captureError ? `: ${captureError}` : ""),
+        evidence: "Chrome did not provide a visible-tab screenshot for OCR.",
+        debugImage: "",
+      },
       pageUrl: pageResult.pageUrl || tab?.url || "",
       capturedAt: new Date().toISOString(),
     };

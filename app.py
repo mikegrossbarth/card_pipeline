@@ -13,7 +13,7 @@ import tkinter as tk
 import urllib.parse
 import urllib.request
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -95,6 +95,7 @@ CARD_PIPELINE_DIR = Path(os.environ.get("LUCAS_PIPELINE_DIR") or DEFAULT_CARD_PI
 WORKING_SHEETS_DIR = Path(os.environ.get("LUCAS_WORKING_SHEETS_DIR") or CARD_PIPELINE_DIR / "WORKING SHEETS")
 INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
 RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
+ARCHIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "ARCHIVED SHEETS"
 COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
 SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
@@ -120,6 +121,7 @@ ASSIGNMENT_CATEGORY_OPTIONS = (
     "baseball",
     "soccer",
     "hockey",
+    "golf",
     "pokemon",
     "one piece",
     "wwe",
@@ -135,6 +137,7 @@ ASSIGNMENT_CATEGORY_WEB_SIGNALS = {
     "baseball": ("baseball", "mlb", "pitcher", "catcher", "shortstop", "outfielder", "first baseman", "second baseman", "third baseman"),
     "soccer": ("soccer", "footballer", "futbol", "fifa", "uefa", "premier league", "la liga", "serie a", "bundesliga"),
     "hockey": ("hockey", "nhl", "goaltender", "defenceman", "defenseman", "left wing", "right wing"),
+    "golf": ("golf", "pga", "lpga", "golfer", "masters", "ryder cup"),
     "pokemon": ("pokemon", "pokémon", "trading card game", "tcg", "pokédex", "pokedex"),
     "one piece": ("one piece", "straw hat", "manga", "anime", "pirate crew"),
     "wwe": ("wwe", "wwf", "professional wrestler", "pro wrestler", "wrestling"),
@@ -161,11 +164,12 @@ def save_app_settings(settings: dict[str, object]) -> None:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, PROFIT_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, PROFIT_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
     RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
+    ARCHIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "ARCHIVED SHEETS"
     COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
     SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
     PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
@@ -374,6 +378,8 @@ class CardPipelineApp(tk.Tk):
         self.assignment_recommendation_job = 0
         self.assignment_recommendation_running = False
         self.assignment_recommendation_after_id: str | None = None
+        self.assignment_recommendation_row_ids: set[int] | None = None
+        self.pending_comp_assignment_row_ids: set[int] = set()
         self.assignment_config_status = tk.StringVar(value=self._assignment_config_status())
         self._ensure_company_sheet_folders()
         self.received_sheet_paths: dict[str, Path] = {}
@@ -813,6 +819,8 @@ class CardPipelineApp(tk.Tk):
         )
         self.home_sheet_list.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         self.home_sheet_list.bind("<<ListboxSelect>>", lambda _event: self._load_home_selected_marker())
+        self.home_sheet_list.bind("<Button-3>", self._show_home_sheet_context_menu)
+        self.home_sheet_list.bind("<Button-2>", self._show_home_sheet_context_menu)
         ttk.Button(sheet_panel, text="Refresh Home", command=self.refresh_home, style="Primary.TButton").pack(fill=tk.X)
 
         right = ttk.Frame(body, style="App.TFrame")
@@ -1331,7 +1339,7 @@ class CardPipelineApp(tk.Tk):
         settings["working_sheets_dir"] = str(WORKING_SHEETS_DIR)
         save_app_settings(settings)
         self.pipeline_root_var.set(str(CARD_PIPELINE_DIR))
-        for directory in (WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR):
+        for directory in (WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR):
             directory.mkdir(parents=True, exist_ok=True)
         COMPANY_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
         self._load_player_overrides()
@@ -1390,9 +1398,16 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries = {}
         errors: list[str] = []
+        archived_count = 0
         conflict_files = self._shared_conflict_files()
         if conflict_files:
             errors.append(f"Shared conflicts: {', '.join(path.name for path in conflict_files[:3])}")
+        try:
+            archived = self._archive_eligible_received_sheets()
+            if archived:
+                archived_count = len(archived)
+        except Exception as error:
+            errors.append(f"Archive: {error}")
         for kind, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR), ("Received", RECEIVED_SHEETS_DIR)):
             try:
                 directory.mkdir(parents=True, exist_ok=True)
@@ -1415,6 +1430,8 @@ class CardPipelineApp(tk.Tk):
         self._update_home_sheet_tabs()
         if errors:
             self.status_var.set(f"Home refreshed with {len(errors)} sheet issue(s).")
+        elif archived_count:
+            self.status_var.set(f"Home metrics refreshed. Archived {archived_count} paid received sheet(s).")
         else:
             self.status_var.set("Home metrics refreshed.")
 
@@ -1535,6 +1552,13 @@ class CardPipelineApp(tk.Tk):
             working_paths = []
 
         try:
+            archived = self._archive_eligible_received_sheets()
+            if archived:
+                payload["archived_count"] = len(archived)
+        except Exception as error:
+            errors.append(f"Archive: {error}")
+
+        try:
             RECEIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
             received_paths = sorted(RECEIVED_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
             payload["received_paths"] = {path.name: path for path in received_paths}
@@ -1621,6 +1645,7 @@ class CardPipelineApp(tk.Tk):
         self._update_home_sheet_tabs()
         google_cache = payload.get("google_sheet_cache") if isinstance(payload.get("google_sheet_cache"), dict) else {}
         refreshed_google_sheets = int((google_cache or {}).get("refreshed") or 0)
+        archived_count = int(payload.get("archived_count") or 0)
         if refreshed_google_sheets:
             self.assignment_engine = AssignmentEngine.load()
             self.assignment_config_status.set(self._assignment_config_status())
@@ -1630,6 +1655,8 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Startup sheet refresh finished with {len(errors)} issue(s).")
         elif refreshed_google_sheets:
             self.status_var.set(f"Sheet lists loaded. Refreshed {refreshed_google_sheets} Google Sheet cache(s).")
+        elif archived_count:
+            self.status_var.set(f"Sheet lists loaded. Archived {archived_count} paid received sheet(s).")
         else:
             self.status_var.set("Sheet lists loaded.")
 
@@ -2049,6 +2076,73 @@ class CardPipelineApp(tk.Tk):
         key = self._home_sheet_key(kind, name)
         self.home_selected_sheet_key = key
 
+    def _show_home_sheet_context_menu(self, event) -> str:
+        if not hasattr(self, "home_sheet_list"):
+            return "break"
+        index = self.home_sheet_list.nearest(event.y)
+        if index < 0 or index >= self.home_sheet_list.size():
+            return "break"
+        self.home_sheet_list.selection_clear(0, tk.END)
+        self.home_sheet_list.selection_set(index)
+        self.home_sheet_list.activate(index)
+        self._load_home_selected_marker()
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Delete Sheet", command=self.delete_selected_home_sheet)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    def delete_selected_home_sheet(self) -> None:
+        if not self.home_selected_sheet_key:
+            messagebox.showinfo("Choose sheet", "Choose a sheet on Home before deleting.")
+            return
+        kind, name = self._split_home_sheet_key(self.home_selected_sheet_key)
+        if kind not in {"Incoming", "Working", "Received"} or not name:
+            messagebox.showinfo("Cannot delete", "Only Incoming, Working, and Received sheets can be deleted from Home.")
+            return
+        path = self._sheet_path_for_stage(kind, name)
+        if not self._sheet_path_is_visible_home_sheet(kind, path):
+            messagebox.showerror("Delete blocked", f"Delete is only allowed inside {kind} sheets.")
+            return
+        if not path.exists():
+            messagebox.showerror("Delete failed", f"Sheet not found: {path}")
+            return
+        confirmed = messagebox.askyesno(
+            "Delete sheet?",
+            f"Delete this {kind.lower()} sheet?\n\n{name}\n\nThis removes the .xlsx file from the pipeline folder.",
+            icon="warning",
+        )
+        if not confirmed:
+            return
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "sheet-delete", self.lucas_identity):
+                path.unlink()
+                self._delete_sheet_marker(self.home_selected_sheet_key)
+                self._save_sheet_markers()
+        except Exception as error:
+            messagebox.showerror("Delete failed", str(error))
+            return
+        self.home_selected_sheet_key = ""
+        self.refresh_pipeline()
+        self.refresh_home()
+        self.status_var.set(f"Deleted {kind.lower()} sheet: {name}.")
+
+    def _sheet_path_is_visible_home_sheet(self, kind: str, path: Path) -> bool:
+        expected = {
+            "Incoming": INCOMING_SHEETS_DIR,
+            "Working": WORKING_SHEETS_DIR,
+            "Received": RECEIVED_SHEETS_DIR,
+        }.get(kind)
+        if expected is None:
+            return False
+        try:
+            path.resolve().relative_to(expected.resolve())
+            return path.suffix.lower() == ".xlsx"
+        except Exception:
+            return False
+
     def open_sheet_marker_editor(self) -> None:
         if not self.home_selected_sheet_key:
             messagebox.showinfo("Choose sheet", "Choose a sheet on Home before editing markers.")
@@ -2135,6 +2229,7 @@ class CardPipelineApp(tk.Tk):
                         key = moved_key
                         self.home_selected_sheet_key = key
                         moved = True
+                        marker.setdefault("received_at", datetime.now().isoformat(timespec="seconds"))
                 elif incoming_proper:
                     moved_key = self._move_working_sheet_to_incoming(key)
                     if moved_key:
@@ -2234,12 +2329,72 @@ class CardPipelineApp(tk.Tk):
             old_key = self._home_sheet_key(kind, path.name)
             marker = dict(self.home_sheet_markers.get(old_key, {}))
             marker["all_received"] = True
+            marker.setdefault("received_at", datetime.now().isoformat(timespec="seconds"))
             new_key = self._move_sheet_to_received(old_key)
             if new_key:
                 self._delete_sheet_marker(old_key)
                 self.home_sheet_markers[new_key] = marker
                 moved.append(path.name)
         return moved
+
+    def _archive_eligible_received_sheets(self) -> list[str]:
+        if not RECEIVED_SHEETS_DIR.exists():
+            return []
+        archived: list[str] = []
+        cutoff = datetime.now() - timedelta(days=14)
+        RECEIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        ARCHIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        with shared_lock(CARD_PIPELINE_DIR, "sheet-archive", self.lucas_identity):
+            latest_markers = self._load_sheet_markers()
+            self.home_sheet_markers.update(latest_markers)
+            for path in sorted(RECEIVED_SHEETS_DIR.glob("*.xlsx"), key=lambda item: item.name.lower()):
+                key = self._home_sheet_key("Received", path.name)
+                marker = dict(self.home_sheet_markers.get(key, {}))
+                if not marker.get("paid"):
+                    continue
+                if not self._received_sheet_is_archive_age(path, marker, cutoff):
+                    continue
+                received_at = self._received_at_for_archive(path, marker)
+                destination = self._unique_archive_path(path.name)
+                shutil.move(str(path), str(destination))
+                archived_key = self._home_sheet_key("Archived", destination.name)
+                marker["all_received"] = True
+                marker["paid"] = True
+                marker.setdefault("received_at", received_at.isoformat(timespec="seconds"))
+                marker["archived_at"] = datetime.now().isoformat(timespec="seconds")
+                marker["archived_from"] = path.name
+                self._delete_sheet_marker(key)
+                self.home_sheet_markers[archived_key] = marker
+                archived.append(destination.name)
+            if archived:
+                self._save_sheet_markers()
+        return archived
+
+    def _received_sheet_is_archive_age(self, path: Path, marker: dict[str, object], cutoff: datetime) -> bool:
+        received_at = self._received_at_for_archive(path, marker)
+        return received_at <= cutoff
+
+    def _received_at_for_archive(self, path: Path, marker: dict[str, object]) -> datetime:
+        raw = str(marker.get("received_at") or "").strip()
+        if raw:
+            try:
+                return datetime.fromisoformat(raw)
+            except ValueError:
+                pass
+        try:
+            return datetime.fromtimestamp(path.stat().st_mtime)
+        except OSError:
+            return datetime.now()
+
+    def _unique_archive_path(self, name: str) -> Path:
+        destination = ARCHIVED_SHEETS_DIR / name
+        if not destination.exists():
+            return destination
+        for index in range(2, 1000):
+            candidate = ARCHIVED_SHEETS_DIR / f"{destination.stem}-{index}{destination.suffix}"
+            if not candidate.exists():
+                return candidate
+        return ARCHIVED_SHEETS_DIR / f"{destination.stem}-{datetime.now().strftime('%Y%m%d%H%M%S')}{destination.suffix}"
 
     def _load_sheet_markers(self) -> dict[str, dict[str, object]]:
         try:
@@ -3083,6 +3238,7 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(message)
             return
         self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE))
+        self.pending_comp_assignment_row_ids = {id(row) for row in eligible}
         command_id = self.state.start_all_comps(requery_all=requery_all)
         self.comp_output_saved = False
         self._refresh_table()
@@ -3105,6 +3261,7 @@ class CardPipelineApp(tk.Tk):
         )
 
     def stop_comp_run(self) -> None:
+        self.pending_comp_assignment_row_ids = set()
         self.state.request_cancel()
         self.comp_output_saved = False
         self._refresh_table()
@@ -3123,6 +3280,7 @@ class CardPipelineApp(tk.Tk):
         self.state.set_rows([])
         self.row_sources = {}
         self.comp_sheet_sources = {}
+        self.pending_comp_assignment_row_ids = set()
         self.selected_working_sheet.set("")
         self.comp_output_saved = True
         self._cancel_cell_edit()
@@ -3272,8 +3430,9 @@ class CardPipelineApp(tk.Tk):
         self.state.set_rows(workbook_rows)
         self.row_sources = sources
         self.comp_sheet_sources = {}
+        self.pending_comp_assignment_row_ids = set()
         self.comp_output_saved = True
-        self._refresh_table(schedule_recommendations=any(row.card_ladder_comps_average is not None for row in workbook_rows))
+        self._refresh_table(schedule_recommendations=False)
         self.selected_working_sheet.set(name)
         self._select_working_sheet_in_list()
         self.status_var.set(f"Loaded working sheet: {name}")
@@ -3371,24 +3530,34 @@ class CardPipelineApp(tk.Tk):
         atomic_write_json(UNASSIGNED_PLAYERS_PATH, {"entries": entries})
 
     def _record_unassigned_players(self, rows: list[WorkbookRow]) -> None:
+        pending: list[tuple[str, str, str, str]] = []
         for row in rows:
-            self._record_unassigned_player(row)
+            item = CardPipelineApp._unassigned_player_record(self, row)
+            if item is not None:
+                pending.append(item)
+        if not pending:
+            return
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "unassigned-players", self.lucas_identity):
+                entries = self._load_unassigned_players()
+                for key, player_guess, title, cert in pending:
+                    existing = dict(entries.get(key, {}))
+                    existing["player"] = existing.get("player") or player_guess
+                    existing["last_title"] = title
+                    existing["sample_titles"] = self._append_unique_sample(existing.get("sample_titles"), title)
+                    existing["count"] = int(existing.get("count") or 0) + 1
+                    existing["last_seen"] = datetime.now().isoformat(timespec="seconds")
+                    existing["source"] = cert
+                    entries[key] = existing
+                self._save_unassigned_players(entries)
+        except Exception:
+            pass
 
     def _record_unassigned_player(self, row: WorkbookRow) -> None:
-        best_company = str(row.best_company or "").strip()
-        if row.estimated_payout is not None or (best_company and best_company.upper() != NO_COMPANY_TAKES_LABEL):
+        item = CardPipelineApp._unassigned_player_record(self, row)
+        if item is None:
             return
-        if row.card_ladder_comps_average is None and row.card_ladder_value is None:
-            return
-        title = str(row.card_title or "").strip()
-        if not title:
-            return
-        player_guess = self._guess_unassigned_player(row)
-        if not player_guess:
-            return
-        key = re.sub(r"[^a-z0-9]+", " ", player_guess.lower()).strip() or re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
-        if not key:
-            return
+        key, player_guess, title, cert = item
         try:
             with shared_lock(CARD_PIPELINE_DIR, "unassigned-players", self.lucas_identity):
                 entries = self._load_unassigned_players()
@@ -3398,11 +3567,28 @@ class CardPipelineApp(tk.Tk):
                 existing["sample_titles"] = self._append_unique_sample(existing.get("sample_titles"), title)
                 existing["count"] = int(existing.get("count") or 0) + 1
                 existing["last_seen"] = datetime.now().isoformat(timespec="seconds")
-                existing["source"] = str(row.cert_number or "")
+                existing["source"] = cert
                 entries[key] = existing
                 self._save_unassigned_players(entries)
         except Exception:
             pass
+
+    def _unassigned_player_record(self, row: WorkbookRow) -> tuple[str, str, str, str] | None:
+        best_company = str(row.best_company or "").strip()
+        if row.estimated_payout is not None or (best_company and best_company.upper() != NO_COMPANY_TAKES_LABEL):
+            return None
+        if row.card_ladder_comps_average is None and row.card_ladder_value is None:
+            return None
+        title = str(row.card_title or "").strip()
+        if not title:
+            return None
+        player_guess = self._guess_unassigned_player(row)
+        if not player_guess:
+            return None
+        key = re.sub(r"[^a-z0-9]+", " ", player_guess.lower()).strip() or re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+        if not key:
+            return None
+        return key, player_guess, title, str(row.cert_number or "")
 
     def _append_unique_sample(self, samples: object, value: str) -> list[str]:
         result = [str(item) for item in samples] if isinstance(samples, list) else []
@@ -3779,11 +3965,14 @@ class CardPipelineApp(tk.Tk):
         assignment_engine.add_player_sport_hint(player, category, display_name=player)
 
     def _queue_assignment_recommendations(self) -> None:
-        rows = [*self.state.rows, *self.review_rows]
+        row_ids = self.assignment_recommendation_row_ids
+        self.assignment_recommendation_row_ids = None
+        self.assignment_recommendation_after_id = None
+        all_rows = [*self.state.rows, *self.review_rows]
+        rows = [row for row in all_rows if id(row) in row_ids] if row_ids is not None else all_rows
         if not rows or not self.assignment_engine.companies:
             self.assignment_progress_value.set(0)
             return
-        self.assignment_recommendation_after_id = None
         self.assignment_recommendation_job += 1
         job_id = self.assignment_recommendation_job
         self.assignment_recommendation_running = True
@@ -3793,10 +3982,16 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set("Calculating assignment recommendations...")
         threading.Thread(target=self._assignment_recommendations_worker, args=(job_id, rows), daemon=True).start()
 
-    def _schedule_assignment_recommendations(self, delay_ms: int = 700) -> None:
+    def _schedule_assignment_recommendations(self, delay_ms: int = 700, row_ids: set[int] | None = None) -> None:
         if not self.assignment_engine.companies:
             self.assignment_progress_value.set(0)
             return
+        if row_ids is None:
+            self.assignment_recommendation_row_ids = None
+        elif self.assignment_recommendation_row_ids is not None:
+            self.assignment_recommendation_row_ids.update(row_ids)
+        elif self.assignment_recommendation_after_id is None:
+            self.assignment_recommendation_row_ids = set(row_ids)
         if self.assignment_recommendation_after_id is not None:
             try:
                 self.after_cancel(self.assignment_recommendation_after_id)
@@ -3810,6 +4005,8 @@ class CardPipelineApp(tk.Tk):
         progress_step = max(1, total // 25)
         try:
             for index, row in enumerate(rows, start=1):
+                if job_id != self.assignment_recommendation_job:
+                    return
                 recommendation = self.assignment_engine.recommend(row)
                 results.append((id(row), recommendation.company, recommendation.payout))
                 if index == total or index % progress_step == 0:
@@ -3828,8 +4025,10 @@ class CardPipelineApp(tk.Tk):
         }
         filled = 0
         comp_rows_updated = False
-        unresolved_rows: list[WorkbookRow] = []
+        review_rows_updated = False
+        unresolved_review_rows: list[WorkbookRow] = []
         state_row_ids = {id(row) for row in self.state.rows}
+        review_row_ids = {id(row) for row in self.review_rows}
         for row in [*self.state.rows, *self.review_rows]:
             company, payout = results.get(id(row), ("", None))
             if payout is not None:
@@ -3838,11 +4037,15 @@ class CardPipelineApp(tk.Tk):
                 filled += 1
                 if id(row) in state_row_ids:
                     comp_rows_updated = True
+                if id(row) in review_row_ids:
+                    review_rows_updated = True
             else:
                 row.best_company = NO_COMPANY_TAKES_LABEL
                 row.estimated_payout = None
-                unresolved_rows.append(row)
-        self._record_unassigned_players(unresolved_rows)
+                if id(row) in review_row_ids:
+                    unresolved_review_rows.append(row)
+                    review_rows_updated = True
+        self._record_unassigned_players(unresolved_review_rows)
         if comp_rows_updated:
             self.comp_output_saved = False
         total = int(payload.get("total") or 0)
@@ -3850,7 +4053,29 @@ class CardPipelineApp(tk.Tk):
         self.assignment_progress_value.set(100 if total else 0)
         self.review_status.set(f"Assignment recommendations complete: {filled}/{total} row(s) populated.")
         self.status_var.set(f"Assignment recommendations complete: {filled}/{total} row(s) populated.")
-        self._refresh_table(schedule_recommendations=False)
+        if comp_rows_updated and not review_rows_updated:
+            self._refresh_comp_table(schedule_recommendations=False)
+        else:
+            self._refresh_table(schedule_recommendations=False)
+
+    def _apply_assignment_to_comp_rows(self, row_ids: set[int]) -> int:
+        if not row_ids or not self.assignment_engine.companies:
+            return 0
+        updated = 0
+        for row in self.state.rows:
+            if id(row) not in row_ids:
+                continue
+            recommendation = self.assignment_engine.recommend(row)
+            if recommendation.payout is not None:
+                row.best_company = recommendation.company
+                row.estimated_payout = recommendation.payout
+            else:
+                row.best_company = NO_COMPANY_TAKES_LABEL
+                row.estimated_payout = None
+            updated += 1
+        if updated:
+            self.comp_output_saved = False
+        return updated
 
     def _update_assignment_recommendation_progress(self, payload: dict[str, object]) -> None:
         if int(payload.get("job_id") or 0) != self.assignment_recommendation_job:
@@ -3895,10 +4120,19 @@ class CardPipelineApp(tk.Tk):
         self._render_rows(self.comp_tree, self.state.rows, self.row_sources, self.comp_sheet_sources)
         self._render_rows(self.receive_tree, self.review_rows, self.review_sources, self.review_sheet_sources)
         self._render_rows(self.review_tree, self.review_rows, self.review_sources, self.review_sheet_sources)
-        completed = sum(1 for row in self.state.rows if row.card_ladder_value is not None)
-        self.summary_var.set(f"{len(self.intake_rows)} create rows | Loaded comp rows: {len(self.state.rows)} | Card Ladder values: {completed}")
+        self._refresh_comp_summary()
         if schedule_recommendations:
             self._schedule_assignment_recommendations()
+
+    def _refresh_comp_table(self, schedule_recommendations: bool = False, recommendation_row_ids: set[int] | None = None) -> None:
+        self._render_rows(self.comp_tree, self.state.rows, self.row_sources, self.comp_sheet_sources)
+        self._refresh_comp_summary()
+        if schedule_recommendations:
+            self._schedule_assignment_recommendations(row_ids=recommendation_row_ids)
+
+    def _refresh_comp_summary(self) -> None:
+        completed = sum(1 for row in self.state.rows if row.card_ladder_value is not None)
+        self.summary_var.set(f"{len(self.intake_rows)} create rows | Loaded comp rows: {len(self.state.rows)} | Card Ladder values: {completed}")
 
     def _render_rows(self, tree: ttk.Treeview, rows: list[WorkbookRow], sources: dict[int, str], sheet_sources: dict[int, str] | None = None) -> None:
         self._remember_column_widths(tree)
@@ -4230,14 +4464,16 @@ class CardPipelineApp(tk.Tk):
             return
 
     def _poll_events(self) -> None:
+        pending_refresh = False
+        pending_comp_refresh = False
         try:
             while True:
                 event = self.events.get_nowait()
                 if event == "refresh":
-                    self._refresh_table()
+                    pending_refresh = True
                 elif event == "comp_refresh":
                     self.comp_output_saved = False
-                    self._refresh_table(schedule_recommendations=True)
+                    pending_comp_refresh = True
                 elif isinstance(event, tuple):
                     kind, payload = event
                     if kind == "photo_rows":
@@ -4272,6 +4508,20 @@ class CardPipelineApp(tk.Tk):
                         self._handle_assignment_recommendation_error(payload)
         except queue.Empty:
             pass
+        if pending_comp_refresh:
+            with self.state.lock:
+                cardladder_running = self.state.cardladder_running
+                updated_row_ids = set(self.state.updated_row_ids)
+                self.state.updated_row_ids = set()
+            scoped_row_ids = updated_row_ids & self.pending_comp_assignment_row_ids
+            assigned = self._apply_assignment_to_comp_rows(scoped_row_ids)
+            if not cardladder_running:
+                self.pending_comp_assignment_row_ids = set()
+            self._refresh_comp_table(schedule_recommendations=False)
+            if assigned:
+                self.status_var.set(f"Updated assignment for {assigned} comped row(s).")
+        elif pending_refresh:
+            self._refresh_table()
         self.after(200, self._poll_events)
 
     def _parse_money_text(self, value: str) -> float | None:

@@ -6,6 +6,7 @@ import threading
 import time
 import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -254,6 +255,83 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(parsed["playerName"], "")
         self.assertNotEqual(parsed["sport"], "disney")
 
+    def test_tiger_woods_title_infers_golf(self) -> None:
+        parsed = assignment_engine.parse_card_for_matching("2001 Upper Deck Tiger Woods PSA 10")
+
+        self.assertEqual(parsed["sport"], "golf")
+        self.assertEqual(parsed["playerName"], "Tiger Woods")
+
+    def test_generic_cardladder_profile_is_rejected_for_manual_review(self) -> None:
+        bridge = app.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="27683042", grader="PSA", card_title="")
+        result = {
+            "excelRow": 2,
+            "certNumber": "27683042",
+            "grader": "PSA",
+            "status": "ok",
+            "value": 615,
+            "ocr": {
+                "profileTitle": "2017 Topps",
+                "profileGrader": "PSA",
+                "profileGrade": "10",
+                "resultCount": 233,
+                "comps": [
+                    {"source": "EBAY", "title": "PROBSTEIN AUCTIONS 2017 Topps", "date_sold": "Jun 8, 2026", "sale_type": "Auction", "price": "$615.00"},
+                    {"source": "EBAY", "title": "PC_SPORTSCARDS 27774480 Aaron Judge 2017 Topps", "date_sold": "Apr 28, 2026", "sale_type": "Auction", "price": "$662.00"},
+                ],
+            },
+        }
+
+        bridge._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.status, "Card Ladder review")
+        self.assertEqual(row.card_title, "")
+        self.assertIsNone(row.card_ladder_value)
+        self.assertIsNone(row.card_ladder_comps_average)
+        self.assertIn("overly broad", row.notes)
+
+    def test_partial_cardladder_capture_keeps_profile_title_when_available(self) -> None:
+        bridge = app.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="64342605", grader="PSA", card_title="")
+        result = {
+            "excelRow": 2,
+            "certNumber": "64342605",
+            "grader": "PSA",
+            "status": "partial_comp_capture",
+            "error": "Only captured 0 comp(s); expected 2. Re-run this row.",
+            "ocr": {
+                "profileTitle": "2001 Upper Deck Tiger Woods",
+                "profileGrader": "PSA",
+                "profileGrade": "4",
+                "resultCount": 2,
+                "comps": [],
+            },
+        }
+
+        bridge._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.status, "Card Ladder partial capture")
+        self.assertEqual(row.card_title, "2001 Upper Deck Tiger Woods PSA 4")
+        self.assertIsNone(row.card_ladder_value)
+        self.assertEqual(row.card_ladder_comps, "")
+
+    def test_old_partial_cardladder_capture_requests_extension_reload(self) -> None:
+        bridge = app.BridgeState()
+        row = WorkbookRow(excel_row=7, cert_number="64342605", grader="PSA", card_title="")
+        result = {
+            "excelRow": 7,
+            "certNumber": "64342605",
+            "grader": "PSA",
+            "status": "partial_comp_capture",
+            "error": "Only captured 0 comp(s); expected 2. Re-run this row.",
+            "extensionVersion": "2026-06-10-no-results-ocr-fallback-v3",
+        }
+
+        bridge._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.status, "Reload Card Ladder extension")
+        self.assertIn("older Card Ladder extension", row.notes)
+
     def test_player_sport_overrides_teach_unknown_players(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "overrides.json"
@@ -432,6 +510,102 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(recommendation.company, "Valid Payout")
         self.assertIsNone(decisions["No Payout Match"].payout)
         self.assertIn("no payout tier", decisions["No Payout Match"].reason)
+
+    def test_new_arena_workbook_format_drives_rules_payouts_and_dnb_overrides(self) -> None:
+        from openpyxl import Workbook
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arena-new-format.xlsx"
+            workbook = Workbook()
+            buying = workbook.active
+            buying.title = "Buying Guide"
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append(["", "", "Priority", "Priority"])
+            buying.append(["", "Percent Paid", 1.0, 0.92])
+            buying.append(["", "Categories", "Lebron", "Football"])
+            buying.append(["", "Price Ranges", "$300 - $4000", "$2,500 - $5,000"])
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append(["", "Downtown", "", "", "", "", "Color Blast"])
+            buying.append(["", 1.0, 0.85, 0.85, 0.85, "", "X", "X", "X", 0.9])
+            buying.append(["", "$250 - $499", "$500 - $999", "$1,000- $1,999", "$2,000+", "", "X", "X", "X", "$500+"])
+            buying.append([])
+            buying.append([])
+            buying.append([])
+            buying.append(["", "Football"])
+            buying.append(["", "Percent Paid", 1.35, 1.05, 1.0, 0.95, 0.0])
+            buying.append(["", "Price Ranges", "$10 - $25", "$26 - $50", "$51 - $99", "$100 - $299", "$300 - $499"])
+            buying.append([])
+            buying.append(["", "", "", "", "", "", "", "Copy / Paste This"])
+            buying.append(["", "", "", "", "", "$500+", "Color Blast (500+)", 0.9])
+
+            goats = workbook.create_sheet("GOATs")
+            goats.append(["AC GOAT LIST"])
+            goats.append(["Basketball", "Football", "Baseball"])
+            goats.append(["Lebron James", "Tom Brady", "Babe Ruth"])
+
+            dnb = workbook.create_sheet("DO NOT BUY LIST")
+            dnb.append([""])
+            dnb.append(["", "", "", "Do Not Buy these Players", "", "", "", "Do Not Buy these Players over $50"])
+            dnb.append([""])
+            dnb.append(["", "Do not buy", "", "Basketball", "Football", "Baseball", "", "Basketball", "Football", "Baseball"])
+            dnb.append(["", "Vintage Football (Pre-1989)", "", "", "Backup QB's", "Wander Franco", "", "", "Mac Jones", "Jasson Dominguez"])
+
+            dnb_cards = workbook.create_sheet("DNB Cards")
+            dnb_cards.append([])
+            dnb_cards.append(["", "", "", "", "", "Basketball", "", "", "", "Football", "", "", "", "Baseball"])
+            dnb_cards.append(["", "", "Some General Guidelines for DNB", "", "Image", "Card", "Grade(s)", "", "Image", "Card", "Grade(s)", "", "Image", "Card", "Grade(s)"])
+            dnb_cards.append([])
+            dnb_cards.append(["", "", "ANY Facsimile auto type cards", "", "", "2024 Prizm Black LeBron James Color Blast", "PSA 10"])
+
+            workbook.save(path)
+
+            rules_text = assignment_engine.read_workbook_text(path)
+            payout_text = assignment_engine.read_workbook_text(path, sheet_name="Payouts")
+            rules = assignment_engine.parse_rules(rules_text)
+            payouts = assignment_engine.parse_payouts(payout_text)
+            engine = assignment_engine.AssignmentEngine([
+                assignment_engine.AssignmentCompany("Arena", rules, payouts)
+            ])
+
+            blocked_specific = WorkbookRow(
+                excel_row=2,
+                cert_number="",
+                grader="PSA",
+                card_title="2024 Prizm Black LeBron James Color Blast PSA 10",
+                card_ladder_comps_average=600,
+            )
+            accepted_other_grade = WorkbookRow(
+                excel_row=3,
+                cert_number="",
+                grader="PSA",
+                card_title="2024 Prizm Black LeBron James Color Blast PSA 9",
+                card_ladder_comps_average=600,
+            )
+            pre_1989_football = WorkbookRow(
+                excel_row=4,
+                cert_number="",
+                grader="PSA",
+                card_title="1988 Topps Football Test Player PSA 9",
+                card_ladder_comps_average=20,
+            )
+
+            self.assertIn("Lebron $300-$4000", rules_text)
+            self.assertIn("Color Blast $500+", rules_text)
+            self.assertIn("Lebron $300-$4000 100%", payout_text)
+            self.assertFalse(engine.evaluate(blocked_specific)[0].accepted)
+            self.assertTrue(engine.evaluate(accepted_other_grade)[0].accepted)
+            self.assertFalse(engine.evaluate(pre_1989_football)[0].accepted)
 
 
 class AppSharedWorkflowLogicTests(unittest.TestCase):
@@ -630,6 +804,72 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(saved["Incoming|C.xlsx"]["assigned_person"], "C")
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
+                app.SHEET_MARKERS_PATH = old_markers
+
+    def test_paid_received_sheets_archive_after_two_weeks_only_when_paid(self) -> None:
+        class ArchiveDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _load_sheet_markers = app.CardPipelineApp._load_sheet_markers
+            _save_sheet_markers = app.CardPipelineApp._save_sheet_markers
+            _delete_sheet_marker = app.CardPipelineApp._delete_sheet_marker
+            _archive_eligible_received_sheets = app.CardPipelineApp._archive_eligible_received_sheets
+            _received_sheet_is_archive_age = app.CardPipelineApp._received_sheet_is_archive_age
+            _received_at_for_archive = app.CardPipelineApp._received_at_for_archive
+            _unique_archive_path = app.CardPipelineApp._unique_archive_path
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            archive_dir = root / "ARCHIVED SHEETS"
+            received_dir.mkdir()
+            paid_old = received_dir / "paid-old.xlsx"
+            unpaid_old = received_dir / "unpaid-old.xlsx"
+            paid_recent = received_dir / "paid-recent.xlsx"
+            for path in (paid_old, unpaid_old, paid_recent):
+                path.write_text("placeholder", encoding="utf-8")
+
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_archive = app.ARCHIVED_SHEETS_DIR
+            old_markers = app.SHEET_MARKERS_PATH
+            app.CARD_PIPELINE_DIR = root
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.ARCHIVED_SHEETS_DIR = archive_dir
+            app.SHEET_MARKERS_PATH = root / "sheet_markers.json"
+            old_date = "2026-05-01T12:00:00"
+            recent_date = datetime.now().isoformat(timespec="seconds")
+            app.SHEET_MARKERS_PATH.write_text(
+                json.dumps(
+                    {
+                        "Received|paid-old.xlsx": {"paid": True, "all_received": True, "received_at": old_date},
+                        "Received|unpaid-old.xlsx": {"paid": False, "all_received": True, "received_at": old_date},
+                        "Received|paid-recent.xlsx": {"paid": True, "all_received": True, "received_at": recent_date},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            dummy = ArchiveDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.home_sheet_markers = dummy._load_sheet_markers()
+            dummy.deleted_sheet_marker_keys = set()
+            try:
+                archived = dummy._archive_eligible_received_sheets()
+                saved = json.loads(app.SHEET_MARKERS_PATH.read_text(encoding="utf-8"))
+
+                self.assertEqual(archived, ["paid-old.xlsx"])
+                self.assertFalse(paid_old.exists())
+                self.assertTrue((archive_dir / "paid-old.xlsx").exists())
+                self.assertTrue(unpaid_old.exists())
+                self.assertTrue(paid_recent.exists())
+                self.assertNotIn("Received|paid-old.xlsx", saved)
+                self.assertIn("Archived|paid-old.xlsx", saved)
+                self.assertIn("Received|unpaid-old.xlsx", saved)
+                self.assertIn("Received|paid-recent.xlsx", saved)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.ARCHIVED_SHEETS_DIR = old_archive
                 app.SHEET_MARKERS_PATH = old_markers
 
     def test_profit_sales_are_deduped_and_delta_is_recorded(self) -> None:

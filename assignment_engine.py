@@ -27,6 +27,7 @@ CATEGORY_ALIASES = {
     "baseball": ["baseball", "mlb", "world series"],
     "basketball": ["basketball", "b-ball", "bball", "nba"],
     "hockey": ["hockey", "nhl"],
+    "golf": ["golf", "pga", "lpga"],
     "wnba": ["wnba"],
     "pokemon": ["pokemon", "poke"],
     "one piece": ["one piece", "onepiece", "one_piece", "1 piece"],
@@ -117,6 +118,7 @@ PLAYER_SPORT_HINTS = {
     "erling haaland": "soccer",
     "connor bedard": "hockey",
     "wayne gretzky": "hockey",
+    "tiger woods": "golf",
     "aja wilson": "wnba",
     "a'ja wilson": "wnba",
     "caitlin clark": "wnba",
@@ -462,6 +464,8 @@ class AssignmentRule:
     min_price: float | None = None
     max_price: float | None = None
     block: bool = False
+    min_year: int | None = None
+    max_year: int | None = None
 
 
 @dataclass
@@ -725,6 +729,14 @@ def read_structured_source_text(source: dict[str, Any], base_dir: Path, interact
             if not path or not path.exists():
                 raise
         except Exception:
+            if sheet_name.lower() == "payouts":
+                try:
+                    all_sheets = read_google_sheet_tabs(url, interactive=interactive_google)
+                    synthesized_payouts = synthesize_workbook_payouts(all_sheets)
+                    if synthesized_payouts:
+                        return "\n".join(synthesized_payouts)
+                except Exception:
+                    pass
             if not path or not path.exists():
                 raise
         try:
@@ -912,17 +924,23 @@ def google_sheet_csv_url(url: str) -> str:
 def read_workbook_text(path: Path, sheet_name: str = "") -> str:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
-        selected_sheets = [
-            sheet for sheet in workbook.worksheets
-            if not sheet_name or sheet.title.lower() == sheet_name.lower()
-        ]
+        all_sheets = [(sheet.title, worksheet_values(sheet)) for sheet in workbook.worksheets]
+        selected_sheets = [(title, values) for title, values in all_sheets if not sheet_name or title.lower() == sheet_name.lower()]
         if sheet_name and not selected_sheets:
+            if sheet_name.lower() == "payouts":
+                synthesized_payouts = synthesize_workbook_payouts(all_sheets)
+                if synthesized_payouts:
+                    return "\n".join(synthesized_payouts)
             raise ValueError(f"Workbook does not contain a sheet named {sheet_name}.")
-        sheets = [(sheet.title, worksheet_values(sheet)) for sheet in selected_sheets]
+        sheets = selected_sheets
         if not sheet_name:
             synthesized = synthesize_workbook_rules(sheets)
             if synthesized:
                 return "\n".join(synthesized)
+        if sheet_name and sheet_name.lower() == "payouts":
+            synthesized_payouts = synthesize_workbook_payouts(all_sheets)
+            if synthesized_payouts:
+                return "\n".join(synthesized_payouts)
         return workbook_values_text(sheets, sheet_name=sheet_name)
     finally:
         workbook.close()
@@ -965,7 +983,10 @@ def synthesize_workbook_rules(sheets: list[tuple[str, list[list[Any]]]]) -> list
         if re.search(r"^(comping standards|payouts)$", cleaned_title, re.I):
             continue
         if re.search(r"do not buy|never buy", cleaned_title, re.I):
-            rules.extend(synthesize_do_not_buy_rules(values))
+            rules.extend(synthesize_arena_do_not_buy_rules(values))
+            continue
+        if re.search(r"^dnb cards?$", cleaned_title, re.I):
+            rules.extend(synthesize_arena_dnb_card_rules(values))
             continue
         sheet_rules = synthesize_arena_club_rules(values, context)
         if not sheet_rules:
@@ -977,8 +998,118 @@ def synthesize_workbook_rules(sheets: list[tuple[str, list[list[Any]]]]) -> list
     return unique_values(rules)
 
 
+def synthesize_arena_do_not_buy_rules(values: list[list[Any]]) -> list[str]:
+    structured = synthesize_new_arena_do_not_buy_rules(values)
+    return structured if structured else synthesize_do_not_buy_rules(values)
+
+
+def synthesize_new_arena_do_not_buy_rules(values: list[list[Any]]) -> list[str]:
+    header_index = next(
+        (
+            index for index, row in enumerate(values)
+            if any(clean_rule_label(cell).lower() == "do not buy" for cell in row)
+            and any(normalize_sport_label(cell) for cell in row)
+        ),
+        -1,
+    )
+    if header_index < 0:
+        return []
+    header = values[header_index]
+    fixed_columns: list[tuple[int, str]] = []
+    over_columns: list[tuple[int, str]] = []
+    for column_index, cell in enumerate(header):
+        sport = normalize_sport_label(cell)
+        if not sport:
+            continue
+        section = nearest_dnb_section_label(values, header_index, column_index)
+        if "over $50" in section:
+            over_columns.append((column_index, sport))
+        else:
+            fixed_columns.append((column_index, sport))
+
+    rules: list[str] = []
+    general_column = next((index for index, cell in enumerate(header) if clean_rule_label(cell).lower() == "do not buy"), -1)
+    for row in values[header_index + 1:]:
+        if general_column >= 0 and general_column < len(row):
+            item = normalize_dnb_text(row[general_column])
+            if item:
+                rules.append(f"block: {item}")
+        for column_index, sport in fixed_columns:
+            item = normalize_dnb_text(row[column_index] if column_index < len(row) else "")
+            if item:
+                rules.append(f"block: {sport} {item}")
+        for column_index, sport in over_columns:
+            item = normalize_dnb_text(row[column_index] if column_index < len(row) else "")
+            if item:
+                rules.append(f"block: {sport} {item} over 50")
+    return unique_values(rules)
+
+
+def nearest_dnb_section_label(values: list[list[Any]], row_index: int, column_index: int) -> str:
+    for index in range(row_index - 1, -1, -1):
+        row = values[index]
+        label = clean_rule_label(row[column_index] if column_index < len(row) else "")
+        if label:
+            return label.lower()
+    return ""
+
+
+def normalize_dnb_text(value: Any) -> str:
+    text = clean_rule_label(value)
+    text = re.sub(r"^\*+|\*+$", "", text).strip()
+    text = re.sub(r"^any\s+", "", text, flags=re.I)
+    text = re.sub(r"\s+cards?$", "", text, flags=re.I).strip()
+    return normalize_repeated_name_tokens(text)
+
+
+def synthesize_arena_dnb_card_rules(values: list[list[Any]]) -> list[str]:
+    rules: list[str] = []
+    for row in values:
+        if len(row) > 2:
+            general = normalize_dnb_text(row[2])
+            if general and not re.search(r"general guidelines|image|card|grade", general, re.I):
+                rules.append(f"block: {general}")
+        for card_column, grade_column in ((5, 6), (9, 10), (13, 14)):
+            card = normalize_dnb_text(row[card_column] if card_column < len(row) else "")
+            grades = clean_rule_label(row[grade_column] if grade_column < len(row) else "")
+            if not card or re.search(r"^(card|basketball|football|baseball)$", card, re.I):
+                continue
+            for grade_suffix in dnb_grade_suffixes(grades):
+                rules.append(f"block: {card}{grade_suffix}")
+    return unique_values(rules)
+
+
+def parse_arena_rate(value: Any) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return parse_rate(value)
+
+
+def dnb_grade_suffixes(value: Any) -> list[str]:
+    text = clean_rule_label(value)
+    if not text or re.search(r"all grades?|any grades?", text, re.I):
+        return [""]
+    grades: list[str] = []
+    for match in re.finditer(r"\b(PSA|BGS|SGC|CGC)\s*(\d+(?:\.\d+)?)\b", text, re.I):
+        grades.append(f" {match.group(1).upper()} {match.group(2)}")
+    if grades:
+        return unique_values(grades)
+    return [f" {text}"]
+
+
+def synthesize_workbook_payouts(sheets: list[tuple[str, list[list[Any]]]]) -> list[str]:
+    payouts: list[str] = []
+    for title, values in sheets:
+        if is_new_arena_buying_guide_sheet(title, values):
+            payouts.extend(synthesize_new_arena_buying_guide_payouts(values))
+    return unique_values(payouts)
+
+
 def synthesize_arena_club_rules(values: list[list[Any]], context: dict[str, Any]) -> list[str]:
     rules: list[str] = []
+    if is_new_arena_buying_guide_values(values):
+        rules.extend(synthesize_new_arena_buying_guide_rules(values, context))
+        return unique_values(rules)
     rules.extend(synthesize_arena_club_category_table_rules(values, context))
 
     header_row_index = next(
@@ -1006,6 +1137,189 @@ def synthesize_arena_club_rules(values: list[list[Any]], context: dict[str, Any]
 
     rules.extend(synthesize_arena_club_sport_range_rules(values))
     return unique_values(rules)
+
+
+def is_new_arena_buying_guide_sheet(title: str, values: list[list[Any]]) -> bool:
+    return clean_rule_label(title).lower() == "buying guide" and is_new_arena_buying_guide_values(values)
+
+
+def is_new_arena_buying_guide_values(values: list[list[Any]]) -> bool:
+    return any(
+        any(clean_rule_label(cell).lower() == "copy / paste this" for cell in row)
+        for row in values
+    ) and any(
+        row_has_label(row, "percent paid") and row_has_label(row, "categories")
+        for row in sliding_row_pairs(values)
+    )
+
+
+def row_has_label(row: list[Any], label: str) -> bool:
+    return any(clean_rule_label(cell).lower() == label for cell in row)
+
+
+def sliding_row_pairs(values: list[list[Any]]) -> list[list[Any]]:
+    return [list(values[index]) + list(values[index + 1]) for index in range(max(0, len(values) - 1))]
+
+
+def synthesize_new_arena_buying_guide_rules(values: list[list[Any]], context: dict[str, Any]) -> list[str]:
+    rules: list[str] = []
+    rules.extend(synthesize_new_arena_priority_rules(values, context))
+    rules.extend(synthesize_new_arena_feature_rules(values))
+    rules.extend(synthesize_new_arena_sport_rules(values))
+    return unique_values(rules)
+
+
+def synthesize_new_arena_buying_guide_payouts(values: list[list[Any]]) -> list[str]:
+    payouts: list[str] = []
+    payouts.extend(synthesize_new_arena_priority_payouts(values))
+    payouts.extend(synthesize_new_arena_feature_payouts(values))
+    payouts.extend(synthesize_new_arena_sport_payouts(values))
+    payouts.extend(synthesize_new_arena_copy_paste_payouts(values))
+    return unique_values(payouts)
+
+
+def synthesize_new_arena_priority_rules(values: list[list[Any]], context: dict[str, Any]) -> list[str]:
+    category_row_index = find_row_index_with_label(values, "categories")
+    if category_row_index < 0:
+        return []
+    range_row = values[category_row_index + 1] if category_row_index + 1 < len(values) else []
+    rules: list[str] = []
+    for column_index, header in enumerate(values[category_row_index]):
+        label = normalize_rule_label(header)
+        parsed_range = parse_sheet_range(range_row[column_index] if column_index < len(range_row) else None)
+        if not label or not parsed_range:
+            continue
+        if re.search(r"bonus", label, re.I):
+            continue
+        if is_goat_rule_label(label) and context.get("goatPlayers"):
+            for player in context["goatPlayers"]:
+                rules.append(format_rule(player, parsed_range))
+                rules.append(f"goat-range: {format_rule(player, parsed_range)}")
+        else:
+            for expanded_label in expand_header_label(label):
+                rules.append(format_rule(expanded_label, parsed_range))
+    return rules
+
+
+def synthesize_new_arena_priority_payouts(values: list[list[Any]]) -> list[str]:
+    category_row_index = find_row_index_with_label(values, "categories")
+    if category_row_index < 1:
+        return []
+    percent_row = values[category_row_index - 1]
+    range_row = values[category_row_index + 1] if category_row_index + 1 < len(values) else []
+    payouts: list[str] = []
+    for column_index, header in enumerate(values[category_row_index]):
+        label = normalize_rule_label(header)
+        parsed_range = parse_sheet_range(range_row[column_index] if column_index < len(range_row) else None)
+        rate = parse_arena_rate(percent_row[column_index] if column_index < len(percent_row) else None)
+        if not label or not parsed_range or rate is None or rate <= 0 or re.search(r"bonus", label, re.I):
+            continue
+        payouts.append(format_payout(label, parsed_range, rate))
+    return payouts
+
+
+def synthesize_new_arena_feature_rules(values: list[list[Any]]) -> list[str]:
+    return [
+        format_rule(item["label"], item["range"])
+        for item in new_arena_feature_items(values)
+        if item["buy"]
+    ]
+
+
+def synthesize_new_arena_feature_payouts(values: list[list[Any]]) -> list[str]:
+    return [
+        format_payout(item["label"], item["range"], item["rate"])
+        for item in new_arena_feature_items(values)
+        if item["buy"]
+    ]
+
+
+def new_arena_feature_items(values: list[list[Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row_index, row in enumerate(values):
+        labels = [(column_index, normalize_rule_label(cell)) for column_index, cell in enumerate(row) if normalize_rule_label(cell)]
+        feature_labels = [(column_index, label) for column_index, label in labels if label.lower() in {"vintage", "goat", "downtown", "color blast", "kaboom", "manga"}]
+        if len(feature_labels) < 2 or row_index + 2 >= len(values):
+            continue
+        next_starts = [column_index for column_index, _label in feature_labels[1:]] + [max(len(values[row_index + 1]), len(values[row_index + 2]))]
+        for (start_column, label), end_column in zip(feature_labels, next_starts):
+            for column_index in range(start_column, end_column):
+                payout_cell = values[row_index + 1][column_index] if column_index < len(values[row_index + 1]) else None
+                range_cell = values[row_index + 2][column_index] if column_index < len(values[row_index + 2]) else None
+                parsed_range = parse_sheet_range(range_cell)
+                rate = parse_arena_rate(payout_cell)
+                if not parsed_range or rate is None:
+                    continue
+                items.append({"label": label, "range": parsed_range, "rate": rate, "buy": rate > 0})
+    return items
+
+
+def synthesize_new_arena_sport_rules(values: list[list[Any]]) -> list[str]:
+    return [
+        format_rule(item["label"], item["range"])
+        for item in new_arena_sport_items(values)
+        if item["buy"]
+    ]
+
+
+def synthesize_new_arena_sport_payouts(values: list[list[Any]]) -> list[str]:
+    return [
+        format_payout(item["label"], item["range"], item["rate"])
+        for item in new_arena_sport_items(values)
+        if item["buy"]
+    ]
+
+
+def new_arena_sport_items(values: list[list[Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row_index, row in enumerate(values):
+        sport = normalize_sport_label(row[1] if len(row) > 1 else "") if len(row) > 1 else ""
+        if not sport or row_index + 2 >= len(values):
+            continue
+        percent_row = values[row_index + 1]
+        range_row = values[row_index + 2]
+        if not row_has_label(percent_row, "percent paid") or not row_has_label(range_row, "price ranges"):
+            continue
+        for column_index in range(2, max(len(percent_row), len(range_row))):
+            parsed_range = parse_sheet_range(range_row[column_index] if column_index < len(range_row) else None)
+            rate = parse_arena_rate(percent_row[column_index] if column_index < len(percent_row) else None)
+            if not parsed_range or rate is None:
+                continue
+            items.append({"label": sport, "range": parsed_range, "rate": rate, "buy": rate > 0})
+    return items
+
+
+def synthesize_new_arena_copy_paste_payouts(values: list[list[Any]]) -> list[str]:
+    payouts: list[str] = []
+    for row in values:
+        label = clean_rule_label(row[6] if len(row) > 6 else "")
+        rate = parse_arena_rate(row[7] if len(row) > 7 else None)
+        if not label or rate is None or rate <= 0 or re.search(r"\bbonus\b|wrong|other", label, re.I):
+            continue
+        parsed = parse_copy_paste_payout_label(label)
+        if parsed:
+            payouts.append(format_payout(parsed["label"], parsed["range"], rate))
+    return payouts
+
+
+def parse_copy_paste_payout_label(label: str) -> dict[str, Any] | None:
+    cleaned = clean_rule_label(label).rstrip(")")
+    match = re.match(r"(.+?)\s*\(([^)]+)\)?$", cleaned)
+    if not match:
+        parsed_range = parse_sheet_range("$500+") if clean_rule_label(label).lower() in {"soccer", "ufc", "hockey"} else None
+        return {"label": normalize_rule_label(label), "range": parsed_range} if parsed_range else None
+    parsed_range = parse_sheet_range(f"${match.group(2)}")
+    if not parsed_range:
+        return None
+    return {"label": normalize_rule_label(match.group(1)), "range": parsed_range}
+
+
+def find_row_index_with_label(values: list[list[Any]], label: str) -> int:
+    expected = label.lower()
+    for index, row in enumerate(values):
+        if any(clean_rule_label(cell).lower() == expected for cell in row):
+            return index
+    return -1
 
 
 def synthesize_arena_club_category_table_rules(values: list[list[Any]], context: dict[str, Any]) -> list[str]:
@@ -1135,7 +1449,7 @@ def normalize_rule_label(value: Any) -> str:
     label = re.sub(r"\bKOBE\b", "Kobe Bryant", label, flags=re.I)
     label = re.sub(r"\bKabooms\b", "Kaboom", label, flags=re.I)
     label = re.sub(r"\bGOATS\b", "GOAT", label, flags=re.I)
-    return label.strip()
+    return normalize_repeated_name_tokens(label.strip())
 
 
 def is_goat_rule_label(value: Any) -> bool:
@@ -1852,6 +2166,107 @@ def normalize_key(value: Any) -> str:
 
 def clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9/.' -]+", " ", strip_accents(str(value or "")).lower())).strip()
+
+
+def normalize_repeated_name_tokens(value: Any) -> str:
+    text = clean_rule_label(value)
+    text = re.sub(r"\bTom\s+Tom\s+Brady\b", "Tom Brady", text, flags=re.I)
+    text = re.sub(r"\bKobe\s+Kobe\s+Bryant\b", "Kobe Bryant", text, flags=re.I)
+    text = re.sub(r"\bLebron\s+Lebron\s+James\b", "Lebron James", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def parse_sheet_range(value: Any) -> dict[str, float] | None:
+    text = str(value or "")
+    match = re.search(r"\$?\s*(\d[\d,]*(?:\.\d+)?k?)\s*(?:-|–|—|to|through|thru)\s*\$?\s*(\d[\d,]*(?:\.\d+)?k?)", text, re.I)
+    if match:
+        return {"min": parse_money(match.group(1)) or 0, "max": parse_money(match.group(2)) or 0}
+    shorthand_match = re.search(r"\b(\d+(?:\.\d+)?)\s*k\s*-\s*(\d+(?:\.\d+)?)\s*k?\b", text, re.I)
+    if shorthand_match:
+        return {"min": parse_money(f"{shorthand_match.group(1)}k") or 0, "max": parse_money(f"{shorthand_match.group(2)}k") or 0}
+    plus_match = re.search(r"\$?\s*(\d[\d,]*(?:\.\d+)?k?)\s*\+", text, re.I)
+    if plus_match:
+        return {"min": parse_money(plus_match.group(1)) or 0, "max": None}
+    return None
+
+
+def format_rule(label: str, parsed_range: dict[str, float]) -> str:
+    if parsed_range.get("max") is None:
+        return f"{label} ${format_rule_number(parsed_range['min'])}+"
+    return f"{label} ${format_rule_number(parsed_range['min'])}-${format_rule_number(parsed_range['max'])}"
+
+
+def format_payout(label: str, parsed_range: dict[str, float], rate: float) -> str:
+    return f"{format_rule(label, parsed_range)} {format_rule_number(rate * 100)}%"
+
+
+def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
+    text = str(line or "").strip()
+    pre_year_match = re.search(r"\bpre[- ]?(\d{4})\b", text, re.I)
+    max_year = int(pre_year_match.group(1)) - 1 if pre_year_match else None
+    text_without_year = re.sub(r"\(?\bpre[- ]?\d{4}\b\)?", " ", text, flags=re.I).strip()
+    if max_year is not None:
+        text_without_year = re.sub(r"\bvintage\s+(?=basketball|football|baseball|soccer|hockey|ufc)\b", "", text_without_year, flags=re.I).strip()
+    over_match = re.match(r"(.+?)\s+(?:over|above|more\s+than)\s+\$?\s*([\d,.]+k?)\+?$", text_without_year, re.I)
+    if over_match:
+        return AssignmentRule(matcher=rule_matcher_label(over_match.group(1)), min_price=parse_money(over_match.group(2)), block=block, max_year=max_year)
+    range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|–|—|to|through|thru)\s*\$?\s*([\d,.]+k?)", text_without_year, re.I)
+    if range_match:
+        matcher = f"{text_without_year[:range_match.start()]} {text_without_year[range_match.end():]}".strip(" -:|")
+        return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=parse_money(range_match.group(1)), max_price=parse_money(range_match.group(2)), block=block, max_year=max_year)
+    plus_match = re.search(r"\$?\s*([\d,.]+k?)\s*\+", text_without_year, re.I)
+    if plus_match:
+        matcher = f"{text_without_year[:plus_match.start()]} {text_without_year[plus_match.end():]}".strip(" -:|")
+        return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=parse_money(plus_match.group(1)), block=block, max_year=max_year)
+    return AssignmentRule(matcher=rule_matcher_label(text_without_year), block=block, max_year=max_year)
+
+
+def rule_matches(rule: AssignmentRule, haystack: str, price: float) -> bool:
+    if rule.matcher and not term_matches(rule.matcher, haystack):
+        return False
+    if rule.min_price is not None and price < rule.min_price:
+        return False
+    if rule.max_price is not None and price > rule.max_price:
+        return False
+    if rule.min_year is not None or rule.max_year is not None:
+        year = card_year_from_text(haystack)
+        if year is None:
+            return False
+        if rule.min_year is not None and year < rule.min_year:
+            return False
+        if rule.max_year is not None and year > rule.max_year:
+            return False
+    return True
+
+
+def card_year_from_text(value: Any) -> int | None:
+    for match in re.finditer(r"\b(19\d{2}|20\d{2})\b", str(value or "")):
+        year = int(match.group(1))
+        if 1900 <= year <= 2099:
+            return year
+    return None
+
+
+def parse_payout_table_line(line: str) -> PayoutTier | None:
+    text = str(line or "").strip()
+    if not text or re.search(r"\bcategory\b|\bvalue range\b|\bpayout\b", text, re.I):
+        return None
+    range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|–|—|to|through|thru)\s*\$?\s*([\d,.]+k?)", text, re.I)
+    plus_match = None if range_match else re.search(r"\$?\s*([\d,.]+k?)\s*\+", text, re.I)
+    match = range_match or plus_match
+    if not match:
+        return None
+    before = text[:match.start()].strip(" -:|")
+    after = text[match.end():].strip()
+    rate = parse_payout_table_rate(after)
+    if rate is None:
+        return None
+    return PayoutTier(
+        min_price=parse_money(match.group(1)) or 0,
+        max_price=parse_money(range_match.group(2)) if range_match else None,
+        rate=rate,
+        matcher=normalize_payout_category(before),
+    )
 
 
 initialize_player_sport_data()

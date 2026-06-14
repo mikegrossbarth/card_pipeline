@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-10-no-results-profile-v2";
+const CARDLADDER_CONTENT_VERSION = "2026-06-14-visible-dom-capture-v3";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -795,15 +795,50 @@ function readCardLadderValue() {
 
   if (clNode) {
     const localText = collectNearbyText(clNode.el);
-    const localMatch = localText.replace(/\s+/g, " ").match(/\$?\s*([\d,]+(?:\.\d{1,2})?)/);
+    const localMatch = localText.replace(/\s+/g, " ").match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
     if (localMatch) return Number(localMatch[1].replace(/,/g, ""));
   }
+
+  const visibleValue = readVisibleCardLadderValue();
+  if (visibleValue != null) return visibleValue;
 
   const moneyValues = [...text.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g)]
     .map((match) => Number(match[1].replace(/,/g, "")))
     .filter((value) => Number.isFinite(value) && value > 0);
 
   return moneyValues.length === 1 ? moneyValues[0] : null;
+}
+
+function readVisibleCardLadderValue() {
+  const items = visibleTextItems()
+    .filter((item) => item.text.length <= 160);
+  const labels = items.filter((item) => /\b(?:C\s*L|Card\s*Ladder)\s*Value\b/i.test(item.text));
+  for (const label of labels) {
+    const inLabel = parseMoneyFromText(label.text);
+    if (inLabel != null) return inLabel;
+
+    const parentText = collectNearbyText(label.el).replace(/\s+/g, " ");
+    const nearbyInParent = parentText.match(/\b(?:C\s*L|Card\s*Ladder)\s*Value\b.{0,120}?\$\s*([\d,]+(?:\.\d{1,2})?)/i);
+    if (nearbyInParent) return Number(nearbyInParent[1].replace(/,/g, ""));
+
+    const labelRect = label.rect;
+    const nearbyMoney = items
+      .map((item) => ({
+        ...item,
+        value: parseMoneyFromText(item.text),
+        verticalDistance: Math.abs((item.rect.top + item.rect.bottom) / 2 - (labelRect.top + labelRect.bottom) / 2),
+        horizontalDistance: Math.max(0, item.rect.left - labelRect.right),
+      }))
+      .filter((item) =>
+        item.value != null
+        && item.rect.top > labelRect.top - 80
+        && item.rect.top < labelRect.bottom + 160
+        && item.rect.left > labelRect.left - 40
+      )
+      .sort((a, b) => (a.verticalDistance + a.horizontalDistance / 4) - (b.verticalDistance + b.horizontalDistance / 4))[0];
+    if (nearbyMoney?.value != null) return nearbyMoney.value;
+  }
+  return null;
 }
 
 function extractDomResult(row = {}) {
@@ -824,7 +859,7 @@ function extractDomResult(row = {}) {
   }
   const value = readCardLadderValue();
   const profile = extractProfileFromText(text);
-  const comps = extractCompsFromText(text);
+  const comps = mergeComps(extractCompsFromDom(), extractCompsFromText(text));
   const resultCount = extractResultCount(text);
   return {
     ...row,
@@ -840,7 +875,7 @@ function extractDomResult(row = {}) {
       profileGrade: profile.grade,
       resultCount,
       comps,
-      evidence: "Extracted from Card Ladder page text.",
+      evidence: comps.length ? "Extracted from visible Card Ladder page elements." : "Extracted from Card Ladder page text.",
       debugImage: "",
     },
     pageUrl: location.href,
@@ -888,6 +923,7 @@ function cleanProfileTitle(value) {
   let title = String(value || "").replace(/\s+/g, " ").trim();
   const tailPatterns = [
     /\s+\bclose\s+\$?\d[\d,]*(?:\.\d{1,2})?.*$/i,
+    /\s+\bclose\s+search[_\s-]*off\b.*$/i,
     /\s+[x×]\s*$/i,
     /\s+\bthere\s+are\s+no\s+results\b.*$/i,
     /\s+\btry\s+searching\b.*$/i,
@@ -916,6 +952,38 @@ function extractCompsFromText(text) {
     comps.push(comp);
   }
   return dedupeComps(comps).slice(0, 5);
+}
+
+function extractCompsFromDom() {
+  const items = visibleTextItems()
+    .filter((item) => item.text && item.text.length <= 500);
+  const comps = [];
+  for (const sourceItem of items) {
+    if (comps.length >= 10) break;
+    const sourceMatch = sourceLineMatch(sourceItem.text) || sourceItem.text.match(COMP_SOURCE_PATTERN);
+    if (!sourceMatch) continue;
+    const container = nearestCompContainer(sourceItem.el);
+    const chunk = container ? visibleText(container) : collectNearbyText(sourceItem.el);
+    const comp = parseCompChunk(chunk, sourceMatch);
+    if (comp) comps.push(comp);
+  }
+  return dedupeComps(comps).slice(0, 5);
+}
+
+function nearestCompContainer(el) {
+  let current = el;
+  for (let depth = 0; depth < 7 && current; depth += 1) {
+    const text = visibleText(current);
+    if (text.length > 20 && text.length < 1800 && compDatePattern().test(text) && /\$\s*[\d,]+(?:\.\d{1,2})?/.test(text)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return el.closest?.('[role="row"], tr, li, article, [class*="row"], [class*="card"], [class*="sale"], [class*="result"]') || null;
+}
+
+function mergeComps(...groups) {
+  return dedupeComps(groups.flat().filter(Boolean)).slice(0, 5);
 }
 
 function sourceLineMatch(line) {
@@ -1250,6 +1318,24 @@ function visibleText(el) {
   const box = el.getBoundingClientRect();
   if (style.display === "none" || style.visibility === "hidden" || box.width === 0 || box.height === 0) return "";
   return (el.innerText || el.textContent || el.getAttribute("aria-label") || el.title || "").trim();
+}
+
+function visibleTextItems() {
+  return [...document.querySelectorAll("body *")]
+    .filter((el) => isVisible(el))
+    .map((el) => ({
+      el,
+      text: visibleText(el).replace(/\s+/g, " ").trim(),
+      rect: el.getBoundingClientRect(),
+    }))
+    .filter((item) => item.text);
+}
+
+function parseMoneyFromText(text) {
+  const match = String(text || "").match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
+  if (!match) return null;
+  const value = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(value) ? value : null;
 }
 
 function isVisible(node) {
