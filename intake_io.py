@@ -15,6 +15,23 @@ DEFAULT_SHEET = "Cards"
 RECEIVED_HEADER = "RECEIVED"
 RECEIVED_FILL = PatternFill("solid", fgColor="C6EFCE")
 RECEIVED_FONT = Font(color="006100")
+COMPANY_SHEET_HEADERS = [
+    "Date Added",
+    "Source Sheet",
+    "Source",
+    "Certification Number",
+    "Grader",
+    "Card Description",
+    "Purchase Price",
+    "Card Ladder Value",
+    "Comps",
+    "CY Estimate",
+    "CY Confidence",
+    "Best Company",
+    "Estimated Payout",
+    "Status",
+    "Notes",
+]
 
 PHOTO_EXPORT_HEADERS = {
     "cert": ("certificationnumber", "certnumber", "cert"),
@@ -48,6 +65,8 @@ CERT_HEADERS = ("certificationnumber", "certnumber", "cert", "certification", "c
 GRADER_HEADERS = ("company", "gradingcompany", "grader", "gradingco", "gradingcompanyname")
 CARD_HEADERS = ("carddescription", "card", "description", "title", "cardtitle", "item", "itemtitle")
 PURCHASE_PRICE_HEADERS = ("purchaseprice", "purchase", "price", "cost", "buyprice", "paid")
+CY_ESTIMATE_HEADERS = ("cyestimate", "cyestimatedvalue", "cyvalue", "estimate", "estimatedvalue")
+CY_CONFIDENCE_HEADERS = ("cyconfidence", "confidence", "estimateconfidence", "cyestimateconfidence")
 CARD_LADDER_VALUE_HEADERS = (
     "cardladdervalue",
     "cardladder",
@@ -87,6 +106,8 @@ SIMPLE_HEADER_ALIASES = (
     + GRADER_HEADERS
     + CARD_HEADERS
     + PURCHASE_PRICE_HEADERS
+    + CY_ESTIMATE_HEADERS
+    + CY_CONFIDENCE_HEADERS
     + CARD_LADDER_VALUE_HEADERS
     + COMPS_AVERAGE_HEADERS
     + BEST_COMPANY_HEADERS
@@ -109,6 +130,8 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
             purchase_price = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 3))
             card_ladder_value = parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, None))
             comps_average = parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, None))
+            cy_value = parse_money(_cell_by_header(sheet, row_index, headers, CY_ESTIMATE_HEADERS, None))
+            cy_confidence = _cell_by_header(sheet, row_index, headers, CY_CONFIDENCE_HEADERS, None)
             comp_details = clean_part(_cell_by_header(sheet, row_index, headers, COMP_DETAILS_HEADERS, None))
             best_company = clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, None))
             estimated_payout = parse_money(_cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, None))
@@ -126,6 +149,8 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
                     "purchase_price": purchase_price,
                     "card_ladder_value": card_ladder_value,
                     "card_ladder_comps_average": comps_average,
+                    "cy_value": cy_value,
+                    "cy_confidence": cy_confidence,
                     "card_ladder_comps": comp_details,
                     "best_company": best_company,
                     "estimated_payout": estimated_payout,
@@ -224,6 +249,8 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         "Purchase Price",
         "Card Ladder Value",
         "Comps",
+        "CY Estimate",
+        "CY Confidence",
         "Card Ladder Comp Details",
         "Card Ladder Screenshot",
         "Best Company",
@@ -241,6 +268,8 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
                 row.existing_value,
                 row.card_ladder_value,
                 row.card_ladder_comps_average,
+                row.cy_value,
+                row.cy_confidence,
                 row.card_ladder_comps,
                 row.card_ladder_screenshot,
                 row.best_company,
@@ -257,7 +286,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         cell.font = header_font
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    widths = [18, 22, 62, 16, 18, 14, 58, 42, 18, 18, 20, 38]
+    widths = [18, 22, 62, 16, 18, 14, 14, 16, 58, 42, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[chr(64 + index)].width = width
     workbook.save(path)
@@ -277,9 +306,10 @@ def append_company_sheet_rows(directory: Path, rows: list[Any], source_lookup: d
         return result
     directory.mkdir(parents=True, exist_ok=True)
     for company, company_rows in grouped.items():
-        path = company_weekly_sheet_path(directory, company)
+        path = company_workbook_path(directory, company)
+        sheet_name = company_weekly_sheet_name()
         try:
-            append_result = append_rows_to_company_sheet(path, company_rows, source_lookup, sheet_source_lookup)
+            append_result = append_rows_to_company_sheet(path, company_rows, source_lookup, sheet_source_lookup, sheet_name=sheet_name)
             added = int(append_result.get("added") or 0)
             if added:
                 result["files_updated"] += 1
@@ -290,6 +320,18 @@ def append_company_sheet_rows(directory: Path, rows: list[Any], source_lookup: d
     return result
 
 
+def company_workbook_path(directory: Path, company: str) -> Path:
+    safe_company = safe_filename(company) or "Company"
+    company_dir = directory / safe_company
+    company_dir.mkdir(parents=True, exist_ok=True)
+    return company_dir / f"{safe_company}.xlsx"
+
+
+def company_weekly_sheet_name(today: date | None = None) -> str:
+    start = week_start(today or date.today())
+    return f"Week of {start:%Y-%m-%d}"
+
+
 def company_weekly_sheet_path(directory: Path, company: str, today: date | None = None) -> Path:
     start = week_start(today or date.today())
     safe_company = safe_filename(company) or "Company"
@@ -298,36 +340,86 @@ def company_weekly_sheet_path(directory: Path, company: str, today: date | None 
     return company_dir / f"{safe_company} WEEK OF {start:%Y-%m-%d}.xlsx"
 
 
+def ensure_company_weekly_sheets(directory: Path, companies: list[str], week_start_date: date | None = None) -> dict[str, Any]:
+    result = {"created": [], "existing": [], "errors": []}
+    for company in companies:
+        company = clean_part(company)
+        if not company:
+            continue
+        try:
+            path = company_workbook_path(directory, company)
+            sheet_name = company_weekly_sheet_name(week_start_date or date.today())
+            created = ensure_company_workbook_sheet(path, sheet_name)
+            sheet_ref = f"{path}:{sheet_name}"
+            if created:
+                result["created"].append(sheet_ref)
+                continue
+            result["existing"].append(sheet_ref)
+        except Exception as error:
+            result["errors"].append(f"{company}: {error}")
+    return result
+
+
+def create_empty_company_sheet(path: Path) -> Path:
+    ensure_company_workbook_sheet(path, "Cards")
+    return path
+
+
+def ensure_company_workbook_sheet(path: Path, sheet_name: str) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    created = False
+    if path.exists():
+        workbook = load_workbook(path)
+        if sheet_name in workbook.sheetnames:
+            sheet = workbook[sheet_name]
+            ensure_cy_columns_after_comps(sheet)
+            workbook.save(path)
+            workbook.close()
+            return False
+        if workbook.sheetnames == ["Sheet"] and _sheet_max_row(workbook.active) == 1 and workbook.active.cell(1, 1).value is None:
+            sheet = workbook.active
+            sheet.title = sheet_name
+        else:
+            sheet = workbook.create_sheet(sheet_name)
+        created = True
+    else:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = sheet_name
+        created = True
+    if _sheet_max_row(sheet) <= 1 and sheet.cell(1, 1).value is None:
+        set_company_sheet_headers(sheet)
+    style_company_sheet_header(sheet)
+    sheet.auto_filter.ref = sheet.dimensions
+    workbook.save(path)
+    workbook.close()
+    return created
+
+
 def week_start(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
-def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dict[int, str] | None = None, sheet_source_lookup: dict[int, str] | None = None) -> dict[str, Any]:
+def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dict[int, str] | None = None, sheet_source_lookup: dict[int, str] | None = None, sheet_name: str | None = None) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    headers = [
-        "Date Added",
-        "Source Sheet",
-        "Source",
-        "Certification Number",
-        "Grader",
-        "Card Description",
-        "Purchase Price",
-        "Card Ladder Value",
-        "Comps",
-        "Best Company",
-        "Estimated Payout",
-        "Status",
-        "Notes",
-    ]
     if path.exists():
         workbook = load_workbook(path)
-        sheet = workbook.active
+        if sheet_name:
+            if sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+            else:
+                sheet = workbook.create_sheet(sheet_name)
+                set_company_sheet_headers(sheet)
+                style_company_sheet_header(sheet)
+        else:
+            sheet = workbook.active
+        ensure_cy_columns_after_comps(sheet)
         existing_certs = existing_sheet_certs(sheet)
     else:
         workbook = Workbook()
         sheet = workbook.active
-        sheet.title = "Cards"
-        sheet.append(headers)
+        sheet.title = sheet_name or "Cards"
+        set_company_sheet_headers(sheet)
         style_company_sheet_header(sheet)
         existing_certs = set()
 
@@ -354,6 +446,8 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
                 purchase_price,
                 getattr(row, "card_ladder_value", None),
                 getattr(row, "card_ladder_comps_average", None),
+                getattr(row, "cy_value", None),
+                getattr(row, "cy_confidence", None),
                 getattr(row, "best_company", ""),
                 sale_price,
                 getattr(row, "status", ""),
@@ -365,7 +459,7 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
                 "date_added": today_text,
                 "company": company,
                 "weekly_sheet": str(path),
-                "weekly_sheet_name": path.name,
+                "weekly_sheet_name": f"{path.name}:{sheet.title}",
                 "source_sheet": source_sheet,
                 "source": source,
                 "cert_number": cert,
@@ -375,6 +469,8 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
                 "sale_price": sale_price,
                 "card_ladder_value": parse_money(getattr(row, "card_ladder_value", None)),
                 "comps": parse_money(getattr(row, "card_ladder_comps_average", None)),
+                "cy_estimate": parse_money(getattr(row, "cy_value", None)),
+                "cy_confidence": getattr(row, "cy_confidence", None),
                 "best_company": clean_part(getattr(row, "best_company", "")),
                 "status": clean_part(getattr(row, "status", "")),
                 "notes": clean_part(getattr(row, "notes", "")),
@@ -384,8 +480,9 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
             existing_certs.add(cert)
         added += 1
     if added:
+        style_company_sheet_header(sheet)
         sheet.auto_filter.ref = sheet.dimensions
-        workbook.save(path)
+    workbook.save(path)
     workbook.close()
     return {"added": added, "records": added_records}
 
@@ -409,9 +506,38 @@ def style_company_sheet_header(sheet) -> None:
         cell.fill = header_fill
         cell.font = header_font
     sheet.freeze_panes = "A2"
-    widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 18, 18, 20, 38]
+    widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 14, 16, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
+
+
+def set_company_sheet_headers(sheet) -> None:
+    for index, header in enumerate(COMPANY_SHEET_HEADERS, start=1):
+        sheet.cell(1, index).value = header
+
+
+def ensure_cy_columns_after_comps(sheet) -> None:
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
+    comps_col = next((headers[alias] for alias in COMPS_AVERAGE_HEADERS if alias in headers), None)
+    if not comps_col:
+        return
+    if not any(alias in headers for alias in CY_ESTIMATE_HEADERS):
+        sheet.insert_cols(comps_col + 1)
+        cell = sheet.cell(1, comps_col + 1)
+        cell.value = "CY Estimate"
+        cell.fill = PatternFill("solid", fgColor="111827")
+        cell.font = Font(color="FFFFFF", bold=True)
+        sheet.column_dimensions[cell.column_letter].width = 14
+        headers = _header_map_for_row(sheet, 1)
+    cy_col = next((headers[alias] for alias in CY_ESTIMATE_HEADERS if alias in headers), comps_col + 1)
+    if not any(alias in headers for alias in CY_CONFIDENCE_HEADERS):
+        sheet.insert_cols(cy_col + 1)
+        cell = sheet.cell(1, cy_col + 1)
+        cell.value = "CY Confidence"
+        cell.fill = PatternFill("solid", fgColor="111827")
+        cell.font = Font(color="FFFFFF", bold=True)
+        sheet.column_dimensions[cell.column_letter].width = 16
+    sheet.auto_filter.ref = sheet.dimensions
 
 
 def read_company_profit_records(directory: Path) -> list[dict[str, Any]]:
@@ -425,35 +551,42 @@ def read_company_profit_records(directory: Path) -> list[dict[str, Any]]:
         except Exception:
             continue
         try:
-            sheet = workbook.active
-            headers = _header_map_for_row(sheet, 1)
-            for row_index in range(2, _sheet_max_row(sheet) + 1):
-                cert = normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, 4))
-                card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, 6))
-                purchase = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 7))
-                sale = parse_money(_cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, 11))
-                if not cert and not card and purchase is None and sale is None:
+            for sheet in workbook.worksheets:
+                if _sheet_max_row(sheet) < 2:
                     continue
-                records.append(
-                    {
-                        "date_added": clean_part(_cell_by_header(sheet, row_index, headers, ("dateadded", "date"), 1)),
-                        "company": company,
-                        "weekly_sheet": str(path),
-                        "weekly_sheet_name": path.name,
-                        "source_sheet": clean_part(_cell_by_header(sheet, row_index, headers, ("sourcesheet",), 2)),
-                        "source": clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, 3)),
-                        "cert_number": cert,
-                        "grader": normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, 5)),
-                        "card_title": card,
-                        "purchase_price": purchase,
-                        "sale_price": sale,
-                        "card_ladder_value": parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, 8)),
-                        "comps": parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, 9)),
-                        "best_company": clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, 10)) or company,
-                        "status": clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, 12)),
-                        "notes": clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, 13)),
-                    }
-                )
+                sheet_label = f"{path.name}:{sheet.title}"
+                if len(workbook.worksheets) == 1 and sheet.title in {"Cards", "Sheet"}:
+                    sheet_label = path.name
+                headers = _header_map_for_row(sheet, 1)
+                for row_index in range(2, _sheet_max_row(sheet) + 1):
+                    cert = normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, 4))
+                    card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, 6))
+                    purchase = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 7))
+                    sale = parse_money(_cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, 11))
+                    if not cert and not card and purchase is None and sale is None:
+                        continue
+                    records.append(
+                        {
+                            "date_added": clean_part(_cell_by_header(sheet, row_index, headers, ("dateadded", "date"), 1)),
+                            "company": company,
+                            "weekly_sheet": str(path),
+                            "weekly_sheet_name": sheet_label,
+                            "source_sheet": clean_part(_cell_by_header(sheet, row_index, headers, ("sourcesheet",), 2)),
+                            "source": clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, 3)),
+                            "cert_number": cert,
+                            "grader": normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, 5)),
+                            "card_title": card,
+                            "purchase_price": purchase,
+                            "sale_price": sale,
+                            "card_ladder_value": parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, 8)),
+                            "comps": parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, 9)),
+                            "cy_estimate": parse_money(_cell_by_header(sheet, row_index, headers, CY_ESTIMATE_HEADERS, 10)),
+                            "cy_confidence": _cell_by_header(sheet, row_index, headers, CY_CONFIDENCE_HEADERS, 11),
+                            "best_company": clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, 12)) or company,
+                            "status": clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, 14)),
+                            "notes": clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, 15)),
+                        }
+                    )
         finally:
             workbook.close()
     return records
@@ -464,7 +597,7 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = DEFAULT_SHEET
-    headers = ["Certification Number", "Company", "Card Description", "Purchase Price", "Source", RECEIVED_HEADER]
+    headers = ["Certification Number", "Company", "Card Description", "Purchase Price", "Card Ladder Value", "Comps", "CY Estimate", "CY Confidence", "Source", RECEIVED_HEADER]
     sheet.append(headers)
     for row in rows:
         sheet.append([
@@ -472,6 +605,10 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
             row.grader,
             row.card_title,
             row.existing_value,
+            row.card_ladder_value,
+            row.card_ladder_comps_average,
+            row.cy_value,
+            row.cy_confidence,
             (source_lookup or {}).get(row.excel_row, ""),
             "",
         ])
@@ -482,7 +619,7 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
         cell.font = header_font
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for letter, width in {"A": 22, "B": 14, "C": 62, "D": 16, "E": 38, "F": 14}.items():
+    for letter, width in {"A": 22, "B": 14, "C": 62, "D": 16, "E": 18, "F": 14, "G": 14, "H": 16, "I": 38, "J": 14}.items():
         sheet.column_dimensions[letter].width = width
     workbook.save(path)
     return path
@@ -634,7 +771,7 @@ def _looks_like_simple_header(sheet) -> bool:
     if any(alias in headers for alias in SIMPLE_HEADER_ALIASES):
         return True
     first = " ".join(clean_part(sheet.cell(1, col).value).lower() for col in range(1, min(_sheet_max_column(sheet), 5) + 1))
-    return any(token in first for token in ("cert", "card", "description", "purchase", "price", "comp", "ladder"))
+    return any(token in first for token in ("cert", "card", "description", "purchase", "price", "estimate", "confidence", "comp", "ladder"))
 
 
 def _cert_column(sheet) -> int | None:
