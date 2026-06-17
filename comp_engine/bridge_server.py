@@ -16,8 +16,8 @@ from urllib.parse import parse_qs, urlparse
 from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
 
-BRIDGE_VERSION = "2026-06-17-cardladder-grader-dropdown-position-v6"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-grader-dropdown-position-v6"
+BRIDGE_VERSION = "2026-06-17-cardladder-grader-parent-arrow-v7"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-grader-parent-arrow-v7"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.5"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 COMP_STRATEGY_AVERAGE = "average_last_5"
