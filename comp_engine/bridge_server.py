@@ -16,8 +16,8 @@ from urllib.parse import parse_qs, urlparse
 from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
 
-BRIDGE_VERSION = "2026-06-17-cardladder-grader-framework-handler-v8"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-grader-framework-handler-v8"
+BRIDGE_VERSION = "2026-06-17-cardladder-dedicated-profile-debugger-v9"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-dedicated-profile-debugger-v9"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.5"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 COMP_STRATEGY_AVERAGE = "average_last_5"
@@ -108,12 +108,15 @@ class BridgeState:
     def extension_poll(self, metadata: dict[str, str] | None = None) -> dict:
         with self.lock:
             self.last_seen_extension = time.strftime("%H:%M:%S")
+            extension_version = ""
             if metadata:
+                extension_version = metadata.get("extensionVersion") or ""
                 self.extension_version = metadata.get("extensionVersion") or self.extension_version
                 self.extension_manifest_version = metadata.get("manifestVersion") or self.extension_manifest_version
                 self.extension_name = metadata.get("extensionName") or self.extension_name
                 self.extension_url = metadata.get("extensionUrl") or self.extension_url
-            return {"instanceId": self.instance_id, "command": self.command}
+            command = self.command if extension_version == EXPECTED_CARDLADDER_EXTENSION_VERSION else None
+            return {"instanceId": self.instance_id, "command": command}
 
     def acknowledge_command(self, command_id: int) -> None:
         with self.lock:
