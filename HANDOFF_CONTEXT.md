@@ -103,7 +103,7 @@ Do not commit:
 
 ### Home
 
-Home lists `Incoming`, `Working`, and `Received` sheets. It supports right-click delete with confirmation. Received sheets move to `ARCHIVED SHEETS` only after they are fully received, marked paid, and at least two weeks old.
+Home lists `Incoming`, `Working`, and `Received` sheets. It supports right-click delete with confirmation and right-click move between `Incoming`, `Working`, and `Received`. Moving a sheet out of `Received` clears received/paid marker state, clears workbook received marks, removes company-sheet rows created from that source sheet, and removes matching profit ledger rows. Received sheets move to `ARCHIVED SHEETS` only after they are fully received, marked paid, and at least two weeks old.
 
 ### Create
 
