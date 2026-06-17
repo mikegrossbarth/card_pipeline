@@ -7,7 +7,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -106,8 +105,6 @@ UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
 PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
-CARDLADDER_AUTOMATION_PROFILE_DIR = ROOT / "work" / "cardladder-chrome-profile"
-CARDLADDER_AUTOMATION_START_URL = "about:blank"
 APP_TITLE = "L.U.C.A.S"
 APP_SUBTITLE = "Lot Upload, Comping & Assignment System"
 
@@ -3325,50 +3322,14 @@ class CardPipelineApp(tk.Tk):
             )
         return ""
 
-    def _chrome_executable_path(self) -> str:
-        configured = os.environ.get("LUCAS_CHROME_PATH")
-        candidates = [
-            Path(configured) if configured else None,
-            Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
-            Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
-            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-        ]
-        for candidate in candidates:
-            if candidate and candidate.exists():
-                return str(candidate)
-        return "chrome"
-
-    def _launch_cardladder_automation_chrome(self) -> None:
-        if not CARDLADDER_EXTENSION_DIR.exists():
-            messagebox.showwarning(
-                "Card Ladder extension missing",
-                f"Could not find the Card Ladder extension folder:\n{CARDLADDER_EXTENSION_DIR}",
-            )
-            return
-        CARDLADDER_AUTOMATION_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-        chrome_path = self._chrome_executable_path()
-        args = [
-            chrome_path,
-            f"--user-data-dir={CARDLADDER_AUTOMATION_PROFILE_DIR}",
-            f"--load-extension={CARDLADDER_EXTENSION_DIR}",
-            f"--disable-extensions-except={CARDLADDER_EXTENSION_DIR}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--new-window",
-            CARDLADDER_AUTOMATION_START_URL,
-        ]
-        try:
-            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception as error:
-            messagebox.showwarning(
-                "Open Card Ladder Chrome",
-                f"Could not launch the dedicated Card Ladder Chrome profile automatically.\n\n{error}",
-            )
-
     def run_all_comps(self) -> None:
         if not self.state.rows:
             messagebox.showinfo("No comp sheet loaded", "Choose and load a working sheet in the Comp tab first.")
+            return
+        extension_warning = self._cardladder_extension_warning()
+        if extension_warning:
+            messagebox.showwarning("Reload Card Ladder extension", extension_warning)
+            self.status_var.set("Reload the Card Ladder Chrome extension before comping.")
             return
         requery_all = self.comp_scope_label.get() == COMP_SCOPE_ALL
         eligible = [
@@ -3384,7 +3345,6 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("No eligible rows", message)
             self.status_var.set(message)
             return
-        self._launch_cardladder_automation_chrome()
         self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE))
         self.pending_comp_assignment_row_ids = {id(row) for row in eligible}
         command_id = self.state.start_all_comps(requery_all=requery_all)
@@ -3394,18 +3354,18 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(f"Queued {len(eligible)} Card Ladder row(s) using {self.comp_scope_label.get()} with {self.comp_strategy_label.get()} as command #{command_id}.")
 
     def _warn_if_extension_not_checked_in(self, command_id: int) -> None:
+        extension_warning = self._cardladder_extension_warning()
+        if extension_warning:
+            messagebox.showwarning("Reload Card Ladder extension", extension_warning)
+            self.status_var.set("Reload the Card Ladder Chrome extension before comping.")
+            return
         with self.state.lock:
             command_pending = bool(self.state.command and self.state.command.get("id") == command_id)
         if not command_pending:
             return
-        extension_warning = self._cardladder_extension_warning()
-        if extension_warning:
-            messagebox.showwarning("Reload Card Ladder extension", extension_warning)
-            self.status_var.set("Reload the dedicated Card Ladder Chrome profile before comping.")
-            return
         messagebox.showwarning(
             "Card Ladder extension not connected",
-            "The rows were queued, but the dedicated Card Ladder Chrome profile has not checked in. Make sure the automation Chrome window is open and logged into Card Ladder.",
+            "The rows were queued, but the Card Ladder Chrome extension has not checked in. Make sure Chrome is open, logged into Card Ladder, and the bundled extension is loaded.",
         )
 
     def stop_comp_run(self) -> None:
