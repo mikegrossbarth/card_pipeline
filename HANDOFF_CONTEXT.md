@@ -36,6 +36,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - `Inventory` tracks active person-level inventory in `inventory_ledger.json`.
 - Received cards that are not checked for the company pile are automatically added to active inventory for the assigned person.
 - `Inventory` fast-loads the saved ledger on app open. The `Refresh` and `Reconcile Received` actions backfill active inventory from received-marked sheet rows that are not already present in company sheets. This is needed for sheets received before inventory capture existed.
+- Inventory reconcile skips orphan/deleted sheet files that no longer have an assigned-person Home marker, so deleted sheets are not re-backfilled as `Unassigned`.
 - `Inventory` displays and exports `Best Company` and `Payout`; refresh enriches existing inventory rows with current assignment recommendations.
 - Selected active inventory cards can be moved to company sheets later with `Move to Company Sheets`; the move runs assignment recommendations, writes company/profit rows, and marks those inventory records as `Company Sheet`.
 - Selected active inventory cards can be sold directly with `Mark Sold`; this prompts for company/buyer and sale price, writes the sold card to `profit_ledger.json`, and marks the inventory row `Sold`.
@@ -112,7 +113,7 @@ Do not commit:
 
 ### Home
 
-Home lists `Incoming`, `Working`, and `Received` sheets. It supports right-click delete with confirmation and right-click move between `Incoming`, `Working`, and `Received`. Moving a sheet out of `Received` clears received/paid marker state, clears workbook received marks, removes company-sheet rows created from that source sheet, and removes matching profit ledger rows. Received sheets move to `ARCHIVED SHEETS` only after they are fully received, marked paid, and at least two weeks old.
+Home lists `Incoming`, `Working`, and `Received` sheets. It supports right-click delete with confirmation and right-click move between `Incoming`, `Working`, and `Received`. Deleting a sheet also removes inventory ledger rows whose `source_sheet` matches the deleted sheet. Moving a sheet out of `Received` clears received/paid marker state, clears workbook received marks, removes company-sheet rows created from that source sheet, and removes matching profit ledger rows. Received sheets move to `ARCHIVED SHEETS` only after they are fully received, marked paid, and at least two weeks old.
 
 ### Create
 

@@ -1226,7 +1226,9 @@ class CardPipelineApp(tk.Tk):
                 continue
             for path in sorted(directory.glob("*.xlsx"), key=lambda item: item.name.lower()):
                 marker = self.home_sheet_markers.get(self._home_sheet_key(stage, path.name), {})
-                person = str(marker.get("assigned_person") or "").strip() or "Unassigned"
+                person = str(marker.get("assigned_person") or "").strip()
+                if not person:
+                    continue
                 received_certs = None if stage == "Received" else self._received_certs_in_workbook(path)
                 if received_certs == set():
                     continue
@@ -1347,6 +1349,21 @@ class CardPipelineApp(tk.Tk):
         if changed:
             self._save_inventory_ledger(ledger)
         return changed
+
+    def _remove_inventory_rows_for_source(self, source_sheet_name: str) -> int:
+        source_name = Path(str(source_sheet_name or "")).name.strip().lower()
+        if not source_name:
+            return 0
+        ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        kept = [
+            record
+            for record in ledger
+            if Path(str(record.get("source_sheet") or "")).name.strip().lower() != source_name
+        ]
+        removed = len(ledger) - len(kept)
+        if removed:
+            self._save_inventory_ledger(kept)
+        return removed
 
     def _inventory_sale_profit_record(self, record: dict[str, object], company: str, sale_price: float) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
@@ -3015,6 +3032,7 @@ class CardPipelineApp(tk.Tk):
         try:
             with shared_lock(CARD_PIPELINE_DIR, "sheet-delete", self.lucas_identity):
                 path.unlink()
+                inventory_rows_removed = self._remove_inventory_rows_for_source(name)
                 self._delete_sheet_marker(self.home_selected_sheet_key)
                 self._save_sheet_markers()
         except Exception as error:
@@ -3023,7 +3041,7 @@ class CardPipelineApp(tk.Tk):
         self.home_selected_sheet_key = ""
         self.refresh_pipeline()
         self.refresh_home()
-        self.status_var.set(f"Deleted {kind.lower()} sheet: {name}.")
+        self.status_var.set(f"Deleted {kind.lower()} sheet: {name}. Removed {inventory_rows_removed} inventory row(s).")
 
     def _sheet_path_is_visible_home_sheet(self, kind: str, path: Path) -> bool:
         expected = {
