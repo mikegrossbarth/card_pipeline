@@ -3306,7 +3306,7 @@ class CardPipelineApp(tk.Tk):
         for row in rows:
             if not force and row.best_company and row.estimated_payout is not None:
                 continue
-            recommendation = self.assignment_engine.recommend(row)
+            recommendation = self.assignment_engine.recommend(row, person=getattr(self, "_assignment_person_for_row", lambda _row: "")(row))
             if recommendation.payout is None:
                 self._record_unassigned_player(row)
                 if force:
@@ -3703,7 +3703,7 @@ class CardPipelineApp(tk.Tk):
 
     def _apply_recommendations(self) -> None:
         for row in [*self.state.rows, *self.review_rows]:
-            recommendation = self.assignment_engine.recommend(row)
+            recommendation = self.assignment_engine.recommend(row, person=getattr(self, "_assignment_person_for_row", lambda _row: "")(row))
             if recommendation.payout is None:
                 self._record_unassigned_player(row)
                 row.best_company = NO_COMPANY_TAKES_LABEL
@@ -4205,7 +4205,7 @@ class CardPipelineApp(tk.Tk):
             for index, row in enumerate(rows, start=1):
                 if job_id != self.assignment_recommendation_job:
                     return
-                recommendation = self.assignment_engine.recommend(row)
+                recommendation = self.assignment_engine.recommend(row, person=getattr(self, "_assignment_person_for_row", lambda _row: "")(row))
                 results.append((id(row), recommendation.company, recommendation.payout))
                 if index == total or index % progress_step == 0:
                     self.events.put(("assignment_recommendations_progress", {"job_id": job_id, "done": index, "total": total}))
@@ -4263,7 +4263,7 @@ class CardPipelineApp(tk.Tk):
         for row in self.state.rows:
             if id(row) not in row_ids:
                 continue
-            recommendation = self.assignment_engine.recommend(row)
+            recommendation = self.assignment_engine.recommend(row, person=getattr(self, "_assignment_person_for_row", lambda _row: "")(row))
             if recommendation.payout is not None:
                 row.best_company = recommendation.company
                 row.estimated_payout = recommendation.payout
@@ -4274,6 +4274,34 @@ class CardPipelineApp(tk.Tk):
         if updated:
             self.comp_output_saved = False
         return updated
+
+    def _assignment_person_for_row(self, row: WorkbookRow) -> str:
+        selected_working_sheet = getattr(self, "selected_working_sheet", None)
+        source_sheet = (
+            getattr(self, "comp_sheet_sources", {}).get(row.excel_row)
+            or getattr(self, "review_sheet_sources", {}).get(row.excel_row)
+            or getattr(self, "intake_sheet_sources", {}).get(row.excel_row)
+            or getattr(self, "row_sources", {}).get(row.excel_row)
+            or getattr(self, "review_sources", {}).get(row.excel_row)
+            or getattr(self, "intake_sources", {}).get(row.excel_row)
+            or (selected_working_sheet.get() if selected_working_sheet is not None else "")
+            or ""
+        )
+        source_name = Path(str(source_sheet or "")).name
+        if not source_name or source_name == "NO SHEET FOUND":
+            return ""
+        for stage in ("Working", "Incoming", "Received"):
+            marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_name), {})
+            person = str(marker.get("assigned_person") or "").strip()
+            if person:
+                return person
+        for key, marker in self.home_sheet_markers.items():
+            _stage, name = self._split_home_sheet_key(key)
+            if Path(name).name == source_name:
+                person = str(marker.get("assigned_person") or "").strip()
+                if person:
+                    return person
+        return ""
 
     def _update_assignment_recommendation_progress(self, payload: dict[str, object]) -> None:
         if int(payload.get("job_id") or 0) != self.assignment_recommendation_job:
