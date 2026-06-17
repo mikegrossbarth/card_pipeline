@@ -38,6 +38,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - `Inventory` auto-reconciles received rows on refresh and also has `Reconcile Received`, which backfills active inventory from received-marked sheet rows that are not already present in company sheets. This is needed for sheets received before inventory capture existed.
 - `Inventory` displays and exports `Best Company` and `Payout`; refresh enriches existing inventory rows with current assignment recommendations.
 - Selected active inventory cards can be moved to company sheets later with `Move to Company Sheets`; the move runs assignment recommendations, writes company/profit rows, and marks those inventory records as `Company Sheet`.
+- Selected active inventory cards can be sold directly with `Mark Sold`; this prompts for company/buyer and sale price, writes the sold card to `profit_ledger.json`, and marks the inventory row `Sold`.
 - Profit rows can be refunded individually from the `Profit` tab. Refunds remove the sold-card profit/company-sheet row and return that card to active inventory.
 - `Payouts/Tabs` has `Delete Person`; it removes a person's name from sheet markers, inventory ownership, and profit ownership while leaving cards/sheets/ledger rows intact.
 - Home right-click delete for incoming/working/received sheets includes a confirmation prompt.
