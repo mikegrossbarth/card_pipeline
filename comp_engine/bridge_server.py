@@ -16,8 +16,8 @@ from urllib.parse import parse_qs, urlparse
 from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
 
-BRIDGE_VERSION = "2026-06-14-cardladder-partial-diagnostics-v4"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-14-partial-diagnostics-v4"
+BRIDGE_VERSION = "2026-06-17-cardladder-grader-and-date-weight-v1"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-grader-and-date-weight-v1"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.5"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 COMP_STRATEGY_AVERAGE = "average_last_5"
@@ -507,11 +507,19 @@ def stale_newest_else_average(comps: list[dict], values: list[float]) -> float |
     values = comp_values(comps)
     if not values:
         return None
-    first_date = parse_comp_date(comps[0].get("date_sold")) if comps and isinstance(comps[0], dict) else None
-    second_date = parse_comp_date(comps[1].get("date_sold")) if len(comps) > 1 and isinstance(comps[1], dict) else None
-    if first_date and second_date and abs((first_date - second_date).days) > 7:
-        newest_value = parse_value(comps[0].get("price"))
-        return newest_value if newest_value is not None else round(sum(values) / len(values), 2)
+    dated_values: list[tuple[datetime, float]] = []
+    for comp in comps[:5]:
+        if not isinstance(comp, dict):
+            continue
+        value = parse_value(comp.get("price"))
+        if value is None:
+            continue
+        sold_date = parse_comp_date(comp.get("date_sold"))
+        if sold_date:
+            dated_values.append((sold_date, value))
+    dated_values.sort(key=lambda item: item[0], reverse=True)
+    if len(dated_values) >= 2 and (dated_values[0][0] - dated_values[1][0]).days > 7:
+        return dated_values[0][1]
     return round(sum(values) / len(values), 2)
 
 

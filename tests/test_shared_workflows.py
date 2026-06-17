@@ -331,6 +331,26 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertIsNone(row.card_ladder_comps_average)
         self.assertIn("overly broad", row.notes)
 
+    def test_date_weighted_uses_newest_comp_when_two_newest_are_more_than_seven_days_apart(self) -> None:
+        comps = [
+            {"date_sold": "May 1, 2026", "price": "$8.00", "title": "Test Card PSA 10"},
+            {"date_sold": "Jun 12, 2026", "price": "$25.00", "title": "Test Card PSA 10"},
+            {"date_sold": "Jun 1, 2026", "price": "$10.00", "title": "Test Card PSA 10"},
+            {"date_sold": "Apr 15, 2026", "price": "$2.00", "title": "Test Card PSA 10"},
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 25.0)
+
+    def test_date_weighted_averages_when_two_newest_are_within_seven_days(self) -> None:
+        comps = [
+            {"date_sold": "May 1, 2026", "price": "$8.00", "title": "Test Card PSA 10"},
+            {"date_sold": "Jun 12, 2026", "price": "$25.00", "title": "Test Card PSA 10"},
+            {"date_sold": "Jun 8, 2026", "price": "$10.00", "title": "Test Card PSA 10"},
+            {"date_sold": "Apr 15, 2026", "price": "$2.00", "title": "Test Card PSA 10"},
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 11.25)
+
     def test_partial_cardladder_capture_keeps_profile_title_when_available(self) -> None:
         bridge = app.BridgeState()
         row = WorkbookRow(excel_row=2, cert_number="64342605", grader="PSA", card_title="")
