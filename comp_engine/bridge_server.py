@@ -16,8 +16,8 @@ from urllib.parse import parse_qs, urlparse
 from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
 
-BRIDGE_VERSION = "2026-06-14-cardladder-partial-diagnostics-v4"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-14-partial-diagnostics-v4"
+BRIDGE_VERSION = "2026-06-16-cardladder-dom-comp-sweep-v1"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-16-dom-comp-sweep-v1"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.5"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 COMP_STRATEGY_AVERAGE = "average_last_5"
@@ -169,6 +169,14 @@ class BridgeState:
                 row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
             if row_has_comp_data(row):
                 row.notes = str(result.get("error") or "Partial Card Ladder capture skipped; kept existing comps.")
+                return
+            if value is not None and comps:
+                row.card_ladder_value = value
+                row.card_ladder_comps_average = comp_price(comps, self.comp_strategy)
+                row.card_ladder_comps = format_comps(comps, self.comp_strategy)
+                row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
+                row.status = "Card Ladder partial usable"
+                row.notes = str(result.get("error") or "Card Ladder captured usable value/comps but fewer than expected.")
                 return
             row.card_ladder_value = None
             row.card_ladder_comps_average = None

@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-06-14-partial-diagnostics-v4";
+const CARDLADDER_BACKGROUND_VERSION = "2026-06-16-dom-comp-sweep-v1";
 
 let runInProgress = false;
 let activeWindowId = null;
@@ -324,7 +324,10 @@ async function lookupRowWithRetries(tabId, row) {
   const domResult = await captureValueFromDom(tabId, row, pageResult);
   if (["invalid_cert", "no_results"].includes(domResult?.status)) return domResult;
   if (domResultLooksComplete(domResult)) return domResult;
-  const expectedResultCount = Number(domResult?.ocr?.resultCount);
+  const domSweepResult = await captureValueFromDomSweep(tabId, row, pageResult, domResult);
+  if (["invalid_cert", "no_results"].includes(domSweepResult?.status)) return domSweepResult;
+  if (domResultLooksComplete(domSweepResult)) return domSweepResult;
+  const expectedResultCount = Number(domSweepResult?.ocr?.resultCount);
 
   let lastResult = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -334,7 +337,7 @@ async function lookupRowWithRetries(tabId, row) {
     if (captureResultLooksComplete(lastResult, expectedResultCount)) return lastResult;
     await delay(OCR_RETRY_MS);
   }
-  return markPartialCapture(mergeCaptureResults(domResult, lastResult), expectedResultCount);
+  return markPartialCapture(mergeCaptureResults(domSweepResult, lastResult), expectedResultCount);
 }
 
 function mergeCaptureResults(primary, fallback) {
@@ -352,9 +355,24 @@ function mergeCaptureResults(primary, fallback) {
       profileGrader: fallback.ocr?.profileGrader || primary.ocr?.profileGrader || "",
       profileGrade: fallback.ocr?.profileGrade || primary.ocr?.profileGrade || "",
       resultCount: fallback.ocr?.resultCount ?? primary.ocr?.resultCount ?? null,
-      comps: Array.isArray(fallback.ocr?.comps) && fallback.ocr.comps.length ? fallback.ocr.comps : (primary.ocr?.comps || []),
+      comps: mergeOcrComps(primary.ocr?.comps, fallback.ocr?.comps),
     },
   };
+}
+
+function mergeOcrComps(...groups) {
+  const ordered = [];
+  for (const raw of groups.flat().filter(Boolean)) {
+    const source = String(raw.source || "").replace(/\s+/g, " ").trim().toUpperCase();
+    const title = String(raw.title || "").replace(/\s+/g, " ").trim();
+    const date = String(raw.date_sold || raw.dateSold || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const price = String(raw.price || "").replace(/[$,\s]/g, "");
+    const key = `${source}|${date}|${price}|${title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 80)}`;
+    if (!source && !title && !price) continue;
+    if (ordered.some((item) => item.key === key)) continue;
+    ordered.push({ key, comp: raw });
+  }
+  return ordered.map((item) => item.comp).slice(0, 5);
 }
 
 function stampResult(result) {
@@ -481,6 +499,20 @@ async function captureValueFromDom(tabId, row, pageResult = {}) {
     pageUrl: result.pageUrl || pageResult.pageUrl || tab?.url || "",
     capturedAt: result.capturedAt || new Date().toISOString(),
   };
+}
+
+async function captureValueFromDomSweep(tabId, row, pageResult = {}, firstResult = null) {
+  let merged = firstResult || await captureValueFromDom(tabId, row, pageResult);
+  for (const position of ["top", "middle", "bottom"]) {
+    await chrome.tabs.sendMessage(tabId, {
+      type: "CARDLADDER_SCROLL_CAPTURE_AREA",
+      position,
+    }).catch(() => null);
+    const next = await captureValueFromDom(tabId, row, pageResult);
+    merged = mergeCaptureResults(merged, next);
+    if (domResultLooksComplete(merged)) return merged;
+  }
+  return merged;
 }
 
 async function checkInvalidCertToast(tabId, row) {

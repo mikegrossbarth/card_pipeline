@@ -356,6 +356,35 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertIsNone(row.card_ladder_value)
         self.assertEqual(row.card_ladder_comps, "")
 
+    def test_partial_cardladder_capture_preserves_usable_value_and_comps(self) -> None:
+        bridge = app.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="64342605", grader="PSA", card_title="")
+        result = {
+            "excelRow": 2,
+            "certNumber": "64342605",
+            "grader": "PSA",
+            "status": "partial_comp_capture",
+            "value": 120,
+            "error": "Only captured 1 comp(s); expected 2. Re-run this row.",
+            "ocr": {
+                "profileTitle": "2001 Upper Deck Tiger Woods",
+                "profileGrader": "PSA",
+                "profileGrade": "4",
+                "resultCount": 2,
+                "comps": [
+                    {"source": "EBAY", "title": "2001 Upper Deck Tiger Woods PSA 4", "date_sold": "Jun 8, 2026", "sale_type": "Auction", "price": "$100.00"},
+                ],
+            },
+        }
+
+        bridge._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.status, "Card Ladder partial usable")
+        self.assertEqual(row.card_title, "2001 Upper Deck Tiger Woods PSA 4")
+        self.assertEqual(row.card_ladder_value, 120)
+        self.assertEqual(row.card_ladder_comps_average, 100)
+        self.assertIn("Only captured 1 comp", row.notes)
+
     def test_old_partial_cardladder_capture_requests_extension_reload(self) -> None:
         bridge = app.BridgeState()
         row = WorkbookRow(excel_row=7, cert_number="64342605", grader="PSA", card_title="")
