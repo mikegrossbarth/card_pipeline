@@ -35,6 +35,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Received sheets archive after two weeks only if fully received and marked paid.
 - `Inventory` tracks active person-level inventory in `inventory_ledger.json`.
 - Received cards that are not checked for the company pile are automatically added to active inventory for the assigned person.
+- Selected active inventory cards can be moved to company sheets later with `Move to Company Sheets`; the move runs assignment recommendations, writes company/profit rows, and marks those inventory records as `Company Sheet`.
 - Profit rows can be refunded individually from the `Profit` tab. Refunds remove the sold-card profit/company-sheet row and return that card to active inventory.
 - Home right-click delete for incoming/working/received sheets includes a confirmation prompt.
 - Comping no longer recalculates assignments on load. Assignment recalculates only for rows involved in the user-chosen comp run or when explicitly needed.
