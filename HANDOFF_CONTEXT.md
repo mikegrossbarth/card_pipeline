@@ -7,7 +7,7 @@ L.U.C.A.S means Lot Upload, Comping & Assignment System.
 - Repo: `C:\Users\User\Documents\Codex\2026-06-04\card_pipeline`
 - Remote: `https://github.com/mikegrossbarth/card_pipeline.git`
 - Branches kept current: `main` and `master`
-- Latest commit at handoff time: `b98c4dc Remove duplicate manual create button`
+- Latest commit at handoff time: this recovery handoff commit
 - Current visible tabs: `Home`, `Create`, `Comp`, `Receive`, `Assignment`, `Payouts/Tabs`, `Profit`
 - Setup walkthrough: `FIRST_RUN_SETUP.md`
 
@@ -36,6 +36,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Home right-click delete for incoming/working/received sheets includes a confirmation prompt.
 - Comping no longer recalculates assignments on load. Assignment recalculates only for rows involved in the user-chosen comp run or when explicitly needed.
 - Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.
+- Recovery note, 2026-06-17: Card Ladder was rolled back to the last working comping flow after the later DOM-sweep/grader-verification changes broke real usage. Do not reapply those changes without live browser QA against actual Card Ladder cert searches.
 
 ## Platform Split
 
@@ -163,6 +164,8 @@ Common gotchas:
 
 - User must be logged into Card Ladder in Chrome.
 - Old unpacked extension versions should be removed or disabled.
+- Current restored extension/background version: `2026-06-14-partial-diagnostics-v4`.
+- Current restored content-script version: `2026-06-14-visible-dom-capture-v3`.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
 - Old partial Card Ladder captures request extension reload/manual review.
@@ -176,7 +179,7 @@ C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\py
 C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest tests.test_shared_workflows -v
 ```
 
-Last full Windows result: `40 tests OK`.
+Last full Windows result after recovery: `40 tests OK`.
 
 Useful broader sanity checks:
 
@@ -188,6 +191,5 @@ python -c "import app; root = app.CardPipelineApp(); root.update_idletasks(); ro
 
 ## Current Git State At Handoff
 
-- `main` and `master` should both point at `b98c4dc`.
-- Working tree was clean before this handoff file update.
-- After editing this handoff, commit and push both `main` and `master`.
+- `main` and `master` should both point at this recovery handoff commit.
+- Working tree was clean after this handoff file update was committed.
