@@ -38,6 +38,9 @@ On first run, click `Working Folder` in the top-right header and choose your wor
 - `WORKING SHEETS`
 - `INCOMING SHEETS`
 - `RECEIVED SHEETS`
+- `ARCHIVED SHEETS`
+- `COMPANY SHEETS`
+- `ASSIGNMENT RULES`
 
 The chosen working folder is saved locally in `lucas_settings.json`, which is intentionally not committed. To preconfigure this for another user, set `LUCAS_WORKING_SHEETS_DIR` in `.env`.
 
@@ -52,6 +55,8 @@ Card Ladder comping requires a Card Ladder account and an active Chrome login se
 5. Log into Card Ladder in Chrome before running comps.
 
 The app starts the local Card Ladder bridge automatically when L.U.C.A.S opens.
+
+The bridge currently expects helper version `2026-06-17-no-blind-grader-option-v22`. If Chrome shows a debugger warning during non-PSA grader selection, that is Chrome's browser-level warning for the trusted-click fallback; the attach is scoped to the Card Ladder tab and detached after the grader click.
 
 ## Input Modes
 
@@ -77,7 +82,7 @@ Use the `Receive` tab for receiving cards and source matching. Receive rows are 
 
 Use the `Assignment` tab for pure assignment review and fallback assignment work. Assignment can load received sheets and calculate or recalculate `Best Company` and `Est. Payout`.
 
-Assignment can calculate `Best Company` and `Est. Payout` from the Card Ladder comps average, falling back to Card Ladder value when comps are blank. Individual companies can be configured to require Card Ladder value instead; when that is selected, the company is ignored if the row has no Card Ladder value. Click `Assignment Rules` to create companies, acceptance rule files, and payout files. L.U.C.A.S writes manual files under the configured pipeline folder and updates local-only `assignment_companies.json`. Companies can be toggled Active or Inactive in the rules manager; inactive companies are ignored when recommendations are calculated. If no company can take a priced row, `Best Company` shows `NOBODY TAKES`.
+Assignment can calculate `Best Company` and `Est. Payout` from comps, Card Ladder value, or imported `CY Estimate`. Individual companies can be configured to require Card Ladder value or CY Estimate; when required data is missing, that company is ignored. Click `Assignment Rules` to create companies, acceptance rule files, and payout files. L.U.C.A.S writes manual files under the configured pipeline folder and updates local-only `assignment_companies.json`. Companies can be toggled Active or Inactive in the rules manager; inactive companies are ignored when recommendations are calculated. If no company can take a priced row, `Best Company` shows `NOBODY TAKES`.
 
 Supported local source files include `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, and `.xlsm`. Files in synced Google Drive folders work directly, for example:
 
@@ -93,7 +98,7 @@ The Assignment Rules manager supports three rule sources: manual rules, a local 
 
 ## Payouts And Profit
 
-Use `Payouts/Tabs` to track active balances by assigned person and mark person-level balances paid.
+Use `Payouts/Tabs` to track active balances by assigned person and mark person-level balances paid. Company sheets are stored as one workbook per company under `COMPANY SHEETS\<Company>\<Company>.xlsx`, with weekly tabs named `Week of YYYY-MM-DD`.
 
 Use `Profit` to review sold cards and sold sheets. The Profit tab can filter by assigned person, shows a daily profit line chart, and can toggle between individual sold-card rows and grouped sold-sheet summaries.
 
