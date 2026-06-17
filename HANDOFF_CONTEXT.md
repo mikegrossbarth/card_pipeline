@@ -7,7 +7,7 @@ L.U.C.A.S means Lot Upload, Comping & Assignment System.
 - Repo: `C:\Users\User\Documents\Codex\2026-06-04\card_pipeline`
 - Remote: `https://github.com/mikegrossbarth/card_pipeline.git`
 - Branches kept current: `main` and `master`
-- Latest commit at handoff time: `b98c4dc Remove duplicate manual create button`
+- Latest commit at handoff time: this `Refresh handoff context` commit
 - Current visible tabs: `Home`, `Create`, `Comp`, `Receive`, `Assignment`, `Payouts/Tabs`, `Profit`
 - Setup walkthrough: `FIRST_RUN_SETUP.md`
 
@@ -36,6 +36,13 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Home right-click delete for incoming/working/received sheets includes a confirmation prompt.
 - Comping no longer recalculates assignments on load. Assignment recalculates only for rows involved in the user-chosen comp run or when explicitly needed.
 - Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.
+- Card Ladder comp capture was hardened:
+  - Extension DOM extraction now sweeps top/middle/bottom scroll positions before OCR fallback.
+  - DOM parsing now merges table/card rows, broad text chunks, and visual price/date/source proximity rows.
+  - Partial Card Ladder captures with a real value and usable comps are preserved as `Card Ladder partial usable` instead of blanking the row.
+  - The extension must be reloaded from `cardladder-autocomp\extension` after pulling this version.
+- Card Ladder grader selection is now verified before lookup submit. If PSA remains selected when the row asked for SGC/CGC/BGS/etc., the lookup fails loudly instead of silently comping as PSA.
+- Current required Card Ladder extension version: `2026-06-17-grader-select-verify-v1`.
 
 ## Platform Split
 
@@ -165,7 +172,8 @@ Common gotchas:
 - Old unpacked extension versions should be removed or disabled.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
-- Old partial Card Ladder captures request extension reload/manual review.
+- Partial Card Ladder captures with a value and comps are preserved for review instead of discarded.
+- Grader selection is verified after dropdown interaction. The bridge expects extension version `2026-06-17-grader-select-verify-v1`; stale unpacked extensions should be removed or reloaded.
 
 ## Tests And Verification
 
@@ -177,6 +185,7 @@ C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\py
 ```
 
 Last full Windows result: `40 tests OK`.
+Latest post-Card-Ladder-hardening Windows result: `41 tests OK`.
 
 Useful broader sanity checks:
 
@@ -188,6 +197,5 @@ python -c "import app; root = app.CardPipelineApp(); root.update_idletasks(); ro
 
 ## Current Git State At Handoff
 
-- `main` and `master` should both point at `b98c4dc`.
-- Working tree was clean before this handoff file update.
-- After editing this handoff, commit and push both `main` and `master`.
+- `main` and `master` should both point at this `Refresh handoff context` commit.
+- Working tree was clean after this handoff file update was committed.
