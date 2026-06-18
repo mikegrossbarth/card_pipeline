@@ -42,7 +42,7 @@ from workbook_io import WorkbookRow  # noqa: E402
 import assignment_engine  # noqa: E402
 from assignment_engine import AssignmentEngine  # noqa: E402
 from assignment_engine import CONFIG_PATH as ASSIGNMENT_CONFIG_PATH  # noqa: E402
-from assignment_engine import gsheet_shortcut_url, load_gsheet_shortcut, normalize_source_value, path_from_source_value, safe_filename  # noqa: E402
+from assignment_engine import gsheet_shortcut_url, is_google_keep_url, keep_note_cache_path, load_gsheet_shortcut, normalize_source_value, path_from_source_value, safe_filename  # noqa: E402
 from assignment_config_ui import open_assignment_rules_dialog  # noqa: E402
 from google_sheets_import import export_google_sheet_to_xlsx  # noqa: E402
 from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
@@ -363,6 +363,7 @@ class CardPipelineApp(tk.Tk):
         self.state.on_update = lambda: self.events.put("comp_refresh")
         self.bridge = BridgeServer(self.state)
         self.bridge.start()
+        self._refresh_keep_source_registry()
         self.bridge_status_text = (
             f"Card Ladder bridge running at http://127.0.0.1:{self.bridge.port}"
             if self.bridge.started
@@ -2459,6 +2460,53 @@ class CardPipelineApp(tk.Tk):
             result["errors"].append(str(error))
         return result
 
+    def _refresh_keep_source_registry(self) -> None:
+        try:
+            self.state.register_keep_note_sources(self._saved_google_keep_sources())
+        except Exception:
+            return
+
+    def _saved_google_keep_sources(self) -> list[dict[str, object]]:
+        try:
+            raw = json.loads(ASSIGNMENT_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        entries = raw.get("companies", raw) if isinstance(raw, dict) else raw
+        if not isinstance(entries, list):
+            return []
+        output_dir = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "KEEP EXPORTS"
+        sources: list[dict[str, object]] = []
+        seen: set[tuple[str, str]] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for source in (
+                entry.get("rules") or entry.get("rules_source") or entry.get("rulesSource"),
+                entry.get("payout") or entry.get("payout_source") or entry.get("payoutSource"),
+            ):
+                prepared = self._google_keep_cache_source(source, output_dir)
+                if not prepared:
+                    continue
+                key = (str(prepared.get("url") or ""), str(prepared.get("path") or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                sources.append(prepared)
+        return sources
+
+    def _google_keep_cache_source(self, source: object, output_dir: Path) -> dict[str, object] | None:
+        if isinstance(source, dict):
+            url = str(source.get("url") or "").strip()
+            path = source.get("path") or source.get("file")
+            if str(source.get("kind") or "").strip() == "google_keep" and url and path:
+                return {"url": url, "path": str(path), "name": str(source.get("name") or Path(str(path)).stem or "Google Keep note")}
+            return None
+        raw = normalize_source_value(source)
+        if not is_google_keep_url(raw):
+            return None
+        name = "Google Keep note"
+        return {"url": raw, "path": str(keep_note_cache_path(raw, ASSIGNMENT_CONFIG_PATH.parent, name)), "name": name}
+
     def _saved_google_sheet_sources(self) -> list[dict[str, object]]:
         try:
             raw = json.loads(ASSIGNMENT_CONFIG_PATH.read_text(encoding="utf-8"))
@@ -2635,6 +2683,7 @@ class CardPipelineApp(tk.Tk):
         google_cache = payload.get("google_sheet_cache") if isinstance(payload.get("google_sheet_cache"), dict) else {}
         refreshed_google_sheets = int((google_cache or {}).get("refreshed") or 0)
         archived_count = int(payload.get("archived_count") or 0)
+        self._refresh_keep_source_registry()
         if refreshed_google_sheets:
             self.assignment_engine = AssignmentEngine.load()
             self.assignment_config_status.set(self._assignment_config_status())
@@ -5437,6 +5486,7 @@ class CardPipelineApp(tk.Tk):
     def reload_assignment_rules(self) -> None:
         self._load_player_overrides()
         self.assignment_engine = AssignmentEngine.load()
+        self._refresh_keep_source_registry()
         self._ensure_company_sheet_folders()
         self._ensure_weekly_company_sheets_due()
         self.assignment_config_status.set(self._assignment_config_status())
