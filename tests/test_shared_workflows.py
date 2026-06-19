@@ -1353,7 +1353,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.inventory_sport_var = FieldVar("")
         dummy.inventory_min_var = FieldVar("")
         dummy.inventory_max_var = FieldVar("")
-        dummy.inventory_active_only_var = FieldVar(True)
         rows = [
             {"status": "Active", "cert_number": "151740304", "card_title": "2024 Prizm Victor Wembanyama Silver PSA 10", "inventory_value": 100},
             {"status": "Active", "cert_number": "222", "card_title": "2019 Panini Mosaic Stephen Curry Green PSA 10", "inventory_value": 90},
@@ -1365,6 +1364,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         dummy.inventory_search_var = FieldVar("curry green")
         self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["222"])
+
+        dummy.inventory_search_var = FieldVar("hidden sold")
+        self.assertEqual(dummy._filtered_inventory_records(rows), [])
 
     def test_inventory_table_values_can_be_copied_without_editing(self) -> None:
         class FakeTree:
@@ -1452,7 +1454,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy.inventory_search_var = FieldVar("")
             dummy.inventory_min_var = FieldVar("")
             dummy.inventory_max_var = FieldVar("")
-            dummy.inventory_active_only_var = FieldVar(True)
             dummy.inventory_tree = FakeTree()
             dummy.inventory_metric_var = FieldVar("")
             dummy.inventory_status_var = FieldVar("")
