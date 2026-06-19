@@ -1108,6 +1108,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
             _realized_profit_totals_by_person_sheet = app.CardPipelineApp._realized_profit_totals_by_person_sheet
+            _realized_profit_groups_by_person_sheet = app.CardPipelineApp._realized_profit_groups_by_person_sheet
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _money_value = app.CardPipelineApp._money_value
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
@@ -1199,7 +1200,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
             _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _sold_payout_key = app.CardPipelineApp._sold_payout_key
             _realized_profit_totals_by_person_sheet = app.CardPipelineApp._realized_profit_totals_by_person_sheet
+            _realized_profit_groups_by_person_sheet = app.CardPipelineApp._realized_profit_groups_by_person_sheet
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
@@ -1225,8 +1228,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         dummy = PayoutDummy()
         payout_items = dummy._payout_sheet_items()
-        self.assertEqual(payout_items[0]["payout_balance"], 0.0)
-        self.assertEqual(payout_items[0]["payout_basis"], "Team half sold profit")
+        self.assertEqual(payout_items, [])
 
         dummy.ledger = [
             {
@@ -1240,6 +1242,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             }
         ]
         payout_items = dummy._payout_sheet_items()
+        self.assertEqual(len(payout_items), 1)
+        self.assertEqual(payout_items[0]["stage"], "Sold")
+        self.assertEqual(payout_items[0]["name"], "Lot A.xlsx")
         self.assertEqual(payout_items[0]["realized_profit_total"], 70.0)
         self.assertEqual(payout_items[0]["payout_balance"], 35.0)
 
