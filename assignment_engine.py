@@ -1356,7 +1356,7 @@ def new_arena_bonus_player_labels(
     marker_row_index = category_row_index + 2
     marker_row = values[marker_row_index] if marker_row_index < len(values) else []
     marker = clean_rule_label(marker_row[column_index] if column_index < len(marker_row) else "")
-    if not re.search(r"\bbonus\s+\d+\b", marker, re.I):
+    if not re.search(r"\bbonus\s+1\b", marker, re.I):
         return []
     goat_players = [str(player) for player in context.get("goatPlayers") or []]
     if not goat_players:

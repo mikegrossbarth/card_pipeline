@@ -939,8 +939,8 @@ class AssignmentEngineTests(unittest.TestCase):
             buying.append(["", "Percent Paid", 0.91, 0.93, 1.0, 0.92])
             buying.append(["", "Categories", "GOATS+", "Goats", "Lebron", "Football"])
             buying.append(["", "Price Ranges", "$500 - $3000", "$3000 - $7500", "$300 - $4000", "$2,500 - $5,000"])
-            buying.append(["", "", "Bonus 1"])
-            buying.append(["", "", "Curry Jordan"])
+            buying.append(["", "", "Bonus 1", "Bonus 2"])
+            buying.append(["", "", "Curry Jordan", "Babe Ruth"])
             buying.append([])
             buying.append([])
             buying.append([])
@@ -1029,6 +1029,13 @@ class AssignmentEngineTests(unittest.TestCase):
                 card_title="1958 Topps Willie Mays PSA 5",
                 card_ladder_comps_average=600,
             )
+            ignored_bonus_two_goat = WorkbookRow(
+                excel_row=7,
+                cert_number="",
+                grader="PSA",
+                card_title="1933 Goudey Babe Ruth PSA 2",
+                card_ladder_comps_average=600,
+            )
 
             self.assertIn("Lebron $300-$4000", rules_text)
             self.assertIn("Color Blast $500+", rules_text)
@@ -1038,6 +1045,7 @@ class AssignmentEngineTests(unittest.TestCase):
             self.assertFalse(engine.evaluate(pre_1989_football)[0].accepted)
             self.assertEqual(engine.evaluate(bonus_one_goat)[0].payout, 546)
             self.assertEqual(engine.evaluate(regular_goat)[0].payout, 540)
+            self.assertEqual(engine.evaluate(ignored_bonus_two_goat)[0].payout, 540)
 
 
 class AppSharedWorkflowLogicTests(unittest.TestCase):
