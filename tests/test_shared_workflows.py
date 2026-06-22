@@ -595,6 +595,33 @@ class AssignmentEngineTests(unittest.TestCase):
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 12.02)
 
+    def test_date_weighted_prefers_clean_duplicate_when_title_contains_conflicting_price(self) -> None:
+        comps = [
+            {
+                "date_sold": "Jun 1, 2025",
+                "price": "$493.63",
+                "sale_type": "Best Offer",
+                "source": "EBAY",
+                "title": "POKECARDS-2-TRUST 2022-23 Donruss Chet Holmgren RC #202 - Yellow Holo Laser /25 PSA 9 Rookie Pop 3- $130.50",
+            },
+            {
+                "date_sold": "Jun 1, 2025",
+                "price": "$130.50",
+                "sale_type": "Best Offer",
+                "source": "EBAY",
+                "title": "POKECARDS-2-TRUST 2022-23 Donruss Chet Holmgren RC #202 - Yellow Holo Laser /25 PSA 9 Rookie Pop 3",
+            },
+            {
+                "date_sold": "May 4, 2025",
+                "price": "$141.25",
+                "sale_type": "Auction",
+                "source": "EBAY",
+                "title": "POKECARDS-2-TRUST 2022-23 Donruss Chet Holmgren RC #202 - Yellow Holo Laser /25 PSA 9 Rookie Pop 3",
+            },
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 130.5)
+
     def test_partial_cardladder_capture_keeps_profile_title_when_available(self) -> None:
         bridge = app.BridgeState()
         row = WorkbookRow(excel_row=2, cert_number="64342605", grader="PSA", card_title="")
