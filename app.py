@@ -321,6 +321,7 @@ INVENTORY_TABLE_COLUMNS = (
     "payout",
     "source",
     "status",
+    "notes",
 )
 
 ADD_INTAKE_ROW_IID = "__add_intake_row__"
@@ -393,6 +394,7 @@ INVENTORY_HEADINGS = {
     "payout": "Est. Payout",
     "source": "Source Sheet",
     "status": "Status",
+    "notes": "Notes",
 }
 
 INVENTORY_COLUMN_WIDTHS = {
@@ -411,6 +413,7 @@ INVENTORY_COLUMN_WIDTHS = {
     "payout": 100,
     "source": 170,
     "status": 110,
+    "notes": 240,
 }
 
 
@@ -2239,6 +2242,7 @@ class CardPipelineApp(tk.Tk):
                     format_money(record.get("estimated_payout")),
                     record.get("source_sheet") or "",
                     record.get("status") or "",
+                    record.get("notes") or "",
                 ),
             )
             self.inventory_tree_records[iid] = record
