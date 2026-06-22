@@ -299,6 +299,24 @@ RECEIVE_COLUMNS = (
 
 REVIEW_COLUMNS = DISPLAY_COLUMNS
 
+INVENTORY_TABLE_COLUMNS = (
+    "date",
+    "person",
+    "sport",
+    "cert",
+    "grader",
+    "card",
+    "purchase",
+    "card_ladder",
+    "comps",
+    "cy_estimate",
+    "cy_confidence",
+    "company",
+    "payout",
+    "source",
+    "status",
+)
+
 ADD_INTAKE_ROW_IID = "__add_intake_row__"
 ADD_REVIEW_ROW_IID = "__add_review_row__"
 
@@ -348,6 +366,42 @@ COLUMN_WIDTHS = {
     "estimated_payout": 100,
     "status": 160,
     "company_pile": 105,
+}
+
+INVENTORY_HEADINGS = {
+    "date": "Date",
+    "person": "Person",
+    "sport": "Sport",
+    "cert": "Cert",
+    "grader": "Grader",
+    "card": "Card",
+    "purchase": "Purchase",
+    "card_ladder": "Card Ladder",
+    "comps": "Comps",
+    "cy_estimate": "CY Estimate",
+    "cy_confidence": "CY Confidence",
+    "company": "Best Company",
+    "payout": "Est. Payout",
+    "source": "Source Sheet",
+    "status": "Status",
+}
+
+INVENTORY_COLUMN_WIDTHS = {
+    "date": 95,
+    "person": 130,
+    "sport": 95,
+    "cert": 110,
+    "grader": 80,
+    "card": 320,
+    "purchase": 100,
+    "card_ladder": 100,
+    "comps": 100,
+    "cy_estimate": 100,
+    "cy_confidence": 110,
+    "company": 140,
+    "payout": 100,
+    "source": 170,
+    "status": 110,
 }
 
 
@@ -1048,22 +1102,9 @@ class CardPipelineApp(tk.Tk):
 
         self.inventory_tree = self._build_home_tree(
             self.inventory_tab,
-            columns=("date", "person", "sport", "cert", "grader", "card", "purchase", "value", "company", "payout", "source", "status"),
-            headings={
-                "date": "Date",
-                "person": "Person",
-                "sport": "Sport",
-                "cert": "Cert",
-                "grader": "Grader",
-                "card": "Card",
-                "purchase": "Purchase",
-                "value": "Value",
-                "company": "Best Company",
-                "payout": "Payout",
-                "source": "Source Sheet",
-                "status": "Status",
-            },
-            widths={"date": 95, "person": 130, "sport": 95, "cert": 110, "grader": 80, "card": 320, "purchase": 100, "value": 100, "company": 140, "payout": 100, "source": 170, "status": 110},
+            columns=INVENTORY_TABLE_COLUMNS,
+            headings=INVENTORY_HEADINGS,
+            widths=INVENTORY_COLUMN_WIDTHS,
             height=22,
             scrollbars=True,
         )
@@ -1802,6 +1843,9 @@ class CardPipelineApp(tk.Tk):
         for record in self.filtered_inventory_rows:
             purchase = self._money_value(record.get("purchase_price"))
             value = self._money_value(record.get("inventory_value"))
+            card_ladder = self._money_value(record.get("card_ladder_value"))
+            comps = self._money_value(record.get("card_ladder_comps_average"))
+            cy_value = self._money_value(record.get("cy_value"))
             if purchase is not None:
                 total_purchase += purchase
             if value is not None:
@@ -1817,7 +1861,10 @@ class CardPipelineApp(tk.Tk):
                     record.get("grader") or "",
                     record.get("card_title") or "",
                     format_money(purchase),
-                    format_money(value),
+                    format_money(card_ladder),
+                    format_money(comps),
+                    format_money(cy_value),
+                    record.get("cy_confidence") if record.get("cy_confidence") is not None else "",
                     record.get("best_company") or "",
                     format_money(record.get("estimated_payout")),
                     record.get("source_sheet") or "",
@@ -1825,7 +1872,7 @@ class CardPipelineApp(tk.Tk):
                 ),
             )
             self.inventory_tree_records[iid] = record
-        self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Value: {format_money(total_value)}")
+        self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Source Value: {format_money(total_value)}")
         self.inventory_status_var.set(f"Loaded {len(self.filtered_inventory_rows)}/{len(self.inventory_rows)} inventory card(s) from {INVENTORY_LEDGER_PATH.name}.")
 
     def delete_selected_inventory_records(self) -> None:
@@ -1900,7 +1947,7 @@ class CardPipelineApp(tk.Tk):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Inventory"
-        headers = ["Date Added", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Inventory Value", "Best Company", "Payout", "Source Sheet", "Source", "Status", "Notes"]
+        headers = ["Date Added", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Notes"]
         sheet.append(headers)
         for record in rows:
             sheet.append([
@@ -1911,7 +1958,10 @@ class CardPipelineApp(tk.Tk):
                 record.get("grader") or "",
                 record.get("card_title") or "",
                 record.get("purchase_price"),
-                record.get("inventory_value"),
+                record.get("card_ladder_value"),
+                record.get("card_ladder_comps_average"),
+                record.get("cy_value"),
+                record.get("cy_confidence"),
                 record.get("best_company") or "",
                 record.get("estimated_payout"),
                 record.get("source_sheet") or "",
@@ -1921,7 +1971,7 @@ class CardPipelineApp(tk.Tk):
             ])
         sheet.auto_filter.ref = sheet.dimensions
         sheet.freeze_panes = "A2"
-        for index, width in enumerate([14, 18, 14, 22, 12, 60, 16, 16, 20, 16, 28, 24, 14, 36], start=1):
+        for index, width in enumerate([14, 18, 14, 22, 12, 60, 16, 16, 16, 16, 14, 20, 16, 28, 24, 14, 36], start=1):
             sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
         workbook.save(path)
         self.status_var.set(f"Exported inventory: {path}")
