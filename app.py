@@ -416,6 +416,17 @@ INVENTORY_COLUMN_WIDTHS = {
     "notes": 240,
 }
 
+AUTO_INVENTORY_NOTES = {
+    "backfilled from received sheets",
+    "received without company pile",
+    "moved from inventory",
+}
+
+
+def inventory_display_notes(record: dict[str, object]) -> str:
+    notes = str(record.get("notes") or "").strip()
+    return "" if notes.lower() in AUTO_INVENTORY_NOTES else notes
+
 
 class CardPipelineApp(tk.Tk):
     def __init__(self) -> None:
@@ -1294,7 +1305,7 @@ class CardPipelineApp(tk.Tk):
                 "source_sheet": source_sheet,
                 "source": source,
                 "status": status,
-                "notes": notes,
+                "notes": notes if str(notes or "").strip().lower() not in AUTO_INVENTORY_NOTES else "",
             }
         )
 
@@ -1437,7 +1448,7 @@ class CardPipelineApp(tk.Tk):
                         "source_sheet": path.name,
                         "source": row.get("source") or "",
                         "status": "Active",
-                        "notes": "Backfilled from received sheets",
+                        "notes": "",
                     }
                 )
             )
@@ -1500,7 +1511,7 @@ class CardPipelineApp(tk.Tk):
             estimated_payout=self._money_value(record.get("estimated_payout")),
             company_pile=True,
             status="Moved from inventory",
-            notes=str(record.get("notes") or "Moved from inventory"),
+            notes=str(record.get("notes") or ""),
         )
 
     def _inventory_source_sheet_path(self, source_sheet: str) -> Path | None:
@@ -2242,7 +2253,7 @@ class CardPipelineApp(tk.Tk):
                     format_money(record.get("estimated_payout")),
                     record.get("source_sheet") or "",
                     record.get("status") or "",
-                    record.get("notes") or "",
+                    inventory_display_notes(record),
                 ),
             )
             self.inventory_tree_records[iid] = record
@@ -2406,7 +2417,6 @@ class CardPipelineApp(tk.Tk):
             if features.get("card_ladder_comps", True):
                 record["card_ladder_comps_average"] = row.card_ladder_comps_average
                 record["card_ladder_comps"] = row.card_ladder_comps
-            record["notes"] = row.notes or record.get("notes") or ""
             enriched = self._enrich_inventory_record_assignment(record, force=True)
             enriched["status"] = ledger[index].get("status") or "Active"
             enriched["inventory_key"] = key
@@ -2531,7 +2541,7 @@ class CardPipelineApp(tk.Tk):
                 record.get("source_sheet") or "",
                 record.get("source") or "",
                 record.get("status") or "",
-                record.get("notes") or "",
+                inventory_display_notes(record),
             ])
         sheet.auto_filter.ref = sheet.dimensions
         sheet.freeze_panes = "A2"
