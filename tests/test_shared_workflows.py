@@ -184,6 +184,24 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
             self.assertEqual(profit_records[0]["purchase_price"], 50.0)
             self.assertEqual(profit_records[0]["sale_price"], 90.0)
 
+    def test_manual_company_sheet_rows_without_source_sheet_do_not_backfill_profit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            company_dir = Path(tmp) / "COMPANY SHEETS"
+            path = company_dir / "Arena Club" / "Arena Club.xlsx"
+            path.parent.mkdir(parents=True)
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Week of 2026-06-22"
+            sheet.append(["Date Added", "Source Sheet", "Source", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder Value", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Status", "Notes"])
+            sheet.append(["2026-06-22", "", "Manual", "999", "PSA", "Manual Card PSA 10", 10, "", 20, "", "", "Arena Club", 18, "Received", ""])
+            sheet.append(["2026-06-22", "Lot A.xlsx", "LUCAS", "111", "PSA", "LUCAS Card PSA 10", 10, "", 20, "", "", "Arena Club", 18, "Received", ""])
+            workbook.save(path)
+
+            records = read_company_profit_records(company_dir)
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["cert_number"], "111")
+
 
 class GoogleSheetCacheTests(unittest.TestCase):
     def test_authenticated_google_sheet_export_writes_xlsx_cache(self) -> None:
