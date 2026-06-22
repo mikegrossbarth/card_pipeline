@@ -519,6 +519,7 @@ class CardPipelineApp(tk.Tk):
         self.inventory_rows: list[dict[str, object]] = []
         self.filtered_inventory_rows: list[dict[str, object]] = []
         self.inventory_tree_records: dict[str, dict[str, object]] = {}
+        self.inventory_recomp_context: dict[str, object] | None = None
         self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
         self.profit_metric_var = tk.StringVar(value="")
         self.profit_person_var = tk.StringVar()
@@ -1106,6 +1107,7 @@ class CardPipelineApp(tk.Tk):
         action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
         ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Update Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Recomp", command=self.recomp_inventory_visible_rows, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
@@ -2253,6 +2255,120 @@ class CardPipelineApp(tk.Tk):
         visible_count = int(getattr(self, "_last_inventory_enrich_visible_count", 0) or len(getattr(self, "filtered_inventory_rows", [])))
         changed_count = int(getattr(self, "_last_inventory_enrich_changed_count", 0) or 0)
         self.inventory_status_var.set(f"Updated payouts for {visible_count} visible inventory card(s); changed {changed_count}.")
+
+    def recomp_inventory_visible_rows(self) -> None:
+        if self.inventory_recomp_context:
+            messagebox.showinfo("Inventory recomp running", "Wait for the current Inventory recomp run to finish.")
+            return
+        extension_warning = self._cardladder_extension_warning()
+        if extension_warning:
+            messagebox.showwarning("Reload Card Ladder extension", extension_warning)
+            self.inventory_status_var.set("Reload the Card Ladder Chrome extension before recomping inventory.")
+            return
+        with self.state.lock:
+            comp_busy = bool(self.state.command or self.state.cardladder_running)
+        if comp_busy:
+            messagebox.showinfo("Comp run active", "Wait for the active Card Ladder comp run to finish before recomping inventory.")
+            return
+        self.refresh_inventory_tab()
+        records = [self._normalize_inventory_record(record) for record in getattr(self, "filtered_inventory_rows", [])]
+        temp_rows: list[WorkbookRow] = []
+        keys_by_excel_row: dict[int, str] = {}
+        for index, record in enumerate(records, start=2):
+            if str(record.get("status") or "").lower() != "active":
+                continue
+            if not scan_to_cert(record.get("cert_number")) or not str(record.get("grader") or "").strip():
+                continue
+            key = str(record.get("inventory_key") or "")
+            if not key:
+                continue
+            row = self._inventory_workbook_row(record, index)
+            row.status = "Queued"
+            temp_rows.append(row)
+            keys_by_excel_row[row.excel_row] = key
+        if not temp_rows:
+            messagebox.showinfo("No eligible inventory rows", "No visible inventory rows have both a cert number and grader.")
+            self.inventory_status_var.set("No visible inventory rows are eligible for Card Ladder recomp.")
+            return
+        current_sheet = self.selected_working_sheet.get() if hasattr(self, "selected_working_sheet") else ""
+        self.inventory_recomp_context = {
+            "rows": list(self.state.rows),
+            "row_sources": dict(getattr(self, "row_sources", {})),
+            "comp_sheet_sources": dict(getattr(self, "comp_sheet_sources", {})),
+            "selected_working_sheet": current_sheet,
+            "comp_output_saved": bool(getattr(self, "comp_output_saved", True)),
+            "keys_by_excel_row": keys_by_excel_row,
+            "total": len(temp_rows),
+            "changed": 0,
+        }
+        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE))
+        self.state.set_rows(temp_rows)
+        self.row_sources = {row.excel_row: "Inventory" for row in temp_rows}
+        self.comp_sheet_sources = {}
+        self.pending_comp_assignment_row_ids = set()
+        command_id = self.state.start_all_comps(requery_all=True)
+        self._refresh_comp_table(schedule_recommendations=False)
+        self.after(12000, lambda queued_command_id=command_id: self._warn_if_extension_not_checked_in(queued_command_id))
+        self.inventory_status_var.set(f"Queued Card Ladder value/comps refresh for {len(temp_rows)} visible inventory card(s).")
+        self.status_var.set(f"Inventory recomp queued as Card Ladder command #{command_id}.")
+
+    def _sync_inventory_recomp_results(self) -> int:
+        context = self.inventory_recomp_context
+        if not context:
+            return 0
+        keys_by_excel_row = context.get("keys_by_excel_row")
+        if not isinstance(keys_by_excel_row, dict):
+            return 0
+        with self.state.lock:
+            comp_rows = list(self.state.rows)
+        ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        ledger_indexes = {str(record.get("inventory_key") or ""): index for index, record in enumerate(ledger)}
+        changed = 0
+        for row in comp_rows:
+            if str(row.status or "").strip().lower() == "queued":
+                continue
+            key = str(keys_by_excel_row.get(row.excel_row) or "")
+            if not key or key not in ledger_indexes:
+                continue
+            index = ledger_indexes[key]
+            record = dict(ledger[index])
+            if row.card_title and not is_placeholder_title(row.card_title, row.grader):
+                record["card_title"] = row.card_title
+            record["card_ladder_value"] = row.card_ladder_value
+            record["card_ladder_comps_average"] = row.card_ladder_comps_average
+            record["card_ladder_comps"] = row.card_ladder_comps
+            record["notes"] = row.notes or record.get("notes") or ""
+            enriched = self._enrich_inventory_record_assignment(record, force=True)
+            enriched["status"] = ledger[index].get("status") or "Active"
+            enriched["inventory_key"] = key
+            normalized = self._normalize_inventory_record(enriched)
+            if normalized != ledger[index]:
+                ledger[index] = normalized
+                changed += 1
+        if changed:
+            self._save_inventory_ledger(ledger)
+            context["changed"] = int(context.get("changed") or 0) + changed
+        return changed
+
+    def _finish_inventory_recomp(self) -> None:
+        context = self.inventory_recomp_context
+        if not context:
+            return
+        changed_total = int(context.get("changed") or 0)
+        total = int(context.get("total") or 0)
+        original_rows = context.get("rows")
+        self.inventory_recomp_context = None
+        if isinstance(original_rows, list):
+            self.state.set_rows(original_rows)
+        self.row_sources = dict(context.get("row_sources") or {})
+        self.comp_sheet_sources = dict(context.get("comp_sheet_sources") or {})
+        if hasattr(self, "selected_working_sheet"):
+            self.selected_working_sheet.set(str(context.get("selected_working_sheet") or ""))
+        self.comp_output_saved = bool(context.get("comp_output_saved", True))
+        self._refresh_comp_table(schedule_recommendations=False)
+        self.refresh_inventory_tab()
+        self.inventory_status_var.set(f"Recomp finished for {total} visible inventory card(s); updated {changed_total}.")
+        self.status_var.set(f"Inventory recomp finished for {total} visible card(s).")
 
     def delete_selected_inventory_records(self) -> None:
         if not hasattr(self, "inventory_tree"):
@@ -7137,6 +7253,15 @@ class CardPipelineApp(tk.Tk):
                 cardladder_running = self.state.cardladder_running
                 updated_row_ids = set(self.state.updated_row_ids)
                 self.state.updated_row_ids = set()
+            if self.inventory_recomp_context:
+                changed = self._sync_inventory_recomp_results()
+                if not cardladder_running:
+                    self._finish_inventory_recomp()
+                elif changed:
+                    self.refresh_inventory_tab()
+                    self.inventory_status_var.set(f"Inventory recomp running; updated {changed} card(s) so far.")
+                self.after(200, self._poll_events)
+                return
             scoped_row_ids = updated_row_ids & self.pending_comp_assignment_row_ids
             assigned = self._apply_assignment_to_comp_rows(scoped_row_ids)
             if not cardladder_running:
