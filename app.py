@@ -239,6 +239,7 @@ DISPLAY_COLUMNS = (
     "sheet_source",
     "cert_number",
     "grader",
+    "category",
     "card_title",
     "purchase_price",
     "card_ladder_value",
@@ -255,6 +256,7 @@ INTAKE_COLUMNS = (
     "source",
     "cert_number",
     "grader",
+    "category",
     "card_title",
     "purchase_price",
     "card_ladder_value",
@@ -269,6 +271,7 @@ COMP_COLUMNS = (
     "source",
     "cert_number",
     "grader",
+    "category",
     "card_title",
     "purchase_price",
     "card_ladder_value",
@@ -287,6 +290,7 @@ RECEIVE_COLUMNS = (
     "sheet_source",
     "cert_number",
     "grader",
+    "category",
     "card_title",
     "purchase_price",
     "card_ladder_value",
@@ -326,6 +330,7 @@ EDITABLE_COLUMNS = {
     "source",
     "cert_number",
     "grader",
+    "category",
     "card_title",
     "purchase_price",
     "card_ladder_value",
@@ -340,6 +345,7 @@ HEADINGS = {
     "sheet_source": "Sheet Source",
     "cert_number": "Cert #",
     "grader": "Company",
+    "category": "Sport",
     "card_title": "Card",
     "purchase_price": "Purchase",
     "card_ladder_value": "Card Ladder",
@@ -358,6 +364,7 @@ COLUMN_WIDTHS = {
     "sheet_source": 150,
     "cert_number": 110,
     "grader": 86,
+    "category": 95,
     "card_title": 390,
     "purchase_price": 90,
     "card_ladder_value": 100,
@@ -5417,6 +5424,7 @@ class CardPipelineApp(tk.Tk):
                 match = self._incoming_match(cert)
             grader = str(row.get("grader") or match.get("grader") or infer_grader(str(row.get("card_title") or ""))).upper()
             card = str(row.get("card_title") or match.get("card_title") or "").strip()
+            category = str(row.get("sport") or row.get("category") or match.get("sport") or match.get("category") or "").strip()
             purchase_price = row.get("purchase_price") if row.get("purchase_price") is not None else match.get("purchase_price")
             card_ladder_value = row.get("card_ladder_value") if row.get("card_ladder_value") is not None else match.get("card_ladder_value")
             comps_average = row.get("card_ladder_comps_average") if row.get("card_ladder_comps_average") is not None else match.get("card_ladder_comps_average")
@@ -5434,6 +5442,7 @@ class CardPipelineApp(tk.Tk):
                     cert_number=cert,
                     card_title=card,
                     grader=grader,
+                    category=category,
                     existing_value=purchase_price,
                     card_ladder_value=card_ladder_value,
                     card_ladder_comps_average=comps_average,
@@ -5927,6 +5936,7 @@ class CardPipelineApp(tk.Tk):
                     cert_number=cert,
                     card_title=card,
                     grader=grader,
+                    category=str(row.get("sport") or row.get("category") or "").strip(),
                     existing_value=row.get("purchase_price"),
                     card_ladder_value=row.get("card_ladder_value"),
                     card_ladder_comps_average=row.get("card_ladder_comps_average"),
@@ -6004,6 +6014,7 @@ class CardPipelineApp(tk.Tk):
                     cert_number=cert,
                     card_title=card,
                     grader=grader,
+                    category=str(row.get("sport") or row.get("category") or "").strip(),
                     existing_value=row.get("purchase_price"),
                     card_ladder_value=row.get("card_ladder_value"),
                     card_ladder_comps_average=row.get("card_ladder_comps_average"),
@@ -6752,6 +6763,8 @@ class CardPipelineApp(tk.Tk):
             return row.cert_number
         if column == "grader":
             return row.grader
+        if column == "category":
+            return row.category
         if column == "card_title":
             return row.card_title
         if column == "purchase_price":
@@ -6946,6 +6959,7 @@ class CardPipelineApp(tk.Tk):
         return column in {
             "cert_number",
             "grader",
+            "category",
             "card_title",
             "card_ladder_value",
             "card_ladder_comps_average",
@@ -6991,11 +7005,15 @@ class CardPipelineApp(tk.Tk):
                 row.cert_number = scan_to_cert(clean_value)
             elif column == "grader":
                 row.grader = normalize_grader(clean_value) or clean_value.upper()
+            elif column == "category":
+                row.category = clean_value
             elif column == "card_title":
                 row.card_title = clean_value
                 inferred = infer_grader(row.card_title)
                 if inferred:
                     row.grader = inferred
+                if not row.category:
+                    row.category = str(assignment_engine.parse_card_for_matching(row.card_title).get("sport") or "")
             elif column == "purchase_price":
                 row.existing_value = self._parse_money_text(clean_value)
             elif column == "card_ladder_value":
@@ -7019,6 +7037,8 @@ class CardPipelineApp(tk.Tk):
                     row.status = "Received"
                     if is_placeholder_title(row.card_title, row.grader) and match.get("card_title"):
                         row.card_title = str(match.get("card_title") or "")
+                    if not row.category and (match.get("sport") or match.get("category")):
+                        row.category = str(match.get("sport") or match.get("category") or "")
                     if row.existing_value is None and match.get("purchase_price") is not None:
                         row.existing_value = match.get("purchase_price")
                     if row.card_ladder_value is None and match.get("card_ladder_value") is not None:
