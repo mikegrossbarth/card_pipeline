@@ -277,6 +277,43 @@ class GoogleSheetCacheTests(unittest.TestCase):
 
             self.assertIn("Basketball $10-$100 90%", text)
 
+    def test_saved_google_keep_source_uses_pipeline_cache_folder(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_dir = root / "ASSIGNMENT RULES" / "KEEP EXPORTS"
+            source = app.CardPipelineApp._google_keep_cache_source(
+                object(),
+                "https://keep.google.com/u/0/#NOTE/abc123",
+                output_dir,
+            )
+
+            self.assertIsNotNone(source)
+            self.assertEqual(Path(source["path"]).parent, output_dir)
+
+    def test_saved_google_keep_source_rehomes_repo_cache_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_dir = root / "CARD_PIPELINE" / "ASSIGNMENT RULES" / "KEEP EXPORTS"
+            old_config = app.ASSIGNMENT_CONFIG_PATH
+            app.ASSIGNMENT_CONFIG_PATH = root / "assignment_companies.json"
+            try:
+                stale_path = root / "ASSIGNMENT RULES" / "KEEP EXPORTS" / "Google Keep note.txt"
+                source = app.CardPipelineApp._google_keep_cache_source(
+                    object(),
+                    {
+                        "kind": "google_keep",
+                        "url": "https://keep.google.com/u/0/#NOTE/abc123",
+                        "path": str(stale_path),
+                        "name": "Google Keep note",
+                    },
+                    output_dir,
+                )
+            finally:
+                app.ASSIGNMENT_CONFIG_PATH = old_config
+
+            self.assertIsNotNone(source)
+            self.assertEqual(Path(source["path"]).parent, output_dir)
+
     def test_bridge_replaces_matching_google_keep_cache(self) -> None:
         with TemporaryDirectory() as tmp:
             cache_path = Path(tmp) / "rules.txt"
