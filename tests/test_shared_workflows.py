@@ -486,6 +486,12 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(parsed["sport"], "golf")
         self.assertEqual(parsed["playerName"], "Tiger Woods")
 
+    def test_tim_tebow_title_infers_football(self) -> None:
+        parsed = assignment_engine.parse_card_for_matching("2010 Donruss Rated Rookies 95 Tim Tebow PSA 10")
+
+        self.assertEqual(parsed["sport"], "football")
+        self.assertEqual(parsed["playerName"], "Tim Tebow")
+
     def test_generic_cardladder_profile_is_rejected_for_manual_review(self) -> None:
         bridge = app.BridgeState()
         row = WorkbookRow(excel_row=2, cert_number="27683042", grader="PSA", card_title="")

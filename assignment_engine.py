@@ -80,6 +80,7 @@ PLAYER_SPORT_HINTS = {
     "walter payton": "football",
     "randy moss": "football",
     "john elway": "football",
+    "tim tebow": "football",
     "emmitt smith": "football",
     "deion sanders": "football",
     "aaron donald": "football",
