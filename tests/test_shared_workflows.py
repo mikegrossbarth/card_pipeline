@@ -23,6 +23,7 @@ if str(PHOTO_APP) not in sys.path:
 import app
 import assignment_engine
 import google_sheets_import
+from bridge_server import keep_urls_match
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, ensure_company_weekly_sheets, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
@@ -338,6 +339,14 @@ class GoogleSheetCacheTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(cache_path.read_text(encoding="utf-8").strip(), "Football $20-$200 95%")
+
+    def test_google_keep_hash_note_url_matches_notes_url(self) -> None:
+        self.assertTrue(
+            keep_urls_match(
+                "https://keep.google.com/u/0/#NOTE/abc123",
+                "https://keep.google.com/u/0/notes/abc123",
+            )
+        )
 
 
 class AssignmentEngineTests(unittest.TestCase):
