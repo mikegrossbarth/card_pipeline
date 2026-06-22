@@ -1104,9 +1104,26 @@ class AssignmentEngineTests(unittest.TestCase):
                 card_title="1933 Goudey Babe Ruth PSA 2",
                 card_ladder_comps_average=600,
             )
+            low_value_over_50_dnb = WorkbookRow(
+                excel_row=8,
+                cert_number="",
+                grader="PSA",
+                category="football",
+                card_title="2024 Panini Prizm Mac Jones PSA 10",
+                card_ladder_comps_average=50,
+            )
+            high_value_over_50_dnb = WorkbookRow(
+                excel_row=9,
+                cert_number="",
+                grader="PSA",
+                category="football",
+                card_title="2024 Panini Prizm Mac Jones PSA 10",
+                card_ladder_comps_average=51,
+            )
 
             self.assertIn("Lebron $300-$4000", rules_text)
             self.assertIn("Color Blast $500+", rules_text)
+            self.assertIn("block: Football Mac Jones over 50", rules_text)
             self.assertIn("Lebron $300-$4000 100%", payout_text)
             self.assertFalse(engine.evaluate(blocked_specific)[0].accepted)
             self.assertTrue(engine.evaluate(accepted_other_grade)[0].accepted)
@@ -1114,6 +1131,8 @@ class AssignmentEngineTests(unittest.TestCase):
             self.assertEqual(engine.evaluate(bonus_one_goat)[0].payout, 546)
             self.assertEqual(engine.evaluate(regular_goat)[0].payout, 540)
             self.assertEqual(engine.evaluate(ignored_bonus_two_goat)[0].payout, 540)
+            self.assertTrue(engine.evaluate(low_value_over_50_dnb)[0].accepted)
+            self.assertFalse(engine.evaluate(high_value_over_50_dnb)[0].accepted)
 
 
 class AppSharedWorkflowLogicTests(unittest.TestCase):

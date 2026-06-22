@@ -469,6 +469,7 @@ class AssignmentRule:
     min_price: float | None = None
     max_price: float | None = None
     block: bool = False
+    min_price_exclusive: bool = False
     min_year: int | None = None
     max_year: int | None = None
 
@@ -1131,7 +1132,7 @@ def synthesize_new_arena_do_not_buy_rules(values: list[list[Any]]) -> list[str]:
         if not sport:
             continue
         section = nearest_dnb_section_label(values, header_index, column_index)
-        if "over $50" in section:
+        if is_dnb_over_section_label(section):
             over_columns.append((column_index, sport))
         else:
             fixed_columns.append((column_index, sport))
@@ -1157,10 +1158,16 @@ def synthesize_new_arena_do_not_buy_rules(values: list[list[Any]]) -> list[str]:
 def nearest_dnb_section_label(values: list[list[Any]], row_index: int, column_index: int) -> str:
     for index in range(row_index - 1, -1, -1):
         row = values[index]
-        label = clean_rule_label(row[column_index] if column_index < len(row) else "")
-        if label:
-            return label.lower()
+        for candidate_index in range(min(column_index, len(row) - 1), -1, -1):
+            label = clean_rule_label(row[candidate_index])
+            if label and parse_do_not_buy_section(label):
+                return label.lower()
     return ""
+
+
+def is_dnb_over_section_label(value: Any) -> bool:
+    text = clean_rule_label(value)
+    return re.search(r"\bover\s+\$?\s*50\b", text, re.I) is not None
 
 
 def normalize_dnb_text(value: Any) -> str:
@@ -1579,11 +1586,14 @@ def synthesize_do_not_buy_rules(values: list[list[Any]]) -> list[str]:
 
 
 def apply_do_not_buy_section_headings(row: list[Any], section_max_by_column: list[float | None]) -> None:
+    has_sport_header = any(normalize_sport_label(cell) for cell in row)
     headings = [
         (index, section)
         for index, cell in enumerate(row)
         for section in [parse_do_not_buy_section(clean_rule_label(cell))]
-        if section and not section.get("keepCurrentPrice")
+        if section
+        and not section.get("keepCurrentPrice")
+        and not (has_sport_header and section.get("maxPrice") is None and is_plain_do_not_buy_label(cell))
     ]
     for heading_index, (index, section) in enumerate(headings):
         next_index = headings[heading_index + 1][0] if heading_index + 1 < len(headings) else len(section_max_by_column)
@@ -1598,9 +1608,14 @@ def parse_do_not_buy_section(value: Any) -> dict[str, Any] | None:
         return {"maxPrice": parse_money(threshold_match.group(1))}
     if re.match(r"^(?:basketball|football|baseball|soccer|hockey|wnba|collegiate|vintage|notes?)$", text, re.I):
         return {"keepCurrentPrice": True}
-    if re.match(r"^(?:do not buy|don't buy|dont buy|never buy|players to never buy|players to avoid|players to not buy|players not to buy|basketball|football|baseball|soccer|hockey|wnba|collegiate|vintage|currently avoiding(?: buying)?|pausing/limiting|notes?)$", text, re.I):
+    if re.match(r"^(?:do not buy(?: these players)?|don't buy(?: these players)?|dont buy(?: these players)?|never buy|players to never buy|players to avoid|players to not buy|players not to buy|basketball|football|baseball|soccer|hockey|wnba|collegiate|vintage|currently avoiding(?: buying)?|pausing/limiting|notes?)$", text, re.I):
         return {"maxPrice": None}
     return None
+
+
+def is_plain_do_not_buy_label(value: Any) -> bool:
+    text = clean_rule_label(value)
+    return re.match(r"^(?:do not buy|don't buy|dont buy)$", text, re.I) is not None
 
 
 def extract_player_names_from_values(values: list[list[Any]]) -> list[str]:
@@ -1850,7 +1865,12 @@ def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
     text = str(line or "").strip()
     over_match = re.match(r"(.+?)\s+(?:over|above)\s+\$?\s*([\d,.]+k?)\+?$", text, re.I)
     if over_match:
-        return AssignmentRule(matcher=rule_matcher_label(over_match.group(1)), min_price=parse_money(over_match.group(2)), block=block)
+        return AssignmentRule(
+            matcher=rule_matcher_label(over_match.group(1)),
+            min_price=parse_money(over_match.group(2)),
+            block=block,
+            min_price_exclusive=True,
+        )
     range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|–|—)\s*\$?\s*([\d,.]+k?)", text, re.I)
     if range_match:
         matcher = f"{text[:range_match.start()]} {text[range_match.end():]}".strip(" -:|")
@@ -2595,7 +2615,13 @@ def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
         text_without_year = re.sub(r"\bvintage\s+(?=basketball|football|baseball|soccer|hockey|ufc)\b", "", text_without_year, flags=re.I).strip()
     over_match = re.match(r"(.+?)\s+(?:over|above|more\s+than)\s+\$?\s*([\d,.]+k?)\+?$", text_without_year, re.I)
     if over_match:
-        return AssignmentRule(matcher=rule_matcher_label(over_match.group(1)), min_price=parse_money(over_match.group(2)), block=block, max_year=max_year)
+        return AssignmentRule(
+            matcher=rule_matcher_label(over_match.group(1)),
+            min_price=parse_money(over_match.group(2)),
+            block=block,
+            min_price_exclusive=True,
+            max_year=max_year,
+        )
     range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|–|—|to|through|thru)\s*\$?\s*([\d,.]+k?)", text_without_year, re.I)
     if range_match:
         matcher = f"{text_without_year[:range_match.start()]} {text_without_year[range_match.end():]}".strip(" -:|")
@@ -2611,8 +2637,11 @@ def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
 def rule_matches(rule: AssignmentRule, haystack: str, price: float) -> bool:
     if rule.matcher and not term_matches(rule.matcher, haystack):
         return False
-    if rule.min_price is not None and price < rule.min_price:
-        return False
+    if rule.min_price is not None:
+        if rule.min_price_exclusive and price <= rule.min_price:
+            return False
+        if not rule.min_price_exclusive and price < rule.min_price:
+            return False
     if rule.max_price is not None and price > rule.max_price:
         return False
     if rule.min_year is not None or rule.max_year is not None:
