@@ -935,10 +935,12 @@ class AssignmentEngineTests(unittest.TestCase):
             buying.append([])
             buying.append([])
             buying.append([])
-            buying.append(["", "", "Priority", "Priority"])
-            buying.append(["", "Percent Paid", 1.0, 0.92])
-            buying.append(["", "Categories", "Lebron", "Football"])
-            buying.append(["", "Price Ranges", "$300 - $4000", "$2,500 - $5,000"])
+            buying.append(["", "", "Priority", "Priority", "Priority", "Priority"])
+            buying.append(["", "Percent Paid", 0.91, 0.93, 1.0, 0.92])
+            buying.append(["", "Categories", "GOATS+", "Goats", "Lebron", "Football"])
+            buying.append(["", "Price Ranges", "$500 - $3000", "$3000 - $7500", "$300 - $4000", "$2,500 - $5,000"])
+            buying.append(["", "", "Bonus 1"])
+            buying.append(["", "", "Curry Jordan"])
             buying.append([])
             buying.append([])
             buying.append([])
@@ -946,8 +948,9 @@ class AssignmentEngineTests(unittest.TestCase):
             buying.append([])
             buying.append([])
             buying.append([])
-            buying.append([])
-            buying.append([])
+            buying.append(["", "Vintage", "", "", "", "", "Goat"])
+            buying.append(["", 0.90, 0.90, 0.80, 0.80, "", 1.10, 0.95, 0.90, 0.90])
+            buying.append(["", "$100 - $299", "$300 - $499", "$500 - $999", "$1000+", "", "$50 - $99", "$100 - $499", "$500 - $2999", "$3000+"])
             buying.append(["", "Downtown", "", "", "", "", "Color Blast"])
             buying.append(["", 1.0, 0.85, 0.85, 0.85, "", "X", "X", "X", 0.9])
             buying.append(["", "$250 - $499", "$500 - $999", "$1,000- $1,999", "$2,000+", "", "X", "X", "X", "$500+"])
@@ -965,6 +968,7 @@ class AssignmentEngineTests(unittest.TestCase):
             goats.append(["AC GOAT LIST"])
             goats.append(["Basketball", "Football", "Baseball"])
             goats.append(["Lebron James", "Tom Brady", "Babe Ruth"])
+            goats.append(["Stephen Curry", "Michael Jordan", "Willie Mays"])
 
             dnb = workbook.create_sheet("DO NOT BUY LIST")
             dnb.append([""])
@@ -1011,6 +1015,20 @@ class AssignmentEngineTests(unittest.TestCase):
                 card_title="1988 Topps Football Test Player PSA 9",
                 card_ladder_comps_average=20,
             )
+            bonus_one_goat = WorkbookRow(
+                excel_row=5,
+                cert_number="",
+                grader="PSA",
+                card_title="2019 Panini Prizm Stephen Curry PSA 10",
+                card_ladder_comps_average=600,
+            )
+            regular_goat = WorkbookRow(
+                excel_row=6,
+                cert_number="",
+                grader="PSA",
+                card_title="1958 Topps Willie Mays PSA 5",
+                card_ladder_comps_average=600,
+            )
 
             self.assertIn("Lebron $300-$4000", rules_text)
             self.assertIn("Color Blast $500+", rules_text)
@@ -1018,6 +1036,8 @@ class AssignmentEngineTests(unittest.TestCase):
             self.assertFalse(engine.evaluate(blocked_specific)[0].accepted)
             self.assertTrue(engine.evaluate(accepted_other_grade)[0].accepted)
             self.assertFalse(engine.evaluate(pre_1989_football)[0].accepted)
+            self.assertEqual(engine.evaluate(bonus_one_goat)[0].payout, 546)
+            self.assertEqual(engine.evaluate(regular_goat)[0].payout, 540)
 
 
 class AppSharedWorkflowLogicTests(unittest.TestCase):

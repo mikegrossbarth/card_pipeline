@@ -1203,10 +1203,15 @@ def dnb_grade_suffixes(value: Any) -> list[str]:
 
 
 def synthesize_workbook_payouts(sheets: list[tuple[str, list[list[Any]]]]) -> list[str]:
+    goat_players: list[str] = []
+    for title, values in sheets:
+        if re.search(r"goats?", title, re.I):
+            goat_players.extend(extract_player_names_from_values(values))
+    context = {"goatPlayers": unique_values(goat_players)}
     payouts: list[str] = []
     for title, values in sheets:
         if is_new_arena_buying_guide_sheet(title, values):
-            payouts.extend(synthesize_new_arena_buying_guide_payouts(values))
+            payouts.extend(synthesize_new_arena_buying_guide_payouts(values, context))
     return unique_values(payouts)
 
 
@@ -1269,14 +1274,15 @@ def sliding_row_pairs(values: list[list[Any]]) -> list[list[Any]]:
 def synthesize_new_arena_buying_guide_rules(values: list[list[Any]], context: dict[str, Any]) -> list[str]:
     rules: list[str] = []
     rules.extend(synthesize_new_arena_priority_rules(values, context))
-    rules.extend(synthesize_new_arena_feature_rules(values))
+    rules.extend(synthesize_new_arena_feature_rules(values, context))
     rules.extend(synthesize_new_arena_sport_rules(values))
     return unique_values(rules)
 
 
-def synthesize_new_arena_buying_guide_payouts(values: list[list[Any]]) -> list[str]:
+def synthesize_new_arena_buying_guide_payouts(values: list[list[Any]], context: dict[str, Any] | None = None) -> list[str]:
+    context = context or {}
     payouts: list[str] = []
-    payouts.extend(synthesize_new_arena_priority_payouts(values))
+    payouts.extend(synthesize_new_arena_priority_payouts(values, context))
     payouts.extend(synthesize_new_arena_feature_payouts(values))
     payouts.extend(synthesize_new_arena_sport_payouts(values))
     payouts.extend(synthesize_new_arena_copy_paste_payouts(values))
@@ -1294,19 +1300,19 @@ def synthesize_new_arena_priority_rules(values: list[list[Any]], context: dict[s
         parsed_range = parse_sheet_range(range_row[column_index] if column_index < len(range_row) else None)
         if not label or not parsed_range:
             continue
-        if re.search(r"bonus", label, re.I):
-            continue
-        if is_goat_rule_label(label) and context.get("goatPlayers"):
-            for player in context["goatPlayers"]:
+        labels = synthesize_new_arena_priority_matcher_labels(values, category_row_index, column_index, label, context)
+        if is_goat_rule_label(label) and labels == context.get("goatPlayers"):
+            for player in labels:
                 rules.append(format_rule(player, parsed_range))
                 rules.append(f"goat-range: {format_rule(player, parsed_range)}")
         else:
-            for expanded_label in expand_header_label(label):
-                rules.append(format_rule(expanded_label, parsed_range))
+            for matcher_label in labels:
+                rules.append(format_rule(matcher_label, parsed_range))
     return rules
 
 
-def synthesize_new_arena_priority_payouts(values: list[list[Any]]) -> list[str]:
+def synthesize_new_arena_priority_payouts(values: list[list[Any]], context: dict[str, Any] | None = None) -> list[str]:
+    context = context or {}
     category_row_index = find_row_index_with_label(values, "categories")
     if category_row_index < 1:
         return []
@@ -1317,18 +1323,93 @@ def synthesize_new_arena_priority_payouts(values: list[list[Any]]) -> list[str]:
         label = normalize_rule_label(header)
         parsed_range = parse_sheet_range(range_row[column_index] if column_index < len(range_row) else None)
         rate = parse_arena_rate(percent_row[column_index] if column_index < len(percent_row) else None)
-        if not label or not parsed_range or rate is None or rate <= 0 or re.search(r"bonus", label, re.I):
+        if not label or not parsed_range or rate is None or rate <= 0:
             continue
-        payouts.append(format_payout(label, parsed_range, rate))
+        for matcher_label in synthesize_new_arena_priority_matcher_labels(values, category_row_index, column_index, label, context):
+            payouts.append(format_payout(matcher_label, parsed_range, rate))
     return payouts
 
 
-def synthesize_new_arena_feature_rules(values: list[list[Any]]) -> list[str]:
-    return [
-        format_rule(item["label"], item["range"])
-        for item in new_arena_feature_items(values)
-        if item["buy"]
-    ]
+def synthesize_new_arena_priority_matcher_labels(
+    values: list[list[Any]],
+    category_row_index: int,
+    column_index: int,
+    label: str,
+    context: dict[str, Any],
+) -> list[str]:
+    bonus_players = new_arena_bonus_player_labels(values, category_row_index, column_index, context)
+    if bonus_players:
+        return bonus_players
+    if re.search(r"bonus", label, re.I):
+        return []
+    if is_goat_rule_label(label) and context.get("goatPlayers"):
+        return list(context["goatPlayers"])
+    return expand_header_label(label)
+
+
+def new_arena_bonus_player_labels(
+    values: list[list[Any]],
+    category_row_index: int,
+    column_index: int,
+    context: dict[str, Any],
+) -> list[str]:
+    marker_row_index = category_row_index + 2
+    marker_row = values[marker_row_index] if marker_row_index < len(values) else []
+    marker = clean_rule_label(marker_row[column_index] if column_index < len(marker_row) else "")
+    if not re.search(r"\bbonus\s+\d+\b", marker, re.I):
+        return []
+    goat_players = [str(player) for player in context.get("goatPlayers") or []]
+    if not goat_players:
+        return []
+    players: list[str] = []
+    for row in values[marker_row_index + 1:]:
+        left_label = clean_rule_label(row[1] if len(row) > 1 else "")
+        cell = clean_rule_label(row[column_index] if column_index < len(row) else "")
+        if not cell:
+            if left_label and not re.search(r"^bonus$", left_label, re.I):
+                break
+            continue
+        if parse_sheet_range(cell) or re.search(r"percent paid|price ranges?|categories|only|grades?|duplicates?|vintage|faded|best of", cell, re.I):
+            continue
+        players.extend(split_bonus_player_cell(cell, goat_players))
+    return unique_values(players)
+
+
+def split_bonus_player_cell(cell: Any, goat_players: list[str]) -> list[str]:
+    text = clean_rule_label(cell)
+    if not text:
+        return []
+    matches: list[tuple[int, str]] = []
+    for player in goat_players:
+        player_text = clean_rule_label(player)
+        tokens = player_text.split()
+        candidates = {player_text}
+        if tokens:
+            candidates.add(tokens[0])
+            candidates.add(tokens[-1])
+        for candidate in candidates:
+            if len(candidate) < 4:
+                continue
+            match = re.search(rf"\b{re.escape(candidate)}\b", text, re.I)
+            if match:
+                matches.append((match.start(), player))
+                break
+    return [player for _index, player in sorted(matches, key=lambda item: item[0])]
+
+
+def synthesize_new_arena_feature_rules(values: list[list[Any]], context: dict[str, Any] | None = None) -> list[str]:
+    context = context or {}
+    rules: list[str] = []
+    for item in new_arena_feature_items(values):
+        if not item["buy"]:
+            continue
+        if is_goat_rule_label(item["label"]) and context.get("goatPlayers"):
+            for player in context["goatPlayers"]:
+                rules.append(format_rule(player, item["range"]))
+                rules.append(f"goat-range: {format_rule(player, item['range'])}")
+        else:
+            rules.append(format_rule(item["label"], item["range"]))
+    return rules
 
 
 def synthesize_new_arena_feature_payouts(values: list[list[Any]]) -> list[str]:
