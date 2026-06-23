@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 import tkinter as tk
 import urllib.parse
 import urllib.request
@@ -111,6 +112,7 @@ INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
 UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
 PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
+PERFORMANCE_LOG_PATH = CARD_PIPELINE_DIR / "lucas_performance.log"
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
 APP_TITLE = "L.U.C.A.S"
@@ -164,6 +166,32 @@ ASSIGNMENT_CATEGORY_WEB_SIGNALS = {
     "ufc": ("ufc", "mma", "mixed martial artist", "mixed martial arts", "ultimate fighting championship"),
 }
 
+PERF_LOG_LOCK = threading.Lock()
+
+
+def performance_threshold_seconds() -> float:
+    raw = os.environ.get("LUCAS_PERF_LOG_SECONDS", "0.25")
+    try:
+        return max(float(raw), 0.0)
+    except (TypeError, ValueError):
+        return 0.25
+
+
+def record_performance_event(operation: str, started_at: float, details: str = "", force: bool = False) -> None:
+    elapsed = time.perf_counter() - started_at
+    if not force and elapsed < performance_threshold_seconds():
+        return
+    try:
+        line = f"{datetime.now().isoformat(timespec='seconds')}\t{operation}\t{elapsed:.3f}s"
+        if details:
+            line = f"{line}\t{details}"
+        with PERF_LOG_LOCK:
+            PERFORMANCE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with PERFORMANCE_LOG_PATH.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+    except Exception:
+        return
+
 
 def load_app_settings() -> dict[str, object]:
     if not SETTINGS_PATH.exists():
@@ -185,7 +213,7 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -199,6 +227,7 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
     PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
     SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
+    PERFORMANCE_LOG_PATH = CARD_PIPELINE_DIR / "lucas_performance.log"
 
 
 def set_pipeline_from_working_dir(path: Path) -> None:
@@ -430,6 +459,7 @@ def inventory_display_notes(record: dict[str, object]) -> str:
 
 class CardPipelineApp(tk.Tk):
     def __init__(self) -> None:
+        perf_start = time.perf_counter()
         super().__init__()
         self.title(f"{APP_TITLE} - {APP_SUBTITLE}")
         self.geometry("1420x820")
@@ -500,7 +530,9 @@ class CardPipelineApp(tk.Tk):
         self.review_photo_status = tk.StringVar(value="No receive photos selected.")
         self.review_photo_worker: threading.Thread | None = None
         self._load_player_overrides()
+        assignment_start = time.perf_counter()
         self.assignment_engine = AssignmentEngine.load()
+        record_performance_event("assignment.load.initial", assignment_start, f"companies={len(self.assignment_engine.companies)}")
         self.assignment_recommendation_job = 0
         self.assignment_recommendation_running = False
         self.assignment_recommendation_after_id: str | None = None
@@ -555,6 +587,7 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(self.bridge_status_text)
         self.after(100, self._start_startup_refresh)
         self.after(5 * 60 * 1000, self._weekly_company_sheet_timer)
+        record_performance_event("app.init", perf_start, f"pipeline={CARD_PIPELINE_DIR}", force=True)
 
     def _on_close(self) -> None:
         self.destroy()
@@ -2200,6 +2233,7 @@ class CardPipelineApp(tk.Tk):
         return "break"
 
     def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False, filtered_only: bool = False) -> None:
+        perf_start = time.perf_counter()
         self._last_inventory_enrich_visible_count = 0
         self._last_inventory_enrich_changed_count = 0
         if getattr(self, "inventory_filter_after_id", None):
@@ -2249,6 +2283,11 @@ class CardPipelineApp(tk.Tk):
             self._save_inventory_ledger(self.inventory_rows)
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
         if not hasattr(self, "inventory_tree"):
+            record_performance_event(
+                "inventory.refresh",
+                perf_start,
+                f"rows={len(self.inventory_rows)} filtered={len(self.filtered_inventory_rows)} reconcile={reconcile} enrich={enrich} filtered_only={filtered_only} tree=missing",
+            )
             return
         self._refresh_person_combo_values()
         self.inventory_tree.delete(*self.inventory_tree.get_children())
@@ -2290,6 +2329,11 @@ class CardPipelineApp(tk.Tk):
             self.inventory_tree_records[iid] = record
         self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Source Value: {format_money(total_value)}")
         self.inventory_status_var.set(f"Loaded {len(self.filtered_inventory_rows)}/{len(self.inventory_rows)} inventory card(s) from {INVENTORY_LEDGER_PATH.name}.")
+        record_performance_event(
+            "inventory.refresh",
+            perf_start,
+            f"rows={len(self.inventory_rows)} filtered={len(self.filtered_inventory_rows)} reconcile={reconcile} enrich={enrich} filtered_only={filtered_only} changed={self._last_inventory_enrich_changed_count}",
+        )
 
     def _schedule_inventory_filter_refresh(self) -> None:
         if not hasattr(self, "inventory_tree"):
@@ -2302,15 +2346,19 @@ class CardPipelineApp(tk.Tk):
         self.inventory_filter_after_id = self.after(150, self.refresh_inventory_tab)
 
     def update_inventory_payouts(self) -> None:
+        perf_start = time.perf_counter()
         try:
+            assignment_start = time.perf_counter()
             self._load_player_overrides()
             self.assignment_engine = AssignmentEngine.load()
+            record_performance_event("assignment.load.inventory_payouts", assignment_start, f"companies={len(self.assignment_engine.companies)}")
         except Exception:
             pass
         self.refresh_inventory_tab(enrich=True, filtered_only=True)
         visible_count = int(getattr(self, "_last_inventory_enrich_visible_count", 0) or len(getattr(self, "filtered_inventory_rows", [])))
         changed_count = int(getattr(self, "_last_inventory_enrich_changed_count", 0) or 0)
         self.inventory_status_var.set(f"Updated payouts for {visible_count} visible inventory card(s); changed {changed_count}.")
+        record_performance_event("inventory.update_payouts", perf_start, f"visible={visible_count} changed={changed_count}")
 
     def open_inventory_recomp_popup(self) -> None:
         self.refresh_inventory_tab()
@@ -3254,6 +3302,7 @@ class CardPipelineApp(tk.Tk):
         menu.tk_popup(event.x_root, event.y_root)
 
     def refresh_profit_tab(self) -> None:
+        perf_start = time.perf_counter()
         ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
         pruned_manual = len([record for record in ledger if self._is_manual_company_profit_backfill(record)])
         if pruned_manual:
@@ -3265,7 +3314,10 @@ class CardPipelineApp(tk.Tk):
                     self._save_profit_ledger(kept)
         existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
         backfilled = 0
-        for record in read_company_profit_records(COMPANY_SHEETS_DIR):
+        company_backfill_start = time.perf_counter()
+        company_profit_records = read_company_profit_records(COMPANY_SHEETS_DIR)
+        record_performance_event("profit.company_sheet_scan", company_backfill_start, f"records={len(company_profit_records)}")
+        for record in company_profit_records:
             normalized = self._normalize_profit_record(record)
             key = str(normalized.get("ledger_key") or "")
             if not key or key in existing_keys:
@@ -3288,6 +3340,11 @@ class CardPipelineApp(tk.Tk):
         self.profit_rows.sort(key=lambda record: (str(record.get("date_added") or ""), str(record.get("company") or ""), str(record.get("card_title") or "")), reverse=True)
         self.filtered_profit_rows = self._filtered_profit_records(self.profit_rows)
         if not hasattr(self, "profit_tree"):
+            record_performance_event(
+                "profit.refresh",
+                perf_start,
+                f"rows={len(self.profit_rows)} filtered={len(self.filtered_profit_rows)} backfilled={backfilled} tree=missing",
+            )
             return
         self._refresh_person_combo_values()
         mode = self.profit_view_mode.get()
@@ -3401,6 +3458,11 @@ class CardPipelineApp(tk.Tk):
         cleanup_suffix = f" | removed {pruned_manual} manual row(s)" if pruned_manual else ""
         self.profit_status_var.set(f"Loaded {display_count}/{len(self.profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{suffix}{backfill_suffix}{cleanup_suffix}.")
         self._draw_profit_chart()
+        record_performance_event(
+            "profit.refresh",
+            perf_start,
+            f"rows={len(self.profit_rows)} filtered={len(self.filtered_profit_rows)} mode={mode} backfilled={backfilled} pruned_manual={pruned_manual}",
+        )
 
     def _profit_month_key(self, value: object) -> str:
         text = str(value or "").strip()
@@ -3561,6 +3623,7 @@ class CardPipelineApp(tk.Tk):
             self.home_edit_markers_tab.configure(**inactive)
 
     def refresh_home(self) -> None:
+        perf_start = time.perf_counter()
         self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries = {}
         errors: list[str] = []
@@ -3600,6 +3663,12 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Home metrics refreshed. Archived {archived_count} paid received sheet(s).")
         else:
             self.status_var.set("Home metrics refreshed.")
+        total_sheets = sum(len(paths) for paths in self.home_sheet_paths.values())
+        record_performance_event(
+            "home.refresh",
+            perf_start,
+            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} errors={len(errors)}",
+        )
 
     def _shared_conflict_files(self) -> list[Path]:
         if not CARD_PIPELINE_DIR.exists():
@@ -3750,6 +3819,7 @@ class CardPipelineApp(tk.Tk):
         return {"url": url, "path": str(output_dir / f"{safe_filename(name)}.xlsx"), "name": name}
 
     def _startup_refresh_worker(self) -> None:
+        perf_start = time.perf_counter()
         payload = {
             "working_paths": {},
             "received_paths": {},
@@ -3761,7 +3831,13 @@ class CardPipelineApp(tk.Tk):
             "errors": [],
         }
         errors: list[str] = payload["errors"]
+        google_start = time.perf_counter()
         google_cache_result = self._refresh_startup_google_sheet_caches()
+        record_performance_event(
+            "startup.google_sheet_cache",
+            google_start,
+            f"refreshed={google_cache_result.get('refreshed') or 0} errors={len(google_cache_result.get('errors') or [])}",
+        )
         payload["google_sheet_cache"] = google_cache_result
         errors.extend(google_cache_result.get("errors") or [])
 
@@ -3801,6 +3877,7 @@ class CardPipelineApp(tk.Tk):
             incoming_paths = []
 
         index: dict[str, dict[str, object]] = {}
+        incoming_index_start = time.perf_counter()
         for path in sorted(incoming_paths, key=lambda path: path.name.lower()):
             try:
                 rows = read_simple_spreadsheet(path)
@@ -3826,7 +3903,9 @@ class CardPipelineApp(tk.Tk):
                     "estimated_payout": row.get("estimated_payout"),
                 }
         payload["incoming_index"] = index
+        record_performance_event("startup.incoming_index", incoming_index_start, f"sheets={len(incoming_paths)} certs={len(index)}")
 
+        summaries_start = time.perf_counter()
         for kind, paths in (("Incoming", incoming_paths), ("Working", working_paths), ("Received", received_paths)):
             for path in paths:
                 key = self._home_sheet_key(kind, path.name)
@@ -3836,10 +3915,19 @@ class CardPipelineApp(tk.Tk):
                     errors.append(f"{path.name}: {error}")
                     summary = {"name": path.name, "row_count": 0, "received_count": 0, "purchase_total": 0.0, "all_received": False, "partially_received": False}
                 payload["home_summaries"][key] = summary
+        record_performance_event("startup.home_summaries", summaries_start, f"summaries={len(payload['home_summaries'])}")
 
+        payload["perf_elapsed"] = time.perf_counter() - perf_start
+        record_performance_event(
+            "startup.worker",
+            perf_start,
+            f"incoming={len(incoming_paths)} working={len(working_paths)} received={len(received_paths)} certs={len(index)} errors={len(errors)}",
+            force=True,
+        )
         self.events.put(("startup_refresh", payload))
 
     def _apply_startup_refresh(self, payload: dict[str, object]) -> None:
+        perf_start = time.perf_counter()
         self.working_sheet_paths = dict(payload.get("working_paths") or {})
         if hasattr(self, "working_sheet_list"):
             self.working_sheet_list.delete(0, tk.END)
@@ -3886,6 +3974,11 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Sheet lists loaded. Archived {archived_count} paid received sheet(s).")
         else:
             self.status_var.set("Sheet lists loaded.")
+        record_performance_event(
+            "startup.apply",
+            perf_start,
+            f"worker_elapsed={float(payload.get('perf_elapsed') or 0):.3f}s home_summaries={len(self.home_sheet_summaries)} incoming_index={len(self.incoming_cert_index)} errors={len(errors)}",
+        )
 
     def _refresh_home_sheet_list(self) -> None:
         if not hasattr(self, "home_sheet_list"):
@@ -3967,7 +4060,9 @@ class CardPipelineApp(tk.Tk):
         return "Awaiting tracking"
 
     def refresh_payouts_tab(self) -> None:
+        perf_start = time.perf_counter()
         if not hasattr(self, "payout_summary_tree"):
+            record_performance_event("payouts.refresh", perf_start, "tree=missing")
             return
         self._refresh_person_combo_values()
         self.payout_summary_tree.delete(*self.payout_summary_tree.get_children())
@@ -4039,6 +4134,11 @@ class CardPipelineApp(tk.Tk):
         filter_label = self.payout_person_var.get().strip()
         suffix = f" | Filter: {filter_label}" if filter_label else ""
         self.payout_status_var.set(f"{detail_count} payment sheet(s) | Active balance: {format_money(total_balance)}{suffix}")
+        record_performance_event(
+            "payouts.refresh",
+            perf_start,
+            f"details={detail_count} people={len(balances)} balance={total_balance:.2f}",
+        )
 
     def _payout_sheet_items(self) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
@@ -6892,6 +6992,7 @@ class CardPipelineApp(tk.Tk):
         self.assignment_recommendation_after_id = self.after(delay_ms, self._queue_assignment_recommendations)
 
     def _assignment_recommendations_worker(self, job_id: int, rows: list[WorkbookRow]) -> None:
+        perf_start = time.perf_counter()
         total = len(rows)
         results: list[tuple[int, str, float | None]] = []
         progress_step = max(1, total // 25)
@@ -6904,8 +7005,10 @@ class CardPipelineApp(tk.Tk):
                 if index == total or index % progress_step == 0:
                     self.events.put(("assignment_recommendations_progress", {"job_id": job_id, "done": index, "total": total}))
         except Exception as error:
+            record_performance_event("assignment.recommendations", perf_start, f"job={job_id} rows={total} error={error}", force=True)
             self.events.put(("assignment_recommendations_error", {"job_id": job_id, "error": str(error)}))
             return
+        record_performance_event("assignment.recommendations", perf_start, f"job={job_id} rows={total} results={len(results)}")
         self.events.put(("assignment_recommendations_done", {"job_id": job_id, "total": total, "results": results}))
 
     def _apply_assignment_recommendation_results(self, payload: dict[str, object]) -> None:
@@ -6953,6 +7056,7 @@ class CardPipelineApp(tk.Tk):
     def _apply_assignment_to_comp_rows(self, row_ids: set[int]) -> int:
         if not row_ids or not self.assignment_engine.companies:
             return 0
+        perf_start = time.perf_counter()
         updated = 0
         for row in self.state.rows:
             if id(row) not in row_ids:
@@ -6967,6 +7071,7 @@ class CardPipelineApp(tk.Tk):
             updated += 1
         if updated:
             self.comp_output_saved = False
+        record_performance_event("assignment.apply_comp_rows", perf_start, f"rows={len(row_ids)} updated={updated}")
         return updated
 
     def _assignment_person_for_row(self, row: WorkbookRow) -> str:
@@ -7016,8 +7121,11 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(f"Assignment recommendations failed: {error}")
 
     def reload_assignment_rules(self) -> None:
+        perf_start = time.perf_counter()
         self._load_player_overrides()
+        assignment_start = time.perf_counter()
         self.assignment_engine = AssignmentEngine.load()
+        record_performance_event("assignment.load.reload", assignment_start, f"companies={len(self.assignment_engine.companies)}")
         self._refresh_keep_source_registry()
         self._ensure_company_sheet_folders()
         self._ensure_weekly_company_sheets_due()
@@ -7025,6 +7133,7 @@ class CardPipelineApp(tk.Tk):
         self._refresh_table(schedule_recommendations=True)
         self.review_status.set("Assignment rules reloaded.")
         self.status_var.set("Assignment rules reloaded.")
+        record_performance_event("assignment.reload", perf_start, f"companies={len(self.assignment_engine.companies)}")
 
     def open_assignment_rules(self) -> None:
         open_assignment_rules_dialog(self, CARD_PIPELINE_DIR, self.reload_assignment_rules)
