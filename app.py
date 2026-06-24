@@ -46,7 +46,7 @@ import assignment_engine  # noqa: E402
 from assignment_engine import AssignmentEngine  # noqa: E402
 from assignment_engine import CONFIG_PATH as ASSIGNMENT_CONFIG_PATH  # noqa: E402
 from assignment_engine import gsheet_shortcut_url, is_google_keep_url, keep_note_cache_path, load_gsheet_shortcut, normalize_source_value, path_from_source_value, safe_filename  # noqa: E402
-from assignment_config_ui import open_assignment_rules_dialog  # noqa: E402
+from assignment_config_ui import open_assignment_rules_dialog, seller_terms_health_lines  # noqa: E402
 from google_sheets_import import export_google_sheet_to_xlsx  # noqa: E402
 from lucas_diagnostics import diagnostic_json, lucas_version_label, setup_doctor_results  # noqa: E402
 from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
@@ -110,6 +110,7 @@ SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
 PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
+ACTIVITY_LOG_PATH = CARD_PIPELINE_DIR / "activity_log.json"
 UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
 PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
@@ -214,7 +215,7 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, ACTIVITY_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -225,6 +226,7 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
     PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
     INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
+    ACTIVITY_LOG_PATH = CARD_PIPELINE_DIR / "activity_log.json"
     UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
     PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
     SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
@@ -779,7 +781,8 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(title_group, text=APP_SUBTITLE, style="HeaderSub.TLabel").pack(anchor=tk.W, pady=(3, 0))
         ttk.Label(header, textvariable=self.bridge_status_var, style="BridgeBadge.TLabel").pack(side=tk.RIGHT, padx=(16, 0))
         ttk.Button(header, text="Working Folder", command=self.choose_working_folder, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
-        ttk.Button(header, text="Setup Check", command=self.open_setup_doctor, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
+        ttk.Button(header, text="System Health", command=self.open_setup_doctor, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
+        ttk.Button(header, text="Activity Log", command=self.open_activity_log, style="Soft.TButton").pack(side=tk.RIGHT)
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill=tk.BOTH, expand=True, padx=18, pady=(16, 12))
@@ -874,7 +877,7 @@ class CardPipelineApp(tk.Tk):
         self.working_sheet_list.pack(fill=tk.Y, expand=True, pady=(8, 8))
         self.working_sheet_list.bind("<Double-Button-1>", lambda _event: self.load_selected_working_sheet())
         ttk.Button(sheet_panel, text="Load Selected Sheet", command=self.load_selected_working_sheet, style="Primary.TButton").pack(fill=tk.X, pady=(0, 8))
-        ttk.Button(sheet_panel, text="Refresh Sheets", command=self.refresh_pipeline, style="Soft.TButton").pack(fill=tk.X)
+        ttk.Button(sheet_panel, text="Refresh Sheet List", command=self.refresh_pipeline, style="Soft.TButton").pack(fill=tk.X)
         comp_main = ttk.Frame(comp_body, style="App.TFrame")
         comp_main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.comp_tree = self._build_table(comp_main, editable=True, columns=COMP_COLUMNS)
@@ -925,7 +928,7 @@ class CardPipelineApp(tk.Tk):
         receive_bottom = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         receive_bottom.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(receive_bottom, text="Mark Received in Sheets", command=self.mark_review_received_in_sheets, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(receive_bottom, text="Refresh Incoming Sheets", command=self.refresh_incoming_index, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(receive_bottom, text="Refresh Incoming Index", command=self.refresh_incoming_index, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(receive_bottom, text="Delete Selected", command=self.delete_selected_review_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(receive_bottom, text="Clear Receive Rows", command=self.clear_review_rows, style="Soft.TButton").pack(side=tk.RIGHT)
 
@@ -935,7 +938,7 @@ class CardPipelineApp(tk.Tk):
         self.received_sheet_combo = ttk.Combobox(review_controls, textvariable=self.selected_received_sheet, state="readonly", width=32)
         self.received_sheet_combo.grid(row=0, column=1, sticky="ew", padx=(8, 8))
         ttk.Button(review_controls, text="Load", command=self.load_selected_received_sheet_for_review, style="Primary.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
-        ttk.Button(review_controls, text="Refresh", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=3, sticky="w")
+        ttk.Button(review_controls, text="Refresh Received Sheets", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=3, sticky="w")
         ttk.Button(review_controls, text="Assignment Rules", command=self.open_assignment_rules, style="Soft.TButton").grid(row=0, column=4, sticky="w", padx=(8, 0))
         ttk.Button(review_controls, text="Unassigned Players", command=self.open_unassigned_players_dialog, style="Soft.TButton").grid(row=0, column=5, sticky="w", padx=(8, 0))
         review_controls.columnconfigure(1, weight=1)
@@ -967,13 +970,13 @@ class CardPipelineApp(tk.Tk):
     def open_setup_doctor(self) -> None:
         rows = self._setup_doctor_results()
         dialog = tk.Toplevel(self)
-        dialog.title("LUCAS Setup Check")
+        dialog.title("LUCAS System Health")
         dialog.geometry("840x520")
         dialog.transient(self)
         dialog.configure(bg="#121212")
         frame = ttk.Frame(dialog, style="App.TFrame", padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="Setup Check", style="HeaderTitle.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        ttk.Label(frame, text="System Health", style="HeaderTitle.TLabel").pack(anchor=tk.W, pady=(0, 10))
         tree = ttk.Treeview(frame, columns=("status", "detail"), show="tree headings", height=14)
         tree.heading("#0", text="Check", anchor=tk.W)
         tree.heading("status", text="Status", anchor=tk.W)
@@ -988,11 +991,57 @@ class CardPipelineApp(tk.Tk):
         actions.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(actions, text="Copy Details", command=lambda: self._copy_setup_doctor_details(rows), style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(actions, text="Close", command=dialog.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
-        self.status_var.set("Setup check complete.")
+        self.status_var.set("System health check complete.")
 
     def _setup_doctor_results(self) -> list[dict[str, str]]:
         snapshot = self.state.snapshot() if hasattr(self, "state") else {}
-        return setup_doctor_results(CARD_PIPELINE_DIR, snapshot, "Windows")
+        rows = setup_doctor_results(CARD_PIPELINE_DIR, snapshot, "Windows")
+        rows.extend(self._operational_health_rows())
+        return rows
+
+    def _health_row(self, name: str, ok: bool, detail: object = "") -> dict[str, str]:
+        return {"name": name, "status": "OK" if ok else "Needs attention", "detail": str(detail or "")}
+
+    def _stale_lock_files(self) -> list[Path]:
+        lock_dir = CARD_PIPELINE_DIR / ".locks"
+        if not lock_dir.exists():
+            return []
+        cutoff = time.time() - 10 * 60
+        stale: list[Path] = []
+        for path in lock_dir.glob("*.lock"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    stale.append(path)
+            except OSError:
+                continue
+        return sorted(stale, key=lambda item: item.name.lower())
+
+    def _operational_health_rows(self) -> list[dict[str, str]]:
+        conflict_files = self._shared_conflict_files() if CARD_PIPELINE_DIR.exists() else []
+        stale_locks = self._stale_lock_files()
+        assignment_companies = [company for company in getattr(self.assignment_engine, "companies", []) if getattr(company, "name", "")]
+        seller_lines = seller_terms_health_lines(SELLER_TERMS_PATH, self._assignment_company_health_payload())
+        seller_ok = "error(s)" in seller_lines[0] and "0 error(s)" in seller_lines[0]
+        activity_count = len(self._load_activity_log())
+        profit_count = len(self._load_profit_ledger())
+        inventory_count = len(self._load_inventory_ledger())
+        return [
+            self._health_row("Shared conflict files", not conflict_files, ", ".join(path.name for path in conflict_files[:5]) or "none"),
+            self._health_row("Stale shared locks", not stale_locks, ", ".join(path.name for path in stale_locks[:5]) or "none"),
+            self._health_row("Assignment companies loaded", bool(assignment_companies), f"{len(assignment_companies)} active/configured company object(s)"),
+            self._health_row("Seller terms health", seller_ok, seller_lines[0] if seller_lines else "not checked"),
+            self._health_row("Inventory ledger", INVENTORY_LEDGER_PATH.exists(), f"{inventory_count} active/raw ledger item(s) | {INVENTORY_LEDGER_PATH}"),
+            self._health_row("Profit ledger", PROFIT_LEDGER_PATH.exists(), f"{profit_count} ledger row(s) | {PROFIT_LEDGER_PATH}"),
+            self._health_row("Activity log", True, f"{activity_count} recent operation record(s) | {ACTIVITY_LOG_PATH}"),
+        ]
+
+    def _assignment_company_health_payload(self) -> list[dict[str, object]]:
+        try:
+            raw = json.loads(ASSIGNMENT_CONFIG_PATH.read_text(encoding="utf-8")) if ASSIGNMENT_CONFIG_PATH.exists() else {}
+        except Exception:
+            raw = {}
+        companies = raw.get("companies", raw) if isinstance(raw, dict) else raw
+        return [company for company in companies if isinstance(company, dict)] if isinstance(companies, list) else []
 
     def _copy_setup_doctor_details(self, rows: list[dict[str, str]]) -> None:
         payload = {"version": self.version_var.get(), "checks": rows}
@@ -1078,7 +1127,7 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_list.bind("<<ListboxSelect>>", lambda _event: self._load_home_selected_marker())
         self.home_sheet_list.bind("<Button-3>", self._show_home_sheet_context_menu)
         self.home_sheet_list.bind("<Button-2>", self._show_home_sheet_context_menu)
-        ttk.Button(sheet_panel, text="Refresh Home", command=self.refresh_home, style="Primary.TButton").pack(fill=tk.X)
+        ttk.Button(sheet_panel, text="Refresh Home View", command=self.refresh_home, style="Primary.TButton").pack(fill=tk.X)
 
         right = ttk.Frame(body, style="App.TFrame")
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -1202,9 +1251,9 @@ class CardPipelineApp(tk.Tk):
         action_row = ttk.Frame(controls, style="Panel.TFrame")
         action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
         ttk.Button(action_row, text="Add Raw Card", command=self.add_raw_inventory_card, style="Primary.TButton").pack(side=tk.LEFT)
-        ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Update Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Recomp", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Sync Received to Inventory", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Update Best Company/Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Recomp Visible Cards", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
@@ -1252,8 +1301,9 @@ class CardPipelineApp(tk.Tk):
         )
         self.profit_graph_combo.grid(row=0, column=6, sticky="w")
         self.profit_graph_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
-        ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
-        ttk.Button(controls, text="Deep Sync", command=lambda: self.refresh_profit_tab(deep_sync=True), style="Soft.TButton").grid(row=0, column=8, sticky="w", padx=(8, 0))
+        ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
+        self.profit_recover_button = ttk.Button(controls, text="Recover Sold Ledger", command=self.recover_sold_ledger, style="Soft.TButton")
+        self.profit_recover_button.grid(row=0, column=8, sticky="w", padx=(8, 0))
         ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=9, sticky="w", padx=(8, 0))
         controls.columnconfigure(10, weight=1)
         self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
@@ -1339,6 +1389,93 @@ class CardPipelineApp(tk.Tk):
     def _save_inventory_ledger(self, rows: list[dict[str, object]]) -> None:
         INVENTORY_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(INVENTORY_LEDGER_PATH, {"items": rows})
+
+    def _load_activity_log(self) -> list[dict[str, object]]:
+        if not ACTIVITY_LOG_PATH.exists():
+            return []
+        try:
+            raw = json.loads(ACTIVITY_LOG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        entries = raw.get("entries", raw) if isinstance(raw, dict) else raw
+        return [entry for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
+
+    def _save_activity_log(self, entries: list[dict[str, object]]) -> None:
+        ACTIVITY_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(ACTIVITY_LOG_PATH, {"entries": entries[-300:]})
+
+    def _append_activity(self, action: str, summary: str, details: dict[str, object] | None = None) -> None:
+        entry = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "action": str(action or "").strip() or "Activity",
+            "summary": str(summary or "").strip(),
+            "user": self.lucas_identity.get("display_name") or "",
+            "machine": self.lucas_identity.get("machine") or "",
+            "details": details or {},
+        }
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "activity-log", self.lucas_identity, timeout=8):
+                entries = self._load_activity_log()
+                entries.append(entry)
+                self._save_activity_log(entries)
+        except Exception:
+            record_performance_event("activity.log_failed", time.perf_counter(), f"action={entry['action']}", force=True)
+
+    def open_activity_log(self) -> None:
+        entries = list(reversed(self._load_activity_log()[-100:]))
+        popup = tk.Toplevel(self)
+        popup.title("LUCAS Activity Log")
+        popup.geometry("980x520")
+        popup.transient(self)
+        popup.configure(bg="#121212")
+        frame = ttk.Frame(popup, style="App.TFrame", padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Activity Log", style="HeaderTitle.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        tree = ttk.Treeview(frame, columns=("time", "action", "summary", "user"), show="headings", height=16)
+        for column, label, width in (("time", "Time", 150), ("action", "Action", 150), ("summary", "Summary", 500), ("user", "User", 130)):
+            tree.heading(column, text=label, anchor=tk.W)
+            tree.column(column, width=width, anchor=tk.W, stretch=column == "summary")
+        tree.pack(fill=tk.BOTH, expand=True)
+        for entry in entries:
+            tree.insert(
+                "",
+                tk.END,
+                values=(entry.get("timestamp") or "", entry.get("action") or "", entry.get("summary") or "", entry.get("user") or ""),
+            )
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(actions, text="Refresh", command=lambda: (popup.destroy(), self.open_activity_log()), style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
+
+    def _show_error_with_copy(self, title: str, message: str, details: dict[str, object] | str | None = None) -> None:
+        if isinstance(details, str):
+            detail_text = details
+        elif details:
+            try:
+                detail_text = json.dumps(details, indent=2, sort_keys=True, default=str)
+            except TypeError:
+                detail_text = str(details)
+        else:
+            detail_text = ""
+        copy_text = "\n\n".join(part for part in (message, detail_text) if part)
+        popup = tk.Toplevel(self)
+        popup.title(title)
+        popup.configure(bg=self.colors["bg"])
+        popup.transient(self)
+        popup.geometry("720x420")
+        frame = ttk.Frame(popup, style="App.TFrame", padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=title, style="Panel.TLabel", font=("Segoe UI Semibold", 13)).pack(anchor=tk.W, pady=(0, 8))
+        ttk.Label(frame, text=message, style="Muted.TLabel", wraplength=660).pack(anchor=tk.W, pady=(0, 10))
+        if detail_text:
+            text = tk.Text(frame, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD, height=12)
+            text.pack(fill=tk.BOTH, expand=True)
+            text.insert("1.0", detail_text)
+            text.configure(state=tk.DISABLED)
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(actions, text="Copy Details", command=lambda: self._copy_inventory_text(copy_text, "error details"), style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(actions, text="Close", command=popup.destroy, style="Primary.TButton").pack(side=tk.RIGHT)
 
     def _inventory_record_key(self, record: dict[str, object]) -> str:
         item_id = str(record.get("item_id") or "").strip()
@@ -1844,6 +1981,7 @@ class CardPipelineApp(tk.Tk):
             self._save_inventory_ledger(existing)
         self.refresh_inventory_tab()
         self.status_var.set(f"Added raw inventory card {item_id}.")
+        self._append_activity("Inventory Add", f"Added raw inventory card {item_id}.", {"item_id": item_id, "person": record.get("assigned_person"), "card": record.get("card_title")})
 
     def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
         if not moved_keys:
@@ -1955,6 +2093,12 @@ class CardPipelineApp(tk.Tk):
             profit_records.append(self._inventory_sale_expense_record(profit_record, expense_type, expense_amount, expense_notes))
         added = self.record_profit_sales(profit_records)
         changed = self._mark_inventory_record_sold(str(normalized.get("inventory_key") or ""), sold_company, sale_price)
+        if added or changed:
+            self._append_activity(
+                "Inventory Sold",
+                f"Sold inventory card {normalized.get('cert_number') or normalized.get('item_id') or normalized.get('card_title')} for {format_money(sale_price)}.",
+                {"company": sold_company, "sale_price": sale_price, "person": normalized.get("assigned_person"), "inventory_key": normalized.get("inventory_key")},
+            )
         return bool(added or changed)
 
     def _inventory_sale_dialog(self, record: dict[str, object]) -> dict[str, object] | None:
@@ -2329,6 +2473,7 @@ class CardPipelineApp(tk.Tk):
         else:
             suffix = f" {unassigned} card(s) had no assignable company." if unassigned else ""
         self.status_var.set(f"Moved {added} inventory card(s) to company sheets.{suffix}")
+        self._append_activity("Inventory Move", f"Moved {added} inventory card(s) to company sheets.{suffix}", {"rows_added": added, "unassigned": unassigned, "company_override": company_override})
         if errors:
             messagebox.showwarning("Inventory move completed with warnings", "\n".join([f"Moved rows: {added}", *errors[:8]]))
 
@@ -2370,6 +2515,66 @@ class CardPipelineApp(tk.Tk):
     def copy_inventory_row_values(self, row_id: str) -> None:
         self._copy_inventory_text(self._inventory_tree_row_text(row_id), "inventory row")
 
+    def _assignment_explanation_for_record(self, record: dict[str, object]) -> str:
+        normalized = self._normalize_inventory_record(record)
+        row = self._inventory_workbook_row(normalized, 1)
+        person = str(normalized.get("assigned_person") or "").strip()
+        recommendation = self.assignment_engine.recommend(row, person=person)
+        decisions = self.assignment_engine.evaluate(row, person=person)
+        lines = [
+            str(normalized.get("card_title") or normalized.get("cert_number") or "Inventory card"),
+            "",
+            f"Person: {person or 'Unassigned'}",
+            f"Sport: {normalized.get('sport') or 'blank'}",
+            f"Cert: {normalized.get('cert_number') or 'blank'}",
+            f"Grader: {normalized.get('grader') or 'blank'}",
+            f"CL value: {format_money(self._money_value(normalized.get('card_ladder_value')) or 0.0)}",
+            f"Comps: {format_money(self._money_value(normalized.get('card_ladder_comps_average')) or 0.0)}",
+            f"CY estimate: {format_money(self._money_value(normalized.get('cy_value')) or 0.0)}",
+            "",
+            f"Recommended: {recommendation.company or NO_COMPANY_TAKES_LABEL} | {format_money(recommendation.payout) if recommendation.payout is not None else 'no payout'}",
+            "",
+            "Rule decisions:",
+        ]
+        if not decisions:
+            lines.append("No assignment companies are loaded.")
+        for decision in decisions:
+            status = "TAKES" if decision.accepted and decision.payout is not None else "NO"
+            payout = format_money(decision.payout) if decision.payout is not None else "no payout"
+            source_value = format_money(decision.source_value) if decision.source_value is not None else "no source value"
+            reason = decision.reason or "no reason returned"
+            lines.append(f"- {decision.company}: {status} | {source_value} | {payout} | {reason}")
+        return "\n".join(lines)
+
+    def explain_selected_inventory_assignment(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        selected = self.inventory_tree.selection()
+        if not selected:
+            messagebox.showinfo("Explain Assignment", "Select one inventory row first.")
+            return
+        record = self.inventory_tree_records.get(selected[0])
+        if not record:
+            messagebox.showinfo("Explain Assignment", "Could not find that inventory row.")
+            return
+        explanation = self._assignment_explanation_for_record(record)
+        popup = tk.Toplevel(self)
+        popup.title("Assignment Explanation")
+        popup.configure(bg=self.colors["bg"])
+        popup.transient(self)
+        popup.geometry("760x520")
+        frame = ttk.Frame(popup, style="App.TFrame", padding=18)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Assignment Explanation", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).pack(anchor=tk.W, pady=(0, 10))
+        text = tk.Text(frame, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD, height=22)
+        text.pack(fill=tk.BOTH, expand=True)
+        text.insert("1.0", explanation)
+        text.configure(state=tk.DISABLED)
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(actions, text="Copy Details", command=lambda: self._copy_inventory_text(explanation, "assignment explanation"), style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(actions, text="Close", command=popup.destroy, style="Primary.TButton").pack(side=tk.RIGHT)
+
     def _show_inventory_context_menu(self, event) -> str:
         if not hasattr(self, "inventory_tree"):
             return "break"
@@ -2388,6 +2593,7 @@ class CardPipelineApp(tk.Tk):
         if active_records:
             menu.add_separator()
             menu.add_command(label="Edit Row", command=self.edit_selected_inventory_row)
+            menu.add_command(label="Explain Assignment", command=self.explain_selected_inventory_assignment)
         if len(active_records) == 1 and len(records) == 1:
             menu.add_command(label="Mark Sold", command=self.mark_selected_inventory_sold)
         if records and all(self._inventory_record_can_move_to_company_sheet(record) for record in records):
@@ -2752,6 +2958,8 @@ class CardPipelineApp(tk.Tk):
         deleted = self._delete_inventory_records_by_keys(keys)
         self.refresh_inventory_tab()
         self.status_var.set(f"Deleted {deleted} inventory item(s).")
+        if deleted:
+            self._append_activity("Inventory Delete", f"Deleted {deleted} inventory item(s).", {"deleted": deleted})
 
     def _delete_inventory_records_by_keys(self, keys: set[str]) -> int:
         if not keys:
@@ -3389,6 +3597,7 @@ class CardPipelineApp(tk.Tk):
         if added:
             popup.destroy()
             self.status_var.set(f"Added {expense_type} expense for {person}: {format_money(amount)}.")
+            self._append_activity("Expense Add", f"Added {expense_type} expense for {person}: {format_money(amount)}.", {"person": person, "expense_type": expense_type, "amount": amount, "related_type": related_type, "source_sheet": related_sheet})
         else:
             messagebox.showinfo("Expense not added", "That expense already exists in the profit ledger.")
 
@@ -3438,6 +3647,8 @@ class CardPipelineApp(tk.Tk):
         deleted = self._delete_profit_expense_records(records)
         self.refresh_profit_tab()
         self.status_var.set(f"Deleted {deleted} expense row(s) from the profit ledger.")
+        if deleted:
+            self._append_activity("Expense Delete", f"Deleted {deleted} expense row(s).", {"deleted": deleted})
 
     def refund_selected_profit_to_inventory(self) -> None:
         if not hasattr(self, "profit_tree"):
@@ -3498,6 +3709,7 @@ class CardPipelineApp(tk.Tk):
         self.refresh_profit_tab()
         self.refresh_inventory_tab()
         self.status_var.set(f"Refunded {refunded or len(records)} card(s) back to active inventory.")
+        self._append_activity("Refund", f"Refunded {refunded or len(records)} sold card(s) back to active inventory.", {"refunded": refunded or len(records)})
 
     def _show_profit_context_menu(self, event: tk.Event) -> None:
         if not hasattr(self, "profit_tree"):
@@ -3521,6 +3733,77 @@ class CardPipelineApp(tk.Tk):
         if menu.index("end") is None:
             return
         menu.tk_popup(event.x_root, event.y_root)
+
+    def recover_sold_ledger(self) -> None:
+        if getattr(self, "_profit_recovery_running", False):
+            messagebox.showinfo("Recover Sold Ledger", "Recovery is already scanning company sheets.")
+            return
+        self._profit_recovery_running = True
+        if hasattr(self, "profit_recover_button"):
+            self.profit_recover_button.configure(state=tk.DISABLED)
+        self.profit_status_var.set("Recover Sold Ledger is scanning company sheets in the background...")
+        self.status_var.set("Recover Sold Ledger is scanning company sheets...")
+
+        def worker() -> None:
+            started = time.perf_counter()
+            try:
+                records = read_company_profit_records(COMPANY_SHEETS_DIR)
+                record_performance_event("profit.company_sheet_scan", started, f"records={len(records)} background=1")
+                self.events.put(("profit_recovery_done", {"records": records}))
+            except Exception as error:
+                record_performance_event("profit.company_sheet_scan", started, f"error={error} background=1", force=True)
+                self.events.put(("profit_recovery_error", {"error": str(error)}))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _merge_profit_recovery_records(self, company_profit_records: list[dict[str, object]]) -> tuple[int, int]:
+        ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        pruned_manual = len([record for record in ledger if self._is_manual_company_profit_backfill(record)])
+        if pruned_manual:
+            ledger = [record for record in ledger if not self._is_manual_company_profit_backfill(record)]
+        existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
+        backfilled = 0
+        for record in company_profit_records:
+            normalized = self._normalize_profit_record(record)
+            key = str(normalized.get("ledger_key") or "")
+            if not key or key in existing_keys:
+                continue
+            ledger.append(normalized)
+            existing_keys.add(key)
+            backfilled += 1
+        if backfilled or pruned_manual:
+            with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
+                current = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+                current = [record for record in current if not self._is_manual_company_profit_backfill(record)]
+                current_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in current}
+                for record in ledger:
+                    key = str(record.get("ledger_key") or "")
+                    if key and key not in current_keys:
+                        current.append(record)
+                        current_keys.add(key)
+                self._save_profit_ledger(current)
+        return backfilled, pruned_manual
+
+    def _finish_profit_recovery(self, payload: dict[str, object]) -> None:
+        records = list(payload.get("records") or [])
+        backfilled, pruned_manual = self._merge_profit_recovery_records(records)
+        self._profit_recovery_running = False
+        if hasattr(self, "profit_recover_button"):
+            self.profit_recover_button.configure(state=tk.NORMAL)
+        self.refresh_profit_tab()
+        cleanup_suffix = f" Removed {pruned_manual} manual company row(s)." if pruned_manual else ""
+        self.profit_status_var.set(f"Recover Sold Ledger scanned {len(records)} company sale row(s) and added {backfilled}.{cleanup_suffix}")
+        self.status_var.set("Recover Sold Ledger complete.")
+        self._append_activity("Profit Recovery", f"Recovered {backfilled} sold ledger row(s).", {"scanned": len(records), "backfilled": backfilled, "removed_manual": pruned_manual})
+
+    def _handle_profit_recovery_error(self, payload: dict[str, object]) -> None:
+        self._profit_recovery_running = False
+        if hasattr(self, "profit_recover_button"):
+            self.profit_recover_button.configure(state=tk.NORMAL)
+        error = str(payload.get("error") or "Unknown error")
+        self.profit_status_var.set(f"Recover Sold Ledger failed: {error}")
+        self.status_var.set("Recover Sold Ledger failed.")
+        self._show_error_with_copy("Recover Sold Ledger failed", "Could not scan company sheets.", {"error": error, "company_sheets_dir": str(COMPANY_SHEETS_DIR)})
 
     def refresh_profit_tab(self, deep_sync: bool = False) -> None:
         perf_start = time.perf_counter()
@@ -4374,7 +4657,7 @@ class CardPipelineApp(tk.Tk):
                 "",
                 tk.END,
                 tags=("total_divider",),
-                values=("━━━━━━", "━━━━━━", "━━━━━━", "━━━━━━"),
+                values=("------", "------", "------", "------"),
             )
             self.payout_summary_tree.insert(
                 "",
@@ -4408,7 +4691,7 @@ class CardPipelineApp(tk.Tk):
                 status = "Paid" if paid else self._payout_sheet_status(stage, marker, summary)
                 person = str(marker.get("assigned_person") or "").strip()
                 person_key = person.lower()
-                is_seller_payout = bool(person_key and person_key in seller_names)
+                is_seller_payout = self._sheet_marker_is_seller_payout(marker) or bool(person_key and person_key in seller_names)
                 if not is_seller_payout or stage != "Received":
                     continue
                 purchase_total = float(summary.get("purchase_total") or 0.0)
@@ -4420,6 +4703,7 @@ class CardPipelineApp(tk.Tk):
                     estimated_payout_total,
                     seller_names,
                     realized_profit_total=realized_profit_total,
+                    seller_payout=True,
                 )
                 items.append(
                     {
@@ -4440,7 +4724,7 @@ class CardPipelineApp(tk.Tk):
                     }
                 )
         for (person_key, source_key), group in sorted(realized_profit_groups.items(), key=lambda pair: (pair[0][0], pair[0][1])):
-            if person_key in seller_names:
+            if self._source_sheet_is_seller_payout(str(group.get("source_sheet") or ""), str(group.get("person") or ""), seller_names):
                 continue
             realized_profit_total = float(group.get("profit") or 0.0)
             if realized_profit_total <= 0:
@@ -4456,6 +4740,7 @@ class CardPipelineApp(tk.Tk):
                 float(group.get("sale_total") or 0.0),
                 seller_names,
                 realized_profit_total=realized_profit_total,
+                seller_payout=False,
             )
             items.append(
                 {
@@ -4529,6 +4814,28 @@ class CardPipelineApp(tk.Tk):
             if str(term.get("seller") or "").strip()
         }
 
+    def _sheet_marker_is_seller_payout(self, marker: dict[str, object]) -> bool:
+        return bool(marker.get("seller_terms_applied") or marker.get("seller_sheet_type"))
+
+    def _source_sheet_is_seller_payout(self, source_sheet: str, person: str = "", seller_names: set[str] | None = None) -> bool:
+        source_name = Path(str(source_sheet or "")).name.lower()
+        if not source_name:
+            return False
+        saw_marker = False
+        for stage in ("Incoming", "Received", "Working"):
+            marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_name), {})
+            if not marker:
+                target_key = self._home_sheet_key(stage, source_name).lower()
+                marker = next((candidate for key, candidate in self.home_sheet_markers.items() if str(key).lower() == target_key), {})
+            if marker:
+                saw_marker = True
+                if self._sheet_marker_is_seller_payout(marker):
+                    return True
+        if saw_marker:
+            return False
+        seller_names = seller_names if seller_names is not None else self._seller_terms_seller_names()
+        return bool(str(person or "").strip().lower() in seller_names)
+
     def _active_payout_balance(
         self,
         person: str,
@@ -4536,10 +4843,11 @@ class CardPipelineApp(tk.Tk):
         estimated_payout_total: float,
         seller_names: set[str] | None = None,
         realized_profit_total: float | None = None,
+        seller_payout: bool | None = None,
     ) -> tuple[float, str]:
         normalized_person = str(person or "").strip().lower()
         seller_names = seller_names if seller_names is not None else self._seller_terms_seller_names()
-        if normalized_person and normalized_person in seller_names:
+        if seller_payout is True or (seller_payout is None and normalized_person and normalized_person in seller_names):
             return round(float(purchase_total or 0.0), 2), "Seller purchase total"
         realized_profit = float(realized_profit_total or 0.0)
         return max(0.0, round(realized_profit / 2.0, 2)), "Team half sold profit"
@@ -5145,6 +5453,7 @@ class CardPipelineApp(tk.Tk):
                 f"and removed {cleanup.get('profit_rows_removed', 0)} profit ledger row(s)."
             )
         self.status_var.set(f"Moved {name} from {source_stage} to {target_stage}.{cleanup_note}")
+        self._append_activity("Sheet Move", f"Moved {name} from {source_stage} to {target_stage}.", {"sheet": name, "from": source_stage, "to": target_stage, "cleanup": cleanup})
 
     def delete_selected_home_sheet(self) -> None:
         if not self.home_selected_sheet_key:
@@ -5181,6 +5490,7 @@ class CardPipelineApp(tk.Tk):
         self.refresh_pipeline()
         self.refresh_home()
         self.status_var.set(f"Deleted {kind.lower()} sheet: {name}. Removed {inventory_rows_removed} inventory row(s).")
+        self._append_activity("Sheet Delete", f"Deleted {kind} sheet {name}.", {"sheet": name, "stage": kind, "inventory_rows_removed": inventory_rows_removed})
 
     def _sheet_path_is_visible_home_sheet(self, kind: str, path: Path) -> bool:
         expected = {
@@ -6361,6 +6671,20 @@ class CardPipelineApp(tk.Tk):
             messagebox.showwarning("Mark received completed with warnings", "\n".join(summary_lines + ["", "Warnings:", *errors[:8]]))
         else:
             messagebox.showinfo("Mark received complete", "\n".join(summary_lines))
+        self._append_activity(
+            "Receive",
+            f"Marked {rows_marked} received row(s); added {company_rows_added} company row(s), {inventory_rows_added} inventory row(s).",
+            {
+                "rows_marked": rows_marked,
+                "files_updated": files_updated,
+                "matched_certs": certs_marked,
+                "total_certs": len(certs),
+                "company_rows_added": company_rows_added,
+                "inventory_rows_added": inventory_rows_added,
+                "moved_received": moved_received,
+                "warnings": errors[:8],
+            },
+        )
 
     def _apply_recommendations_to_rows(self, rows: list[WorkbookRow], force: bool = False) -> None:
         for row in rows:
@@ -6646,6 +6970,7 @@ class CardPipelineApp(tk.Tk):
             return
         seller_note = f" Assigned to {seller} for payouts." if seller else ""
         self.status_var.set(f"Saved working sheet: {path}.{seller_note}")
+        self._append_activity("Create", f"Saved working sheet {path.name}.{seller_note}", {"sheet": path.name, "seller": seller, "seller_sheet_type": seller_sheet_type})
         self.intake_rows = []
         self.intake_sources = {}
         self.intake_sheet_sources = {}
@@ -7889,6 +8214,10 @@ class CardPipelineApp(tk.Tk):
                         self._apply_assignment_recommendation_results(payload)
                     elif kind == "assignment_recommendations_error":
                         self._handle_assignment_recommendation_error(payload)
+                    elif kind == "profit_recovery_done":
+                        self._finish_profit_recovery(payload)
+                    elif kind == "profit_recovery_error":
+                        self._handle_profit_recovery_error(payload)
         except queue.Empty:
             pass
         if pending_comp_refresh:
