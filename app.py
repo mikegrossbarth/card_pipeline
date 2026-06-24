@@ -3004,8 +3004,11 @@ class CardPipelineApp(tk.Tk):
             return True
         if features.get("card_ladder_comps") and self._money_value(record.get("card_ladder_comps_average")) is None:
             return True
-        if features.get("cy") and self._money_value(record.get("cy_value")) is None:
-            return True
+        if features.get("cy"):
+            cy_value_missing = self._money_value(record.get("cy_value")) is None
+            cy_confidence_missing = not str(record.get("cy_confidence") or "").strip()
+            if cy_value_missing or cy_confidence_missing:
+                return True
         return False
 
     def _sync_inventory_recomp_results(self) -> int:
@@ -3036,6 +3039,9 @@ class CardPipelineApp(tk.Tk):
             if features.get("card_ladder_comps", True):
                 record["card_ladder_comps_average"] = row.card_ladder_comps_average
                 record["card_ladder_comps"] = row.card_ladder_comps
+            if features.get("cy", True):
+                record["cy_value"] = row.cy_value
+                record["cy_confidence"] = row.cy_confidence
             enriched = self._enrich_inventory_record_assignment(record, force=True)
             enriched["status"] = ledger[index].get("status") or "Active"
             enriched["inventory_key"] = key
