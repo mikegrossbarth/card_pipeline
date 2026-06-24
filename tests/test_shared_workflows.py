@@ -22,6 +22,7 @@ if str(PHOTO_APP) not in sys.path:
     sys.path.insert(0, str(PHOTO_APP))
 
 import app
+import assignment_config_ui
 import assignment_engine
 import google_sheets_import
 import lucas_diagnostics
@@ -1858,6 +1859,32 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy.save_working_sheet()
         self.assertTrue(showinfo.called)
         self.assertFalse(dummy.applied_terms)
+
+    def test_seller_terms_health_reports_duplicates_and_company_issues(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "seller_terms.csv"
+            path.write_text(
+                "Seller,Sheet Type,Seller Rate,Deduction\n"
+                "John,Arena Club,90%,\n"
+                "John,Arena Club,85%,\n"
+                "Mary,Fanatics,,5%\n"
+                "No Company,Unknown,90%,\n"
+                "Bad Rate,Arena Club,nope,\n",
+                encoding="utf-8",
+            )
+            lines = assignment_config_ui.seller_terms_health_lines(
+                path,
+                [
+                    {"name": "Arena Club", "active": True},
+                    {"name": "Fanatics", "active": False},
+                ],
+            )
+        text = "\n".join(lines)
+        self.assertIn("3 valid row(s)", text)
+        self.assertIn("duplicate Seller/Sheet Type", text)
+        self.assertIn("inactive assignment company", text)
+        self.assertIn("is not an assignment company", text)
+        self.assertIn("invalid Seller Rate", text)
 
     def test_team_payout_uses_sold_profit_not_unsold_estimated_profit(self) -> None:
         class PayoutDummy:
