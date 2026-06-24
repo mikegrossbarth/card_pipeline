@@ -984,6 +984,6 @@ def normalize_value_source(value: Any) -> str:
     raw = str(value or "").strip().lower()
     if raw in {"card_ladder", "cardladder", "cl", "card ladder", "card_ladder_value"}:
         return "card_ladder"
-    if raw in {"cy_estimate", "cyestimate", "cy", "cy value", "cy_value", "cy estimate", "estimate"}:
+    if raw in {"cy_estimate", "cyestimate", "cy", "cy value", "cy_value", "cy estimate", "courtyard", "courtyard_estimate", "court yard", "estimate"}:
         return "cy_estimate"
     return "comps"
