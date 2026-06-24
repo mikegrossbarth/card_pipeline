@@ -741,6 +741,26 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(row.status, "Reload Card Ladder extension")
         self.assertIn("older Card Ladder extension", row.notes)
 
+    def test_cardladder_extension_error_is_recorded_on_row(self) -> None:
+        bridge = app.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="156327815", grader="PSA", card_title="")
+        result = {
+            "excelRow": 2,
+            "certNumber": "156327815",
+            "grader": "PSA",
+            "status": "extension_error",
+            "error": "Card Ladder lookup failed after the cert opened.",
+            "ocr": {"debugImage": ""},
+            "extensionVersion": app.EXPECTED_CARDLADDER_EXTENSION_VERSION,
+        }
+
+        bridge._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.status, "Card Ladder extension error")
+        self.assertIsNone(row.card_ladder_value)
+        self.assertEqual(row.card_ladder_comps, "")
+        self.assertIn("lookup failed", row.notes)
+
     def test_player_sport_overrides_teach_unknown_players(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "overrides.json"
