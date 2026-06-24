@@ -7148,6 +7148,8 @@ class CardPipelineApp(tk.Tk):
         state_row_ids = {id(row) for row in self.state.rows}
         review_row_ids = {id(row) for row in self.review_rows}
         for row in [*self.state.rows, *self.review_rows]:
+            if id(row) not in results:
+                continue
             company, payout = results.get(id(row), ("", None))
             if payout is not None:
                 row.best_company = company

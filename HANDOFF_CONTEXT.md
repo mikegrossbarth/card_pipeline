@@ -242,9 +242,19 @@ Recent verification:
 ```text
 C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m py_compile app.py
 C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest tests.test_shared_workflows -v
+C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe tests\test_extension_parser.js
 ```
 
-Last full Windows result after recovery: `111 tests OK`.
+Latest broad bug-hunt verification:
+
+- Fixed scoped comp/assignment refresh so a result payload only updates rows it actually contains; unrelated comp rows keep their existing best company/payout.
+- Added a regression test for the Card Ladder extension parser so an 8-line chunk containing the next sale row cannot assign row B's price to row A.
+- Confirmed inventory refresh/payout refresh operate on the currently filtered rows.
+- Confirmed assignment tests still cover unlicensed, DNB-over-threshold, GOAT Bonus 1, sport aliases, seller policies, and team half-profit payouts.
+
+Last full Windows result: `112 tests OK`.
+Last Windows extension parser result: `extension parser regression ok`.
+Last Windows startup smoke: `windows app startup ok`.
 
 Useful broader sanity checks:
 
