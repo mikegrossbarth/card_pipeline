@@ -3196,7 +3196,7 @@ class CardPipelineApp(tk.Tk):
                 "person": "Person",
                 "company": "Company",
                 "card": "Card",
-                "cert": "Cert",
+                "cert": "Cert / Item ID",
                 "purchase": "Purchase",
                 "sale": "Sale Price",
                 "profit": "Profit",
@@ -3212,8 +3212,11 @@ class CardPipelineApp(tk.Tk):
     def _expense_related_label(self, record: dict[str, object]) -> str:
         related_type = str(record.get("related_type") or "General").strip() or "General"
         source_sheet = str(record.get("source_sheet") or "").strip()
+        item_id = str(record.get("item_id") or "").strip()
+        cert = str(record.get("cert_number") or "").strip()
         if related_type == "Card":
-            return source_sheet if source_sheet and source_sheet != "Expenses" else "Card"
+            parts = [part for part in (source_sheet if source_sheet and source_sheet != "Expenses" else "", item_id or cert) if part]
+            return " | ".join(parts) if parts else "Card"
         if related_type == "Sheet":
             return source_sheet if source_sheet and source_sheet != "Expenses" else "Sheet"
         return "General"
@@ -3739,7 +3742,7 @@ class CardPipelineApp(tk.Tk):
                         record.get("assigned_person") or "Unassigned",
                         record.get("company") or "",
                         record.get("card_title") or "",
-                        record.get("cert_number") or "",
+                        record.get("cert_number") or record.get("item_id") or "",
                         format_money(purchase),
                         format_money(sale),
                         format_money(profit),
