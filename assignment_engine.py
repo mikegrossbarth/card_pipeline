@@ -1713,15 +1713,6 @@ def find_rule_label(values: list[list[Any]], row_index: int, column_index: int, 
     return normalize_rule_label(title_hint)
 
 
-def parse_sheet_range(value: Any) -> dict[str, float] | None:
-    match = re.search(r"\$?\s*(\d[\d,]*(?:\.\d+)?k?)\s*(?:-|–|—|to|through|thru)\s*\$?\s*(\d[\d,]*(?:\.\d+)?k?)", str(value or ""), re.I)
-    if not match:
-        return None
-    return {"min": parse_money(match.group(1)) or 0, "max": parse_money(match.group(2)) or 0}
-
-
-def format_rule(label: str, parsed_range: dict[str, float]) -> str:
-    return f"{label} ${format_rule_number(parsed_range['min'])}-${format_rule_number(parsed_range['max'])}"
 
 
 def format_rule_number(value: float | None) -> str:
@@ -1863,21 +1854,6 @@ def parse_custom_rule_group(payload: dict[str, Any]) -> CompanyRules:
     return group
 
 
-def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
-    text = str(line or "").strip()
-    over_match = re.match(r"(.+?)\s+(?:over|above)\s+\$?\s*([\d,.]+k?)\+?$", text, re.I)
-    if over_match:
-        return AssignmentRule(
-            matcher=rule_matcher_label(over_match.group(1)),
-            min_price=parse_money(over_match.group(2)),
-            block=block,
-            min_price_exclusive=True,
-        )
-    range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|–|—)\s*\$?\s*([\d,.]+k?)", text, re.I)
-    if range_match:
-        matcher = f"{text[:range_match.start()]} {text[range_match.end():]}".strip(" -:|")
-        return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=parse_money(range_match.group(1)), max_price=parse_money(range_match.group(2)), block=block)
-    return AssignmentRule(matcher=text, block=block)
 
 
 def rule_matcher_label(value: Any) -> str:
@@ -2118,26 +2094,6 @@ def company_policy_key(value: Any) -> str:
     return clean_rule_text(value)
 
 
-def parse_payout_table_line(line: str) -> PayoutTier | None:
-    text = str(line or "").strip()
-    if not text or re.search(r"\bcategory\b|\bvalue range\b|\bpayout\b", text, re.I):
-        return None
-    range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|â€“|â€”)\s*\$?\s*([\d,.]+k?)", text, re.I)
-    if not range_match:
-        range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|\u2013|\u2014|to|through|thru)\s*\$?\s*([\d,.]+k?)", text, re.I)
-    if not range_match:
-        return None
-    before = text[:range_match.start()].strip(" -:|")
-    after = text[range_match.end():].strip()
-    rate = parse_payout_table_rate(after)
-    if rate is None:
-        return None
-    return PayoutTier(
-        min_price=parse_money(range_match.group(1)) or 0,
-        max_price=parse_money(range_match.group(2)),
-        rate=rate,
-        matcher=normalize_payout_category(before),
-    )
 
 
 def parse_payout_table_rate(value: Any) -> float | None:
@@ -2438,14 +2394,6 @@ def source_lines(text: str) -> list[str]:
     return rows
 
 
-def rule_matches(rule: AssignmentRule, haystack: str, price: float) -> bool:
-    if rule.matcher and not term_matches(rule.matcher, haystack):
-        return False
-    if rule.min_price is not None and price < rule.min_price:
-        return False
-    if rule.max_price is not None and price > rule.max_price:
-        return False
-    return True
 
 
 def term_matches(term: str, haystack: str) -> bool:

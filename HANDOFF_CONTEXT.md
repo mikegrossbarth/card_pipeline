@@ -249,6 +249,7 @@ Latest broad bug-hunt verification:
 
 - Fixed scoped comp/assignment refresh so a result payload only updates rows it actually contains; unrelated comp rows keep their existing best company/payout.
 - Added a regression test for the Card Ladder extension parser so an 8-line chunk containing the next sale row cannot assign row B's price to row A.
+- Removed dead duplicate parser function definitions in Windows `assignment_engine.py`; the later definitions were the runtime versions, but the duplicates made future assignment fixes easy to apply to the wrong copy.
 - Confirmed inventory refresh/payout refresh operate on the currently filtered rows.
 - Confirmed assignment tests still cover unlicensed, DNB-over-threshold, GOAT Bonus 1, sport aliases, seller policies, and team half-profit payouts.
 
