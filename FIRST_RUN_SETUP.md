@@ -506,6 +506,14 @@ Each company can use:
 - Google Sheet through OAuth
 - payout tiers inside the same workbook on a `Payouts` tab
 
+For Google Keep rule sources, sync is done per company:
+
+```text
+Assignment Rules -> select company -> Rule Source -> Sync Google Keep
+```
+
+Use this when a Keep note changed and L.U.C.A.S needs the Chrome extension to refresh its cached note text.
+
 The app saves company setup locally in:
 
 ```text
@@ -513,6 +521,41 @@ assignment_companies.json
 ```
 
 That file is local and should not be committed unless you intentionally want to share it.
+
+### Optional: Set Up People Rules For Network Mode
+
+Use this only if the computer will buy cards from sellers with preset terms.
+
+Open:
+
+```text
+Assignment Rules -> People Rules
+```
+
+People Rules writes shared seller terms to:
+
+```text
+CARD_PIPELINE\ASSIGNMENT RULES\seller_terms.csv
+```
+
+Each row needs:
+
+```text
+Seller, Sheet Type, Seller Rate, Deduction
+```
+
+In the People Rules popup, the percentage fields are labeled **Seller Rate %** and **Deduction %**. Type numbers only, without `%`. Decimals are allowed.
+
+Examples:
+
+```text
+90
+92.5
+10
+10.5
+```
+
+Use **Seller Rate %** for a flat percent of the Sheet Type company's source value. Use **Deduction %** to follow the Sheet Type company's payout logic and subtract that percentage from the company payout. Use one or the other on a row, not both.
 
 ## Step 14: Check The Full Workflow
 
@@ -523,10 +566,11 @@ After setup, test the app in this order:
 3. Open the `Comp` tab and make sure the sheet appears.
 4. Run one Card Ladder comp as a test.
 5. Open Assignment Rules and make sure companies load.
-6. Open the `Assignment` tab and confirm best company and estimated payout can populate.
-7. Open the `Receive` tab and test marking a row received.
-8. Open `Payouts/Tabs` and confirm assigned-person balances appear when relevant.
-9. Open `Profit` and confirm sold cards/sold sheets appear after company sheets have sold rows.
+6. If Network Mode is needed, open People Rules and make sure People Rules Health is clean.
+7. Open the `Assignment` tab and confirm best company and estimated payout can populate.
+8. Open the `Receive` tab and test marking a row received.
+9. Open `Payouts/Tabs` and confirm assigned-person balances appear when relevant.
+10. Open `Profit` and confirm sold cards/sold sheets appear after company sheets have sold rows.
 
 Do not start with a giant sheet until this small test works.
 
@@ -623,4 +667,5 @@ Use this as the final handoff checklist:
 - [ ] Google OAuth credentials are added
 - [ ] `Connect Google` has been completed
 - [ ] Assignment companies are created and active
+- [ ] People Rules are configured if Network Mode seller pricing is needed
 - [ ] one small test sheet works end to end
