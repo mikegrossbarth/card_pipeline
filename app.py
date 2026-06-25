@@ -473,8 +473,14 @@ class CardPipelineApp(tk.Tk):
         super().__init__()
         self.title(f"{APP_TITLE} - {APP_SUBTITLE}")
         self.geometry("1420x820")
-        self.minsize(1120, 680)
+        self.minsize(760, 520)
         self.logo_image: tk.PhotoImage | None = None
+        self._tab_scroll_canvases: dict[str, tk.Canvas] = {}
+        self._tab_scroll_hosts: dict[str, tk.Widget] = {}
+        self._tab_scroll_contents: list[tk.Widget] = []
+        self._tab_scroll_bound_widgets: set[str] = set()
+        self._tab_scroll_min_width = 1180
+        self._tab_scroll_min_height = 760
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -598,6 +604,7 @@ class CardPipelineApp(tk.Tk):
 
         self._build_ui()
         self._show_mode()
+        self.after_idle(self._refresh_tab_scroll_bindings)
         self.refresh_profit_tab()
         self._poll_events()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -608,6 +615,160 @@ class CardPipelineApp(tk.Tk):
 
     def _on_close(self) -> None:
         self.destroy()
+
+    def _scroll_canvas_pixels(self, canvas: tk.Canvas, orient: str, pixels: int) -> bool:
+        if pixels == 0:
+            return False
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return False
+        if orient == "x":
+            content_size = bbox[2] - bbox[0]
+            viewport_size = canvas.winfo_width()
+            first, last = canvas.xview()
+            view = canvas.xview_moveto
+        else:
+            content_size = bbox[3] - bbox[1]
+            viewport_size = canvas.winfo_height()
+            first, last = canvas.yview()
+            view = canvas.yview_moveto
+        scrollable = content_size - viewport_size
+        if scrollable <= 0 or (pixels < 0 and first <= 0) or (pixels > 0 and last >= 1):
+            return False
+        view(max(0.0, min(1.0, first + (pixels / scrollable))))
+        return True
+
+    def _wheel_pixels(self, event: tk.Event) -> int:
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return 0
+        return int(-delta / 120 * 72)
+
+    def _current_tab_scroll_canvas(self) -> tk.Canvas | None:
+        if not hasattr(self, "tabs"):
+            return None
+        try:
+            return self._tab_scroll_canvases.get(str(self.tabs.select()))
+        except tk.TclError:
+            return None
+
+    def _current_tab_scroll_host(self) -> tk.Widget | None:
+        if not hasattr(self, "tabs"):
+            return None
+        try:
+            return self._tab_scroll_hosts.get(str(self.tabs.select()))
+        except tk.TclError:
+            return None
+
+    def _event_is_inside_active_tab_scroll_area(self, event: tk.Event) -> bool:
+        host = self._current_tab_scroll_host()
+        if host is None or not host.winfo_exists():
+            return False
+        x_root = getattr(event, "x_root", None)
+        y_root = getattr(event, "y_root", None)
+        if x_root is None or y_root is None:
+            return False
+        left = host.winfo_rootx()
+        top = host.winfo_rooty()
+        return left <= x_root < left + host.winfo_width() and top <= y_root < top + host.winfo_height()
+
+    def _handle_tab_mousewheel(self, event: tk.Event) -> str | None:
+        if str(event.widget.winfo_toplevel()) != str(self):
+            return None
+        if not self._event_is_inside_active_tab_scroll_area(event):
+            return None
+        canvas = self._current_tab_scroll_canvas()
+        if canvas is None:
+            return None
+        orient = "x" if getattr(event, "state", 0) & 0x0001 else "y"
+        return "break" if self._scroll_canvas_pixels(canvas, orient, self._wheel_pixels(event)) else None
+
+    def _handle_tab_button4(self, event: tk.Event) -> str | None:
+        if str(event.widget.winfo_toplevel()) != str(self):
+            return None
+        if not self._event_is_inside_active_tab_scroll_area(event):
+            return None
+        canvas = self._current_tab_scroll_canvas()
+        return "break" if canvas is not None and self._scroll_canvas_pixels(canvas, "y", -72) else None
+
+    def _handle_tab_button5(self, event: tk.Event) -> str | None:
+        if str(event.widget.winfo_toplevel()) != str(self):
+            return None
+        if not self._event_is_inside_active_tab_scroll_area(event):
+            return None
+        canvas = self._current_tab_scroll_canvas()
+        return "break" if canvas is not None and self._scroll_canvas_pixels(canvas, "y", 72) else None
+
+    def _install_tab_scroll_bindings(self) -> None:
+        self.bind_all("<MouseWheel>", self._handle_tab_mousewheel)
+        self.bind_all("<Button-4>", self._handle_tab_button4)
+        self.bind_all("<Button-5>", self._handle_tab_button5)
+
+    def _should_skip_direct_tab_scroll(self, widget: tk.Widget) -> bool:
+        widget_class = widget.winfo_class()
+        return widget_class in {"Entry", "TEntry", "TCombobox", "Text", "Listbox", "Treeview"}
+
+    def _bind_direct_tab_scroll(self, widget: tk.Widget) -> None:
+        widget_id = str(widget)
+        if widget_id not in self._tab_scroll_bound_widgets and not self._should_skip_direct_tab_scroll(widget):
+            widget.bind("<MouseWheel>", self._handle_tab_mousewheel, add="+")
+            widget.bind("<Button-4>", self._handle_tab_button4, add="+")
+            widget.bind("<Button-5>", self._handle_tab_button5, add="+")
+            self._tab_scroll_bound_widgets.add(widget_id)
+        for child in widget.winfo_children():
+            self._bind_direct_tab_scroll(child)
+
+    def _refresh_tab_scroll_bindings(self) -> None:
+        for content in self._tab_scroll_contents:
+            if content.winfo_exists():
+                self._bind_direct_tab_scroll(content)
+
+    def _make_scrollable_tab(self, tab: ttk.Frame) -> ttk.Frame:
+        host = ttk.Frame(tab, style="App.TFrame")
+        host.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(
+            host,
+            bg=self.app_palette["bg"],
+            borderwidth=0,
+            highlightthickness=0,
+            xscrollincrement=24,
+            yscrollincrement=24,
+        )
+        y_scroll = ttk.Scrollbar(host, orient=tk.VERTICAL, command=canvas.yview)
+        x_scroll = ttk.Scrollbar(host, orient=tk.HORIZONTAL, command=canvas.xview)
+        canvas.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        host.columnconfigure(0, weight=1)
+        host.rowconfigure(0, weight=1)
+
+        content = ttk.Frame(canvas, style="App.TFrame")
+        window_id = canvas.create_window((0, 0), window=content, anchor=tk.NW)
+        sync_pending = False
+
+        def sync_scroll_region() -> None:
+            nonlocal sync_pending
+            sync_pending = False
+            content.update_idletasks()
+            width = max(content.winfo_reqwidth(), canvas.winfo_width(), self._tab_scroll_min_width)
+            height = max(content.winfo_reqheight(), canvas.winfo_height(), self._tab_scroll_min_height)
+            canvas.itemconfigure(window_id, width=width, height=height)
+            canvas.configure(scrollregion=(0, 0, width, height))
+
+        def schedule_scroll_region_sync(_event: tk.Event | None = None) -> None:
+            nonlocal sync_pending
+            if sync_pending:
+                return
+            sync_pending = True
+            canvas.after_idle(sync_scroll_region)
+
+        content.bind("<Configure>", schedule_scroll_region_sync)
+        canvas.bind("<Configure>", schedule_scroll_region_sync)
+        self._tab_scroll_canvases[str(tab)] = canvas
+        self._tab_scroll_hosts[str(tab)] = host
+        self._tab_scroll_contents.append(content)
+        return content
 
     def _build_ui(self) -> None:
         palette = {
@@ -629,6 +790,8 @@ class CardPipelineApp(tk.Tk):
             "warning": "#5a4a14",
             "danger": "#5a1f1f",
         }
+        self.app_palette = palette
+        self.colors = palette
         self.configure(bg=palette["bg"])
         self.option_add("*TCombobox*Listbox.background", palette["field"])
         self.option_add("*TCombobox*Listbox.foreground", palette["text"])
@@ -807,6 +970,18 @@ class CardPipelineApp(tk.Tk):
         self.tabs.add(self.payouts_tab, text="Payouts/Tabs")
         self.tabs.add(self.inventory_tab, text="Inventory")
         self.tabs.add(self.profit_tab, text="Profit")
+        for tab_attr in (
+            "home_tab",
+            "intake_tab",
+            "comp_tab",
+            "receive_tab",
+            "review_tab",
+            "payouts_tab",
+            "inventory_tab",
+            "profit_tab",
+        ):
+            setattr(self, tab_attr, self._make_scrollable_tab(getattr(self, tab_attr)))
+        self._install_tab_scroll_bindings()
         self.row_trees: list[ttk.Treeview] = []
 
         self._build_home_tab(palette)
@@ -6106,6 +6281,7 @@ class CardPipelineApp(tk.Tk):
             self._build_file_mode(photo=False)
         if hasattr(self, "intake_tree"):
             self._refresh_table()
+        self.after_idle(self._refresh_tab_scroll_bindings)
 
     def _show_review_mode(self) -> None:
         if not hasattr(self, "review_mode_host"):
@@ -6117,6 +6293,7 @@ class CardPipelineApp(tk.Tk):
         else:
             self._build_automatic_review_mode()
         self._refresh_table()
+        self.after_idle(self._refresh_tab_scroll_bindings)
 
     def _build_manual_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
