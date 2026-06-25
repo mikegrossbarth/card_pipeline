@@ -449,7 +449,7 @@ GOOGLE_SHEETS_OAUTH_CLIENT_SECRET=...
 
 11. save `.env`
 12. restart L.U.C.A.S
-13. open Assignment Rules
+13. open Company Rules
 14. click `Connect Google`
 15. sign in with the Google account that can access the sheets
 
@@ -483,14 +483,14 @@ Native Google Sheets files may appear as `.gsheet` shortcuts. If L.U.C.A.S canno
 
 For the easiest rule and payout setup, use synced `.xlsx` or `.csv` files when possible.
 
-## Step 13: Set Up Assignment Companies
+## Step 13: Set Up Company Rules
 
 Assignment recommendations need company rules and payout rates.
 
 In L.U.C.A.S:
 
 1. open the `Assignment` tab
-2. click `Assignment Rules`
+2. click `Company Rules`
 3. create a company
 4. choose whether the company is active
 5. choose a rule source
@@ -509,7 +509,7 @@ Each company can use:
 For Google Keep rule sources, sync is done per company:
 
 ```text
-Assignment Rules -> select company -> Rule Source -> Sync Google Keep
+Company Rules -> select company -> Rule Source -> Sync Google Keep
 ```
 
 Use this when a Keep note changed and L.U.C.A.S needs the Chrome extension to refresh its cached note text.
@@ -529,7 +529,7 @@ Use this only if the computer will buy cards from sellers with preset terms.
 Open:
 
 ```text
-Assignment Rules -> People Rules
+Company Rules -> People Rules
 ```
 
 People Rules writes shared seller terms to:
@@ -565,7 +565,7 @@ After setup, test the app in this order:
 2. Save it to `WORKING SHEETS`.
 3. Open the `Comp` tab and make sure the sheet appears.
 4. Run one Card Ladder comp as a test.
-5. Open Assignment Rules and make sure companies load.
+5. Open Company Rules and make sure companies load.
 6. If Network Mode is needed, open People Rules and make sure People Rules Health is clean.
 7. Open the `Assignment` tab and confirm best company and estimated payout can populate.
 8. Open the `Receive` tab and test marking a row received.
