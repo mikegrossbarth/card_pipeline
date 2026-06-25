@@ -2328,6 +2328,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn("is not an assignment company", text)
         self.assertIn("invalid Seller Rate", text)
 
+    def test_people_rules_percent_fields_display_as_numbers_only(self) -> None:
+        self.assertEqual(assignment_config_ui.seller_terms_percent_display("10%"), "10")
+        self.assertEqual(assignment_config_ui.seller_terms_percent_display("0.1"), "10")
+        self.assertEqual(assignment_config_ui.seller_terms_percent_display("90"), "90")
+        self.assertTrue(assignment_config_ui.seller_terms_percent_input_is_number("10.5"))
+        self.assertFalse(assignment_config_ui.seller_terms_percent_input_is_number("10%"))
+        self.assertFalse(assignment_config_ui.seller_terms_percent_input_is_number("ten"))
+
     def test_team_payout_uses_sold_profit_not_unsold_estimated_profit(self) -> None:
         class PayoutDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
