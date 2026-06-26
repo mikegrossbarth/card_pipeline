@@ -1761,6 +1761,8 @@ def parse_rules(text: str, accept_all: bool = False) -> CompanyRules:
         if key_value:
             key = normalize_key(key_value.group(1))
             value = key_value.group(2).strip()
+            if key in {"sports", "sport"} and is_grader_list(value):
+                continue
             if key in {"include", "includekeywords", "keywords", "sports", "sport"}:
                 rules.include.extend(split_values(value))
                 continue
@@ -1868,6 +1870,11 @@ def rule_matcher_label(value: Any) -> str:
     if is_generic_rule_label(label):
         return ""
     return label
+
+
+def is_grader_list(value: Any) -> bool:
+    tokens = re.findall(r"\b[A-Z]{2,4}\b", str(value or "").upper())
+    return bool(tokens) and all(token in {"PSA", "BGS", "SGC", "CGC"} for token in tokens)
 
 
 def is_generic_rule_label(value: Any) -> bool:
@@ -2581,14 +2588,22 @@ def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
         )
     range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|–|—|to|through|thru)\s*\$?\s*([\d,.]+k?)", text_without_year, re.I)
     if range_match:
-        matcher = f"{text_without_year[:range_match.start()]} {text_without_year[range_match.end():]}".strip(" -:|")
+        matcher = range_rule_matcher_text(text_without_year, range_match.start(), range_match.end(), block=block)
         min_price, max_price = parse_money_range(range_match.group(1), range_match.group(2))
         return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=min_price, max_price=max_price, block=block, max_year=max_year)
     plus_match = re.search(r"\$?\s*([\d,.]+k?)\s*\+", text_without_year, re.I)
     if plus_match:
-        matcher = f"{text_without_year[:plus_match.start()]} {text_without_year[plus_match.end():]}".strip(" -:|")
+        matcher = range_rule_matcher_text(text_without_year, plus_match.start(), plus_match.end(), block=block)
         return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=parse_money(plus_match.group(1)), block=block, max_year=max_year)
     return AssignmentRule(matcher=rule_matcher_label(text_without_year), block=block, max_year=max_year)
+
+
+def range_rule_matcher_text(text: str, range_start: int, range_end: int, block: bool = False) -> str:
+    before = text[:range_start].strip(" -:|")
+    after = text[range_end:].strip(" -:|")
+    if block:
+        return f"{before} {after}".strip(" -:|")
+    return before or after
 
 
 def rule_matches(rule: AssignmentRule, haystack: str, price: float) -> bool:
