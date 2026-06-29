@@ -37,6 +37,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Automatic Card Ladder comp results now fill a blank `Sport`/`Category` from the returned profile/card title, matching the manual title-edit behavior. Manually entered sport values are preserved and not overwritten.
 - Receive now looks up scanned/manual rows across both `INCOMING SHEETS` and `WORKING SHEETS` and merges duplicate cert matches so nonblank assignment fields win. `write_working_sheet()` now persists `Best Company`, `Estimated Payout`, and `Status`, fixing blank Best Company/Est. Payout values in the Receive tab after assignment values were saved back to a Working sheet.
 - Payouts/Tabs now includes expenses in team payout math. Sold-sheet expenses reduce that sheet's realized profit before the 50% team split, loose person expenses appear as an `Expense Adjustments` payout row, summary balances show Expenses and Net Profit, and balance owed can go negative if expenses exceed profit. Seller payouts remain based on seller terms/purchase obligations.
 - Release-readiness audit: Company Rules naming was aligned across setup docs, user guide images, diagnostics, and OAuth error copy; the stale Network Mode handoff note was corrected so seller sheets may save before value data exists and show pending seller-payout warnings until comps/CL/CY values are available. No Card Ladder helper fallback behavior was changed.

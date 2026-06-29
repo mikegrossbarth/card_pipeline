@@ -864,6 +864,49 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertIsNone(row.card_ladder_comps_average)
         self.assertIn("overly broad", row.notes)
 
+    def test_cardladder_result_fills_blank_sport_from_profile_title(self) -> None:
+        bridge = app.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="99505674", grader="PSA", card_title="")
+        result = {
+            "excelRow": 2,
+            "certNumber": "99505674",
+            "grader": "PSA",
+            "status": "ok",
+            "value": 73,
+            "ocr": {
+                "profileTitle": "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser",
+                "profileGrader": "PSA",
+                "profileGrade": "9",
+                "comps": [{"title": "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser PSA 9", "date_sold": "Jun 1, 2026", "price": "$73.00"}],
+            },
+        }
+
+        bridge._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.card_title, "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser PSA 9")
+        self.assertEqual(row.category, "basketball")
+
+    def test_cardladder_result_does_not_overwrite_manual_sport(self) -> None:
+        bridge = app.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="99505674", grader="PSA", card_title="", category="baseball")
+        result = {
+            "excelRow": 2,
+            "certNumber": "99505674",
+            "grader": "PSA",
+            "status": "ok",
+            "value": 73,
+            "ocr": {
+                "profileTitle": "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser",
+                "profileGrader": "PSA",
+                "profileGrade": "9",
+                "comps": [{"title": "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser PSA 9", "date_sold": "Jun 1, 2026", "price": "$73.00"}],
+            },
+        }
+
+        bridge._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.category, "baseball")
+
     def test_date_weighted_uses_newest_comp_when_two_newest_are_more_than_seven_days_apart(self) -> None:
         newest = datetime.now() - timedelta(days=2)
         older = newest - timedelta(days=11)

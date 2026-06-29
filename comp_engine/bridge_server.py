@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
+import assignment_engine
 
 BRIDGE_VERSION = "2026-06-17-cardladder-no-blind-grader-option-v22"
 EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-no-blind-grader-option-v22"
@@ -30,6 +31,15 @@ COMP_STRATEGY_LABELS = {
     COMP_STRATEGY_LOW: "Lowest of last 5",
     COMP_STRATEGY_STALE_NEWEST: "Date weighted",
 }
+
+
+def fill_missing_category_from_title(row: WorkbookRow) -> None:
+    if str(getattr(row, "category", "") or "").strip():
+        return
+    parsed = assignment_engine.parse_card_for_matching(getattr(row, "card_title", "") or "")
+    sport = str(parsed.get("sport") or "").strip()
+    if sport:
+        row.category = sport
 
 
 class BridgeState:
@@ -214,6 +224,7 @@ class BridgeState:
                 return
             if profile_title:
                 row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
+                fill_missing_category_from_title(row)
             if row_has_comp_data(row):
                 row.notes = str(result.get("error") or "Partial Card Ladder capture skipped; kept existing comps.")
                 return
@@ -264,6 +275,7 @@ class BridgeState:
             return
         if profile_title:
             row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
+            fill_missing_category_from_title(row)
         row.card_ladder_comps_average = comp_price(comps, self.comp_strategy)
         row.card_ladder_comps = format_comps(comps, self.comp_strategy)
         row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
