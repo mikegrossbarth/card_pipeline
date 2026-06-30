@@ -37,6 +37,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Windows now has the recent Mac Home/Comp fixes: Home sheet right-click includes `Review Sheet` with a scrollable workbook preview and copy-cell/copy-row actions, and the Comp tab can load/save both Incoming and Working sheets using labeled entries.
 - Receive rows now guarantee visible Best Company and Est. Payout when enough value data exists. If a matched incoming/working sheet row lacks saved assignment fields, Receive immediately recalculates through the assignment engine so barcode-scanned rows are not left blank.
 - Receive barcode scans now refresh the incoming/working cert index when an existing cert match is stale and missing assignment fields, so Best Company and Est. Payout populate from sheets that were assigned after startup. Startup indexing now uses the same incoming plus working merge behavior and preserves sport/category in the receive match.
 - Automatic Card Ladder comp results now fill a blank `Sport`/`Category` from the returned profile/card title, matching the manual title-edit behavior. Manually entered sport values are preserved and not overwritten.

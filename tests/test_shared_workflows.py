@@ -2225,6 +2225,27 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.SHEET_MARKERS_PATH = old_markers
 
+    def test_home_sheet_preview_data_reads_workbook_contents(self) -> None:
+        class PreviewDummy:
+            _home_sheet_preview_data = app.CardPipelineApp._home_sheet_preview_data
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Lot A.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Certification Number", "Grader", "Card Description"])
+            sheet.append(["123", "PSA", "Test Card"])
+            workbook.save(path)
+
+            preview = PreviewDummy()._home_sheet_preview_data(path)
+
+        self.assertEqual(preview["sheet_title"], "Cards")
+        self.assertEqual(preview["columns"], ["row", "A", "B", "C"])
+        self.assertEqual(preview["rows"][0], (1, "Certification Number", "Grader", "Card Description"))
+        self.assertEqual(preview["rows"][1], (2, "123", "PSA", "Test Card"))
+        self.assertFalse(preview["truncated"])
+
     def test_create_seller_assignment_pays_only_after_receive(self) -> None:
         class SellerSheetDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
@@ -2562,6 +2583,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
             _marker_for_sheet_name = app.CardPipelineApp._marker_for_sheet_name
             _apply_seller_terms_to_rows_for_marker = app.CardPipelineApp._apply_seller_terms_to_rows_for_marker
+            _comp_sheet_info = app.CardPipelineApp._comp_sheet_info
             save_comp_to_source_sheet = app.CardPipelineApp.save_comp_to_source_sheet
 
             def _refresh_table(self, schedule_recommendations=False):
@@ -2596,6 +2618,90 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 dummy.save_comp_to_source_sheet()
                 saved = read_simple_spreadsheet(path)
                 self.assertEqual(saved[0]["purchase_price"], 90.0)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+
+    def test_comp_sheet_list_combines_incoming_and_working_sheets(self) -> None:
+        class FakeListbox:
+            def __init__(self):
+                self.items: list[str] = []
+
+            def delete(self, _start, _end):
+                self.items = []
+
+            def insert(self, _index, value):
+                self.items.append(value)
+
+        class CompSheetDummy:
+            _comp_sheet_label = app.CardPipelineApp._comp_sheet_label
+            _populate_comp_sheet_list = app.CardPipelineApp._populate_comp_sheet_list
+
+        dummy = CompSheetDummy()
+        dummy.incoming_sheet_paths = {"Incoming Lot.xlsx": Path("/tmp/Incoming Lot.xlsx")}
+        dummy.working_sheet_paths = {"Working Lot.xlsx": Path("/tmp/Working Lot.xlsx")}
+        dummy.working_sheet_list = FakeListbox()
+
+        dummy._populate_comp_sheet_list()
+
+        self.assertEqual(dummy.working_sheet_list.items, ["Incoming / Incoming Lot.xlsx", "Working / Working Lot.xlsx"])
+        self.assertEqual(dummy.comp_sheet_stages["Incoming / Incoming Lot.xlsx"], "Incoming")
+        self.assertEqual(dummy.comp_sheet_paths["Working / Working Lot.xlsx"], Path("/tmp/Working Lot.xlsx"))
+
+    def test_save_comp_to_source_sheet_can_write_incoming_sheet(self) -> None:
+        class Var:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class SourceSaveDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_term_for_marker = app.CardPipelineApp._seller_term_for_marker
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _marker_for_sheet_name = app.CardPipelineApp._marker_for_sheet_name
+            _apply_seller_terms_to_rows_for_marker = app.CardPipelineApp._apply_seller_terms_to_rows_for_marker
+            _comp_sheet_info = app.CardPipelineApp._comp_sheet_info
+            save_comp_to_source_sheet = app.CardPipelineApp.save_comp_to_source_sheet
+
+            def _refresh_table(self, schedule_recommendations=False):
+                pass
+
+            def refresh_home(self):
+                pass
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            incoming_dir.mkdir(parents=True)
+            path = incoming_dir / "Incoming Lot.xlsx"
+            write_working_sheet(path, [WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Card", existing_value=12.0)], {2: "manual"})
+
+            old_pipeline = app.CARD_PIPELINE_DIR
+            app.CARD_PIPELINE_DIR = root
+            dummy = SourceSaveDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            row = WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Card", existing_value=22.0, card_ladder_value=44.0)
+            dummy.state = types.SimpleNamespace(rows=[row])
+            dummy.row_sources = {2: "manual"}
+            dummy.selected_working_sheet = Var("Incoming / Incoming Lot.xlsx")
+            dummy.comp_sheet_paths = {"Incoming / Incoming Lot.xlsx": path}
+            dummy.comp_sheet_stages = {"Incoming / Incoming Lot.xlsx": "Incoming"}
+            dummy.working_sheet_paths = {}
+            dummy.incoming_sheet_paths = {"Incoming Lot.xlsx": path}
+            dummy.home_sheet_markers = {}
+            dummy.status_var = Var("")
+            dummy.status_var.set = lambda value: setattr(dummy.status_var, "value", value)
+            try:
+                dummy.save_comp_to_source_sheet()
+                saved = read_simple_spreadsheet(path)
+                self.assertEqual(saved[0]["purchase_price"], 22.0)
+                self.assertEqual(saved[0]["card_ladder_value"], 44.0)
+                self.assertIn("incoming Incoming Lot.xlsx", dummy.status_var.value)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
 
@@ -3308,11 +3414,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.value = value
 
         class InventoryDummy:
+            _tree_cell_text = app.CardPipelineApp._tree_cell_text
             _inventory_tree_cell_text = app.CardPipelineApp._inventory_tree_cell_text
+            _tree_row_text = app.CardPipelineApp._tree_row_text
             _inventory_tree_row_text = app.CardPipelineApp._inventory_tree_row_text
             _copy_inventory_text = app.CardPipelineApp._copy_inventory_text
             copy_inventory_cell_value = app.CardPipelineApp.copy_inventory_cell_value
             copy_inventory_row_values = app.CardPipelineApp.copy_inventory_row_values
+            copy_tree_cell_value = app.CardPipelineApp.copy_tree_cell_value
+            copy_tree_row_values = app.CardPipelineApp.copy_tree_row_values
 
             def __init__(self):
                 self.inventory_tree = FakeTree()
@@ -3333,6 +3443,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.copy_inventory_row_values("row-1")
         self.assertEqual(dummy.clipboard, "2026-06-18\tKevin Hambone\tBasketball\t12345678\tPSA\tTest Card")
         self.assertEqual(dummy.status_var.value, "Copied inventory row.")
+
+        dummy.copy_tree_cell_value(dummy.inventory_tree, "row-1", "#5", "sheet cell")
+        self.assertEqual(dummy.clipboard, "PSA")
+        self.assertEqual(dummy.status_var.value, "Copied sheet cell.")
+
+        dummy.copy_tree_row_values(dummy.inventory_tree, "row-1", "sheet row")
+        self.assertEqual(dummy.clipboard, "2026-06-18\tKevin Hambone\tBasketball\t12345678\tPSA\tTest Card")
+        self.assertEqual(dummy.status_var.value, "Copied sheet row.")
 
     def test_inventory_table_shows_source_values_separately(self) -> None:
         class FieldVar:
