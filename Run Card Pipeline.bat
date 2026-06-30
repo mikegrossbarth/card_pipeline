@@ -1,21 +1,16 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 set "VENV_OK=0"
 if exist ".venv\Scripts\python.exe" (
-    if exist ".venv\pyvenv.cfg" (
-        for /f "tokens=1,* delims==" %%A in ('findstr /b /c:"executable =" ".venv\pyvenv.cfg"') do set "VENV_BASE=%%B"
-        if defined VENV_BASE (
-            set "VENV_BASE=%VENV_BASE:~1%"
-            if exist "%VENV_BASE%" set "VENV_OK=1"
-        )
-    )
-    if "%VENV_OK%" EQU "1" (
+    ".venv\Scripts\python.exe" -c "import sys" >nul 2>nul
+    if !ERRORLEVEL! EQU 0 set "VENV_OK=1"
+    if "!VENV_OK!" EQU "1" (
         ".venv\Scripts\python.exe" app.py
         exit /b %ERRORLEVEL%
     ) else (
-        echo Existing .venv is not usable. Falling back to system Python.
+        echo Existing .venv Python is not usable. Falling back to system Python.
         echo Run install_dependencies.bat to rebuild .venv.
         echo.
     )
