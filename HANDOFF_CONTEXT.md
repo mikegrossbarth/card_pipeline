@@ -37,6 +37,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Weekly company tabs now roll over on Monday at 8:00 PM local time. Sunday midnight no longer starts the next company-sheet week; Monday before 8 PM still writes to the prior `Week of YYYY-MM-DD` tab.
 - Comp now shows a non-editable `Received` marker column for loaded Incoming/Working sheets. The marker reads the workbook `RECEIVED` column and `Save Back to Source Sheet` preserves it, so partial package check-ins remain visible while comp/edit work continues.
 - Comp tab now has `Delete Selected` for loaded Incoming/Working sheet rows. It removes the selected row(s), rekeys row/source metadata, marks the comp sheet unsaved, and `Save Back to Source Sheet` persists the deletion to the source workbook.
 - Windows now has the recent Mac Home/Comp fixes: Home sheet right-click includes `Review Sheet` with a scrollable workbook preview and copy-cell/copy-row actions, and the Comp tab can load/save both Incoming and Working sheets using labeled entries.
@@ -81,7 +82,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
   - weekly tab name: `Week of YYYY-MM-DD`
 - CourtYard/CY weekly company sheets use the same visible front columns as ingestable CY sheets: `Grader`, `Cert`, `Description`, `Grade`, `Purchase`, `Estimate`, `Confidence`. L.U.C.A.S tracking/profit columns are kept to the right as hidden columns so profit backfill/refunds/source tracking still work.
 - Old legacy weekly company files remain readable for profit backfill.
-- Sunday at midnight rolls forward to the next Monday's company-sheet tab.
+- Weekly company-sheet tabs roll forward Monday at 8:00 PM local time.
 - Received sheets archive after two weeks only if fully received and marked paid.
 - `Inventory` tracks active person-level inventory in `inventory_ledger.json`.
 - Received cards that are not checked for the company pile are automatically added to active inventory for the assigned person.
