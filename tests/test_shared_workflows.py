@@ -27,7 +27,8 @@ import assignment_config_ui
 import assignment_engine
 import google_sheets_import
 import lucas_diagnostics
-from bridge_server import keep_urls_match
+import cardladder_ocr
+from bridge_server import clean_profile_title as bridge_clean_profile_title, keep_urls_match
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
@@ -68,6 +69,18 @@ import multi_card_extraction
 
 
 class SharedStateTests(unittest.TestCase):
+    def test_card_ladder_profile_title_strips_trailing_close_ui_text(self) -> None:
+        raw_titles = [
+            "2024 Panini Prizm Silver Caitlin Clark Close",
+            "2024 Panini Prizm Silver Caitlin Clark Close PSA 10",
+            "2024 Panini Prizm Silver Caitlin Clark Close $125.00",
+            "2024 Panini Prizm Silver Caitlin Clark Close search_off",
+        ]
+        for cleaner in (bridge_clean_profile_title, cardladder_ocr.clean_profile_title):
+            for raw in raw_titles:
+                with self.subTest(cleaner=getattr(cleaner, "__module__", ""), raw=raw):
+                    self.assertEqual(cleaner(raw), "2024 Panini Prizm Silver Caitlin Clark")
+
     def test_google_ssl_context_uses_certifi_when_no_cert_env_is_set(self) -> None:
         with TemporaryDirectory() as tmp:
             cafile = Path(tmp) / "cacert.pem"
