@@ -996,21 +996,27 @@ class CardPipelineApp(tk.Tk):
 
         header = ttk.Frame(self, style="Header.TFrame", padding=(18, 16))
         header.pack(fill=tk.X)
+        header.columnconfigure(1, weight=1)
         if LUCAS_LOGO_PATH.exists():
             try:
                 self.logo_image = tk.PhotoImage(file=str(LUCAS_LOGO_PATH)).subsample(6, 6)
                 self.iconphoto(False, self.logo_image)
-                ttk.Label(header, image=self.logo_image, style="Header.TLabel").pack(side=tk.LEFT, padx=(0, 14))
+                ttk.Label(header, image=self.logo_image, style="Header.TLabel").grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 14))
             except tk.TclError:
                 self.logo_image = None
         title_group = ttk.Frame(header, style="Header.TFrame")
-        title_group.pack(side=tk.LEFT)
+        title_group.grid(row=0, column=1, sticky="w")
         ttk.Label(title_group, text=APP_TITLE, style="HeaderTitle.TLabel").pack(anchor=tk.W)
         ttk.Label(title_group, text=APP_SUBTITLE, style="HeaderSub.TLabel").pack(anchor=tk.W, pady=(3, 0))
-        ttk.Label(header, textvariable=self.bridge_status_var, style="BridgeBadge.TLabel").pack(side=tk.RIGHT, padx=(16, 0))
-        ttk.Button(header, text="Working Folder", command=self.choose_working_folder, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
-        ttk.Button(header, text="System Health", command=self.open_setup_doctor, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
-        ttk.Button(header, text="Activity Log", command=self.open_activity_log, style="Soft.TButton").pack(side=tk.RIGHT)
+        ttk.Label(header, textvariable=self.bridge_status_var, style="BridgeBadge.TLabel").grid(row=0, column=2, sticky="ne", padx=(16, 0))
+        header_actions = ttk.Frame(header, style="Header.TFrame")
+        header_actions.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(12, 0))
+        header_buttons = [
+            self._make_colored_button(header_actions, "Activity Log", self.open_activity_log, variant="primary"),
+            self._make_colored_button(header_actions, "System Health", self.open_setup_doctor, variant="primary"),
+            self._make_colored_button(header_actions, "Working Folder", self.choose_working_folder, variant="primary"),
+        ]
+        self._bind_responsive_button_row(header_actions, header_buttons, min_button_width=132)
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill=tk.BOTH, expand=True, padx=18, pady=(16, 12))
@@ -1353,15 +1359,15 @@ class CardPipelineApp(tk.Tk):
         toggle_row.pack(fill=tk.X, pady=(0, 8))
         self.home_tab_palette = palette
         self.home_incoming_tab = self._build_home_tab_button(toggle_row, "Incoming", lambda: self._set_home_sheet_kind("Incoming"))
-        self.home_incoming_tab.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.home_working_tab = self._build_home_tab_button(toggle_row, "Working", lambda: self._set_home_sheet_kind("Working"))
-        self.home_working_tab.grid(row=0, column=1, sticky="ew", padx=(0, 4))
         self.home_received_tab = self._build_home_tab_button(toggle_row, "Received", lambda: self._set_home_sheet_kind("Received"))
-        self.home_received_tab.grid(row=0, column=2, sticky="ew", padx=(0, 4))
         self.home_edit_markers_tab = self._build_home_tab_button(toggle_row, "Edit Markers", self.open_sheet_marker_editor)
-        self.home_edit_markers_tab.grid(row=0, column=3, sticky="ew")
-        for col in range(4):
-            toggle_row.columnconfigure(col, weight=1, uniform="home_tabs")
+        self._bind_responsive_button_row(
+            toggle_row,
+            [self.home_incoming_tab, self.home_working_tab, self.home_received_tab, self.home_edit_markers_tab],
+            min_button_width=70,
+            uniform_columns=True,
+        )
         self.home_sheet_list = tk.Listbox(
             sheet_panel,
             width=1,
@@ -1382,7 +1388,7 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_list.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         self.home_sheet_list.bind("<<ListboxSelect>>", lambda _event: self._load_home_selected_marker())
         self._bind_context_menu(self.home_sheet_list, self._show_home_sheet_context_menu)
-        ttk.Button(sheet_panel, text="Refresh Home View", command=self.refresh_home, style="Primary.TButton").pack(fill=tk.X)
+        self._make_colored_button(sheet_panel, "Refresh Home View", self.refresh_home, variant="primary").pack(fill=tk.X)
 
         right = ttk.Frame(body, style="App.TFrame")
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -5086,24 +5092,107 @@ class CardPipelineApp(tk.Tk):
     def choose_pipeline_root(self) -> None:
         self.choose_working_folder()
 
-    def _build_home_tab_button(self, parent: tk.Frame, text: str, command) -> tk.Button:
-        palette = self.home_tab_palette
-        return tk.Button(
+    def _configure_colored_button(
+        self,
+        button: tk.Widget,
+        bg: str,
+        fg: str,
+        hover: str | None = None,
+        pressed: str | None = None,
+    ) -> None:
+        setattr(button, "_lucas_bg", bg)
+        setattr(button, "_lucas_fg", fg)
+        setattr(button, "_lucas_hover", hover or bg)
+        setattr(button, "_lucas_pressed", pressed or hover or bg)
+        button.configure(bg=bg, fg=fg)
+
+    def _make_colored_button(self, parent: tk.Widget, text: str, command, variant: str = "soft") -> tk.Label:
+        palette = getattr(self, "app_palette", {})
+        if variant == "primary":
+            bg = str(palette.get("button") or "#1ed760")
+            hover = str(palette.get("button_hover") or "#1fdf64")
+            pressed = str(palette.get("button_pressed") or "#169c46")
+            fg = "#000000"
+        else:
+            bg = str(palette.get("button") or "#1ed760")
+            hover = str(palette.get("button_hover") or "#1fdf64")
+            pressed = str(palette.get("button_pressed") or "#169c46")
+            fg = "#000000"
+        button = tk.Label(
             parent,
             text=text,
-            command=command,
-            bg=palette["soft_button"],
-            fg=palette["muted"],
-            activebackground=palette["soft_button_hover"],
-            activeforeground=palette["text"],
+            bg=bg,
+            fg=fg,
             relief=tk.FLAT,
             borderwidth=0,
             highlightthickness=0,
-            padx=8,
-            pady=6,
-            font=("Segoe UI Semibold", 9),
+            padx=16,
+            pady=9,
+            font=("Segoe UI Semibold", 10),
             cursor="hand2",
         )
+        self._configure_colored_button(button, bg, fg, hover, pressed)
+        button.bind("<Enter>", lambda _event: button.configure(bg=getattr(button, "_lucas_hover", bg)), add="+")
+        button.bind("<Leave>", lambda _event: button.configure(bg=getattr(button, "_lucas_bg", bg)), add="+")
+        button.bind("<ButtonPress-1>", lambda _event: button.configure(bg=getattr(button, "_lucas_pressed", pressed)), add="+")
+        button.bind("<ButtonRelease-1>", lambda _event: (button.configure(bg=getattr(button, "_lucas_hover", hover)), command()), add="+")
+        return button
+
+    def _bind_responsive_button_row(
+        self,
+        parent: tk.Widget,
+        buttons: list[tk.Widget],
+        min_button_width: int = 96,
+        uniform_columns: bool = False,
+    ) -> None:
+        state = {"columns": 0}
+
+        def relayout(_event: tk.Event | None = None) -> None:
+            live_width = parent.winfo_width()
+            width = live_width if live_width > 1 else max(parent.winfo_reqwidth(), min_button_width)
+            gap = 8
+            columns = max(1, width // (min_button_width + gap))
+            columns = min(columns, len(buttons))
+            if columns == state["columns"]:
+                return
+            state["columns"] = columns
+            for column in range(max(len(buttons), 1)):
+                parent.columnconfigure(column, weight=0, uniform="")
+            for row in range((len(buttons) + columns - 1) // columns + 1):
+                parent.rowconfigure(row, weight=0)
+            for index, button in enumerate(buttons):
+                row = index // columns
+                column = index % columns
+                padx = (0, gap) if column < columns - 1 else (0, 0)
+                pady = (0, 6) if row < (len(buttons) - 1) // columns else (0, 0)
+                button.grid(row=row, column=column, sticky="ew", padx=padx, pady=pady)
+            for column in range(columns):
+                parent.columnconfigure(column, weight=1 if uniform_columns else 0, uniform="responsive_buttons" if uniform_columns else "")
+
+        parent.bind("<Configure>", relayout, add="+")
+        parent.after_idle(relayout)
+
+    def _build_home_tab_button(self, parent: tk.Frame, text: str, command) -> tk.Label:
+        palette = self.home_tab_palette
+        button = tk.Label(
+            parent,
+            text=text,
+            bg=palette["soft_button"],
+            fg=palette["muted"],
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=0,
+            padx=5,
+            pady=6,
+            font=("Segoe UI Semibold", 8),
+            cursor="hand2",
+        )
+        self._configure_colored_button(button, palette["soft_button"], palette["muted"], palette["soft_button_hover"], palette["border"])
+        button.bind("<Enter>", lambda _event: button.configure(bg=getattr(button, "_lucas_hover", palette["soft_button_hover"])), add="+")
+        button.bind("<Leave>", lambda _event: button.configure(bg=getattr(button, "_lucas_bg", palette["soft_button"])), add="+")
+        button.bind("<ButtonPress-1>", lambda _event: button.configure(bg=getattr(button, "_lucas_pressed", palette["border"])), add="+")
+        button.bind("<ButtonRelease-1>", lambda _event: (button.configure(bg=getattr(button, "_lucas_hover", palette["soft_button_hover"])), command()), add="+")
+        return button
 
     def _set_home_sheet_kind(self, kind: str) -> None:
         self.home_sheet_kind.set(kind)
@@ -5144,14 +5233,23 @@ class CardPipelineApp(tk.Tk):
             return
         palette = self.home_tab_palette
         active_kind = self.home_sheet_kind.get()
-        active = {"bg": palette["panel_high"], "fg": palette["text"], "activebackground": palette["panel_high"], "activeforeground": palette["text"]}
+        active = {"bg": palette["button"], "fg": "#000000", "activebackground": palette["button_hover"], "activeforeground": "#000000"}
         inactive = {"bg": palette["soft_button"], "fg": palette["muted"], "activebackground": palette["soft_button_hover"], "activeforeground": palette["text"]}
-        self.home_incoming_tab.configure(**(active if active_kind == "Incoming" else inactive))
-        self.home_working_tab.configure(**(active if active_kind == "Working" else inactive))
+        self._set_home_tab_button_state(self.home_incoming_tab, active if active_kind == "Incoming" else inactive)
+        self._set_home_tab_button_state(self.home_working_tab, active if active_kind == "Working" else inactive)
         if hasattr(self, "home_received_tab"):
-            self.home_received_tab.configure(**(active if active_kind == "Received" else inactive))
+            self._set_home_tab_button_state(self.home_received_tab, active if active_kind == "Received" else inactive)
         if hasattr(self, "home_edit_markers_tab"):
-            self.home_edit_markers_tab.configure(**inactive)
+            self._set_home_tab_button_state(self.home_edit_markers_tab, inactive)
+
+    def _set_home_tab_button_state(self, button: tk.Widget, colors: dict[str, str]) -> None:
+        self._configure_colored_button(
+            button,
+            colors["bg"],
+            colors["fg"],
+            colors.get("activebackground"),
+            colors.get("activebackground"),
+        )
 
     def refresh_home(self, reconcile_accounted: bool = True) -> None:
         perf_start = time.perf_counter()
