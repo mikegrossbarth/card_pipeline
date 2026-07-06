@@ -324,7 +324,7 @@ COMP_COLUMNS = (
 
 RECEIVE_COLUMNS = (
     "excel_row",
-    "source",
+    "person",
     "sheet_source",
     "cert_number",
     "grader",
@@ -339,6 +339,7 @@ RECEIVE_COLUMNS = (
     "estimated_payout",
     "status",
     "company_pile",
+    "source",
 )
 
 REVIEW_COLUMNS = DISPLAY_COLUMNS
@@ -384,6 +385,7 @@ EDITABLE_COLUMNS = {
 HEADINGS = {
     "excel_row": "Row",
     "source": "Source",
+    "person": "Person",
     "sheet_source": "Sheet Source",
     "cert_number": "Cert #",
     "grader": "Company",
@@ -404,6 +406,7 @@ HEADINGS = {
 COLUMN_WIDTHS = {
     "excel_row": 52,
     "source": 130,
+    "person": 145,
     "sheet_source": 150,
     "cert_number": 110,
     "grader": 86,
@@ -10740,6 +10743,8 @@ class CardPipelineApp(tk.Tk):
             return row.excel_row
         if column == "source":
             return sources.get(row.excel_row, "")
+        if column == "person":
+            return self._assignment_person_for_row(row)
         if column == "sheet_source":
             return (sheet_sources or {}).get(row.excel_row, "")
         if column == "cert_number":
