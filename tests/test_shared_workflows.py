@@ -3772,6 +3772,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                             "card_ladder_comps_average": 38.87,
                             "cy_value": "",
                             "cy_confidence": "",
+                            "paid_with": "Cash",
                             "best_company": "FANATICS",
                             "estimated_payout": 38.95,
                             "source_sheet": "SCOTSBORO_HAMBONE_6_16_26.xlsx",
@@ -3788,6 +3789,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertNotIn("value", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("card_ladder", app.INVENTORY_TABLE_COLUMNS)
+        self.assertIn("paid_with", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("comps", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("cy_estimate", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("cy_confidence", app.INVENTORY_TABLE_COLUMNS)
@@ -3798,6 +3800,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         row = dummy.inventory_tree.rows[0]
         columns = app.INVENTORY_TABLE_COLUMNS
         self.assertEqual(row[columns.index("card_ladder")], "$41.00")
+        self.assertEqual(row[columns.index("paid_with")], "Cash")
         self.assertEqual(row[columns.index("comps")], "$38.87")
         self.assertEqual(row[columns.index("cy_estimate")], "")
         self.assertEqual(row[columns.index("company")], "FANATICS")
