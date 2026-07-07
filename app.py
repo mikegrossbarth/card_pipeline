@@ -2648,18 +2648,23 @@ class CardPipelineApp(tk.Tk):
                 raise ValueError(label)
             return float(value)
 
+        def show_validation(message: str) -> None:
+            status_var.set(message)
+            popup.bell()
+            messagebox.showinfo("Add Card", message, parent=popup)
+
         def submit() -> None:
             person = person_var.get().strip()
             title = title_var.get().strip()
             purchase = self._money_value(purchase_var.get())
             if not person:
-                status_var.set("Enter a person.")
+                show_validation("Enter a person.")
                 return
             if not title:
-                status_var.set("Enter a card description.")
+                show_validation("Enter a card description.")
                 return
             if purchase is None or purchase < 0:
-                status_var.set("Enter a valid purchase price.")
+                show_validation("Enter a valid purchase price.")
                 return
             try:
                 card_ladder = optional_money(card_ladder_var, "Card Ladder")
@@ -2667,7 +2672,7 @@ class CardPipelineApp(tk.Tk):
                 cy_value = optional_money(cy_var, "CY Estimate")
                 payout = optional_money(payout_var, "Est. Payout")
             except ValueError as error:
-                status_var.set(f"Enter a valid value for {error}.")
+                show_validation(f"Enter a valid value for {error}.")
                 return
             result.update(
                 {
@@ -2706,31 +2711,46 @@ class CardPipelineApp(tk.Tk):
         values = self._raw_inventory_card_dialog()
         if values is None:
             return
-        with shared_lock(CARD_PIPELINE_DIR, "inventory-raw-add", self.lucas_identity):
-            existing = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-            cert = scan_to_cert(values.get("cert_number"))
-            item_id = "" if cert else self._next_raw_item_id(existing)
-            record = self._normalize_inventory_record(
-                {
-                    **values,
-                    "date_added": datetime.now().strftime("%Y-%m-%d"),
-                    "item_type": "Graded" if cert else "Raw",
-                    "item_id": item_id,
-                    "sport": CardPipelineApp._inventory_sport_from_value(self, "", values.get("card_title")),
-                    "cert_number": cert,
-                    "grader": str(values.get("grader") or "").strip(),
-                    "source_sheet": "Manual Inventory" if cert else "Raw Inventory",
-                    "source": "Manual Card",
-                    "status": "Active",
-                }
-            )
-            record = self._enrich_inventory_record_assignment(record)
-            existing.append(record)
-            self._save_inventory_ledger(existing)
-        self.refresh_inventory_tab()
-        card_id = record.get("cert_number") or record.get("item_id") or "manual card"
-        self.status_var.set(f"Added inventory card {card_id}.")
-        self._append_activity("Inventory Add", f"Added inventory card {card_id}.", {"item_id": record.get("item_id"), "cert_number": record.get("cert_number"), "person": record.get("assigned_person"), "card": record.get("card_title")})
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "inventory-raw-add", self.lucas_identity):
+                existing = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+                cert = scan_to_cert(values.get("cert_number"))
+                item_id = "" if cert else self._next_raw_item_id(existing)
+                record = self._normalize_inventory_record(
+                    {
+                        **values,
+                        "date_added": datetime.now().strftime("%Y-%m-%d"),
+                        "item_type": "Graded" if cert else "Raw",
+                        "item_id": item_id,
+                        "sport": CardPipelineApp._inventory_sport_from_value(self, "", values.get("card_title")),
+                        "cert_number": cert,
+                        "grader": str(values.get("grader") or "").strip(),
+                        "source_sheet": "Manual Inventory" if cert else "Raw Inventory",
+                        "source": "Manual Card",
+                        "status": "Active",
+                    }
+                )
+                record = self._enrich_inventory_record_assignment(record)
+                existing.append(record)
+                self._save_inventory_ledger(existing)
+            self.refresh_inventory_tab()
+            card_id = record.get("cert_number") or record.get("item_id") or "manual card"
+            message = f"Added inventory card {card_id}."
+            if hasattr(self, "inventory_status_var"):
+                self.inventory_status_var.set(message)
+            if hasattr(self, "status_var"):
+                self.status_var.set(message)
+            self._append_activity("Inventory Add", message, {"item_id": record.get("item_id"), "cert_number": record.get("cert_number"), "person": record.get("assigned_person"), "card": record.get("card_title")})
+        except Exception as error:
+            message = f"Add Card failed: {error}"
+            if hasattr(self, "inventory_status_var"):
+                self.inventory_status_var.set(message)
+            if hasattr(self, "status_var"):
+                self.status_var.set(message)
+            try:
+                messagebox.showerror("Add Card failed", message)
+            except Exception:
+                pass
 
     def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
         if not moved_keys:

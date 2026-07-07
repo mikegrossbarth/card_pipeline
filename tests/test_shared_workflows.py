@@ -5349,6 +5349,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 def set(self, value):
                     self.value = value
             dummy.status_var = Status()
+            dummy.inventory_status_var = Status()
             try:
                 dummy.add_raw_inventory_card()
                 inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
@@ -5359,6 +5360,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(inventory[0]["item_id"], "")
                 self.assertEqual(inventory[0]["source_sheet"], "Manual Inventory")
                 self.assertEqual(dummy.status_var.value, "Added inventory card 12345678.")
+                self.assertEqual(dummy.inventory_status_var.value, "Added inventory card 12345678.")
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
