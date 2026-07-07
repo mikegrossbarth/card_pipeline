@@ -163,6 +163,69 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
         self.assertEqual(company_weekly_sheet_name(datetime(2026, 6, 15, 19, 59)), "Week of 2026-06-08")
         self.assertEqual(company_weekly_sheet_name(datetime(2026, 6, 15, 20, 0)), "Week of 2026-06-15")
 
+    def test_company_sheet_week_start_uses_configured_reset_day_and_time(self) -> None:
+        before_reset = datetime(2026, 7, 8, 11, 30)
+        after_reset = datetime(2026, 7, 8, 12, 30)
+
+        self.assertEqual(
+            app.company_sheet_week_start_for_schedule(before_reset, "Wednesday", "12:00").isoformat(),
+            "2026-07-01",
+        )
+        self.assertEqual(
+            app.company_sheet_week_start_for_schedule(after_reset, "Wednesday", "12:00").isoformat(),
+            "2026-07-08",
+        )
+        self.assertEqual(
+            app.company_sheet_week_start_for_schedule(datetime(2026, 7, 6, 19, 59), "Monday", "8:00 PM").isoformat(),
+            "2026-06-29",
+        )
+
+    def test_company_sheet_reset_schedules_prefer_assignment_rules(self) -> None:
+        class Dummy:
+            _company_sheet_reset_schedules = app.CardPipelineApp._company_sheet_reset_schedules
+
+        dummy = Dummy()
+        dummy.app_settings = {
+            "company_sheet_reset_schedules": {
+                "Arena Club": {"weekday": "Monday", "time": "20:00"},
+            }
+        }
+        dummy.assignment_engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Arena Club",
+                    assignment_engine.CompanyRules(accept_all=True),
+                    [assignment_engine.PayoutTier(rate=0.8)],
+                    reset_weekday="Wednesday",
+                    reset_time="12:30",
+                )
+            ]
+        )
+
+        schedules = dummy._company_sheet_reset_schedules()
+
+        self.assertEqual(schedules["Arena Club"], {"weekday": "Wednesday", "time": "12:30"})
+
+    def test_append_company_sheet_rows_uses_company_sheet_name_lookup(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="1234567890",
+            card_title="Test Card",
+            grader="PSA",
+            existing_value=10,
+            best_company="Fanatics",
+            estimated_payout=15,
+        )
+        with TemporaryDirectory() as tmpdir:
+            result = append_company_sheet_rows(
+                Path(tmpdir),
+                [row],
+                sheet_name_lookup={"Fanatics": "Week of 2026-07-08"},
+            )
+
+            self.assertEqual(result["rows_added"], 1)
+            self.assertIn("Week of 2026-07-08", result["added_records"][0]["weekly_sheet_name"])
+
     def test_ensure_company_weekly_sheets_creates_blank_company_files(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "COMPANY SHEETS"
@@ -1346,6 +1409,31 @@ class AssignmentEngineTests(unittest.TestCase):
 
             self.assertEqual(engine.recommend(row, person="Lucas").payout, 95)
             self.assertEqual(engine.recommend(row, person="Other").payout, 80)
+
+    def test_assignment_engine_loads_company_sheet_reset_schedule(self) -> None:
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "assignment_companies.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "companies": [
+                            {
+                                "name": "Arena Club",
+                                "accept_all": True,
+                                "rate": "80%",
+                                "reset_weekday": "Wednesday",
+                                "reset_time": "12:30",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            engine = assignment_engine.AssignmentEngine.load(config_path)
+
+            self.assertEqual(engine.companies[0].reset_weekday, "Wednesday")
+            self.assertEqual(engine.companies[0].reset_time, "12:30")
 
     def test_company_can_prefer_card_ladder_value_over_comps(self) -> None:
         row = WorkbookRow(
@@ -4883,6 +4971,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
             _mark_inventory_records_moved_to_company = app.CardPipelineApp._mark_inventory_records_moved_to_company
             _inventory_record_can_move_to_company_sheet = app.CardPipelineApp._inventory_record_can_move_to_company_sheet
+            _company_sheet_reset_schedules = app.CardPipelineApp._company_sheet_reset_schedules
+            _company_sheet_schedule_for_company = app.CardPipelineApp._company_sheet_schedule_for_company
+            _company_sheet_week_start_for_company = app.CardPipelineApp._company_sheet_week_start_for_company
+            _company_sheet_name_lookup_for_rows = app.CardPipelineApp._company_sheet_name_lookup_for_rows
             move_selected_inventory_to_company_sheets = app.CardPipelineApp.move_selected_inventory_to_company_sheets
             _move_inventory_records_to_company_sheets = app.CardPipelineApp._move_inventory_records_to_company_sheets
             _profit_record_key = app.CardPipelineApp._profit_record_key
@@ -4963,6 +5055,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
             _mark_inventory_records_moved_to_company = app.CardPipelineApp._mark_inventory_records_moved_to_company
+            _company_sheet_reset_schedules = app.CardPipelineApp._company_sheet_reset_schedules
+            _company_sheet_schedule_for_company = app.CardPipelineApp._company_sheet_schedule_for_company
+            _company_sheet_week_start_for_company = app.CardPipelineApp._company_sheet_week_start_for_company
+            _company_sheet_name_lookup_for_rows = app.CardPipelineApp._company_sheet_name_lookup_for_rows
             _move_inventory_records_to_company_sheets = app.CardPipelineApp._move_inventory_records_to_company_sheets
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
