@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import calendar
 import html
 import queue
 import base64
@@ -1907,9 +1908,9 @@ class CardPipelineApp(tk.Tk):
         ttk.Entry(frame, textvariable=self.inventory_max_var, width=12).grid(row=4, column=3, sticky="w", pady=(0, 10))
 
         ttk.Label(frame, text="Date Added", style="AppMuted.TLabel").grid(row=5, column=0, sticky="w", pady=(0, 10))
-        ttk.Entry(frame, textvariable=self.inventory_date_min_var, width=12).grid(row=5, column=1, sticky="w", pady=(0, 10))
+        self._inventory_date_picker(frame, self.inventory_date_min_var).grid(row=5, column=1, sticky="w", pady=(0, 10))
         ttk.Label(frame, text="to", style="AppMuted.TLabel").grid(row=5, column=2, sticky="w", padx=(8, 8), pady=(0, 10))
-        ttk.Entry(frame, textvariable=self.inventory_date_max_var, width=12).grid(row=5, column=3, sticky="w", pady=(0, 10))
+        self._inventory_date_picker(frame, self.inventory_date_max_var).grid(row=5, column=3, sticky="w", pady=(0, 10))
 
         ttk.Checkbutton(
             frame,
@@ -1925,6 +1926,97 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").grid(row=0, column=2, sticky="e", padx=(0, 8))
         ttk.Button(actions, text="Apply Filters", command=self.refresh_inventory_tab, style="Primary.TButton").grid(row=0, column=3, sticky="e")
         frame.columnconfigure(3, weight=1)
+
+    def _inventory_date_picker(self, parent: tk.Widget, variable: tk.StringVar) -> ttk.Frame:
+        picker = ttk.Frame(parent, style="App.TFrame")
+        ttk.Entry(picker, textvariable=variable, width=12, state="readonly").grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            picker,
+            text="Pick",
+            command=lambda: self._open_inventory_date_calendar(variable),
+            style="Soft.TButton",
+            width=6,
+        ).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        return picker
+
+    def _open_inventory_date_calendar(self, variable: tk.StringVar) -> None:
+        selected_date = self._profit_record_date(variable.get())
+        current = selected_date or datetime.now().date()
+        month_state = {"year": current.year, "month": current.month}
+
+        popup = tk.Toplevel(self)
+        popup.title("Select Date Added")
+        popup.configure(bg=self.colors["bg"])
+        popup.transient(self)
+        popup.grab_set()
+
+        frame = ttk.Frame(popup, style="App.TFrame", padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+        header = ttk.Frame(frame, style="App.TFrame")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        header.columnconfigure(1, weight=1)
+        month_label = tk.StringVar()
+        days_frame = ttk.Frame(frame, style="App.TFrame")
+        days_frame.grid(row=1, column=0, sticky="nsew")
+
+        def set_month(delta: int) -> None:
+            month = month_state["month"] + delta
+            year = month_state["year"]
+            if month < 1:
+                month = 12
+                year -= 1
+            elif month > 12:
+                month = 1
+                year += 1
+            month_state["year"] = year
+            month_state["month"] = month
+            render_days()
+
+        def choose(year: int, month: int, day: int) -> None:
+            variable.set(f"{year:04d}-{month:02d}-{day:02d}")
+            popup.destroy()
+
+        def render_days() -> None:
+            for child in days_frame.winfo_children():
+                child.destroy()
+            year = month_state["year"]
+            month = month_state["month"]
+            month_label.set(f"{calendar.month_name[month]} {year}")
+            for index, name in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
+                ttk.Label(days_frame, text=name, style="AppMuted.TLabel", anchor="center").grid(row=0, column=index, sticky="ew", padx=2, pady=(0, 4))
+                days_frame.columnconfigure(index, weight=1)
+            selected = self._profit_record_date(variable.get())
+            today = datetime.now().date()
+            for week_index, week in enumerate(calendar.Calendar(firstweekday=0).monthdayscalendar(year, month), start=1):
+                for day_index, day in enumerate(week):
+                    if not day:
+                        ttk.Label(days_frame, text="", style="AppMuted.TLabel", width=4).grid(row=week_index, column=day_index, padx=2, pady=2)
+                        continue
+                    button_style = "Soft.TButton"
+                    day_date = datetime(year, month, day).date()
+                    if selected and selected == day_date:
+                        button_style = "Primary.TButton"
+                    elif today == day_date:
+                        button_style = "Primary.TButton"
+                    ttk.Button(
+                        days_frame,
+                        text=str(day),
+                        command=lambda d=day: choose(year, month, d),
+                        style=button_style,
+                        width=4,
+                    ).grid(row=week_index, column=day_index, padx=2, pady=2, sticky="ew")
+
+        ttk.Button(header, text="<", command=lambda: set_month(-1), style="Soft.TButton", width=4).grid(row=0, column=0, sticky="w")
+        ttk.Label(header, textvariable=month_label, style="Panel.TLabel", anchor="center").grid(row=0, column=1, sticky="ew", padx=8)
+        ttk.Button(header, text=">", command=lambda: set_month(1), style="Soft.TButton", width=4).grid(row=0, column=2, sticky="e")
+
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        actions.columnconfigure(1, weight=1)
+        ttk.Button(actions, text="Clear", command=lambda: (variable.set(""), popup.destroy()), style="Soft.TButton").grid(row=0, column=0, sticky="w")
+        ttk.Button(actions, text="Today", command=lambda: choose(datetime.now().year, datetime.now().month, datetime.now().day), style="Soft.TButton").grid(row=0, column=2, sticky="e", padx=(0, 8))
+        ttk.Button(actions, text="Cancel", command=popup.destroy, style="Soft.TButton").grid(row=0, column=3, sticky="e")
+        render_days()
 
     def clear_inventory_filters(self) -> None:
         for var in (self.inventory_sport_var, self.inventory_grader_var, self.inventory_year_var, self.inventory_min_var, self.inventory_max_var, self.inventory_date_min_var, self.inventory_date_max_var):
@@ -2870,14 +2962,10 @@ class CardPipelineApp(tk.Tk):
         if not inventory_key:
             return 0
         ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        removed = [record for record in ledger if str(record.get("inventory_key") or "") == inventory_key]
         kept = [record for record in ledger if str(record.get("inventory_key") or "") != inventory_key]
         changed = len(ledger) - len(kept)
         if changed:
             self._save_inventory_ledger(kept)
-            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
-            if callable(cleanup):
-                cleanup(removed, kept)
         return changed
 
     def _remove_inventory_rows_for_source(self, source_sheet_name: str) -> int:
@@ -2923,6 +3011,8 @@ class CardPipelineApp(tk.Tk):
                 "purchase_price": normalized.get("purchase_price"),
                 "sale_price": sale_price,
                 "assigned_person": assigned_person,
+                "sport": normalized.get("sport") or "",
+                "photo_paths": list(normalized.get("photo_paths") or []),
                 "status": "Sold from inventory",
                 "notes": normalized.get("notes") or "",
             }
@@ -4641,6 +4731,13 @@ class CardPipelineApp(tk.Tk):
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
         normalized["original_source_sheet"] = str(normalized.get("original_source_sheet") or "").strip()
         normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+        photo_paths = normalized.get("photo_paths") or normalized.get("photos") or []
+        if isinstance(photo_paths, str):
+            photo_paths = [part.strip() for part in re.split(r"[;\n]", photo_paths) if part.strip()]
+        elif not isinstance(photo_paths, list):
+            photo_paths = []
+        normalized["photo_paths"] = [str(path).strip() for path in photo_paths if str(path or "").strip()]
+        normalized["photo_count"] = len(normalized["photo_paths"])
         normalized["ledger_key"] = self._profit_record_key(normalized)
         return normalized
 
@@ -5218,6 +5315,7 @@ class CardPipelineApp(tk.Tk):
                             "inventory_value": normalized.get("sale_price") or normalized.get("card_ladder_value") or normalized.get("comps") or normalized.get("cy_estimate"),
                             "source_sheet": normalized.get("source_sheet") or "",
                             "source": normalized.get("source") or "",
+                            "photo_paths": list(normalized.get("photo_paths") or []),
                             "status": "Active",
                             "notes": "Refunded from sold cards",
                         }

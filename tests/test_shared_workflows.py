@@ -5177,6 +5177,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             refresh_profit_tab = lambda self: None
             _append_activity = lambda self, action, summary, details=None: None
+            def _delete_inventory_photo_files_for_removed_records(self, *args, **kwargs):
+                raise AssertionError("Sold inventory photos should remain available for refunds.")
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
@@ -5203,6 +5205,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                     "inventory_value": 100,
                     "best_company": "Arena Club",
                     "estimated_payout": 90,
+                    "photo_paths": ["front.jpg", "back.jpg"],
                     "status": "Active",
                 }
             )
@@ -5219,6 +5222,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(sale_row["assigned_person"], "Hambone")
                 self.assertEqual(sale_row["sale_price"], 95.0)
                 self.assertEqual(sale_row["profit"], 55.0)
+                self.assertEqual(sale_row["photo_paths"], ["front.jpg", "back.jpg"])
+                self.assertEqual(sale_row["photo_count"], 2)
                 self.assertEqual(expense_row["company"], "Expense: Shipping")
                 self.assertEqual(expense_row["assigned_person"], "Hambone")
                 self.assertEqual(expense_row["related_type"], "Card")
@@ -5286,7 +5291,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
-    def test_inventory_sold_deletes_unshared_photo_file(self) -> None:
+    def test_inventory_sold_preserves_unshared_photo_file_for_refunds(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -5320,7 +5325,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy._save_inventory_ledger([record])
             try:
                 self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
-                self.assertFalse(photo.exists())
+                self.assertTrue(photo.exists())
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
@@ -5434,6 +5439,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                         "best_company": "Arena Club",
                         "estimated_payout": 90,
                         "source_sheet": "Raw Inventory",
+                        "photo_paths": ["front.jpg", "back.jpg"],
                         "status": "Active",
                     }
                 )
@@ -5450,6 +5456,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(sale_row["item_type"], "Raw")
                 self.assertEqual(sale_row["item_id"], item_id)
                 self.assertEqual(sale_row["cert_number"], "")
+                self.assertEqual(sale_row["photo_paths"], ["front.jpg", "back.jpg"])
+                self.assertEqual(sale_row["photo_count"], 2)
                 self.assertEqual(expense_row["item_id"], item_id)
                 self.assertEqual(expense_row["cert_number"], "")
             finally:
@@ -5530,6 +5538,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 "purchase_price": 40,
                 "sale_price": 90,
                 "assigned_person": "Lucas",
+                "photo_paths": ["front.jpg"],
             }
             dummy = RefundDummy()
             normalized = dummy._normalize_profit_record(record)
@@ -5550,6 +5559,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                             "purchase_price": 40,
                             "inventory_value": 90,
                             "source_sheet": "Lot A.xlsx",
+                            "photo_paths": normalized.get("photo_paths") or [],
                             "status": "Active",
                             "notes": "Refunded from sold cards",
                         }
@@ -5562,6 +5572,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(len(inventory), 1)
                 self.assertEqual(inventory[0]["status"], "Active")
                 self.assertEqual(inventory[0]["assigned_person"], "Lucas")
+                self.assertEqual(inventory[0]["photo_paths"], ["front.jpg"])
+                self.assertEqual(inventory[0]["photo_count"], 1)
             finally:
                 app.COMPANY_SHEETS_DIR = old_company
                 app.PROFIT_LEDGER_PATH = old_profit
