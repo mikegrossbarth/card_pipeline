@@ -4470,6 +4470,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
             _company_sheet_source_cert_keys = lambda self: set()
             _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
@@ -4504,8 +4505,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             source_path = incoming_dir / "Hambone Lot.xlsx"
             workbook = Workbook()
             sheet = workbook.active
-            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Comps"])
-            sheet.append(["111", "PSA", "Hambone Inventory Card", 40, 100])
+            sheet.append(["Item ID", "Certification Number", "Grader", "Sport", "Card Description", "Purchase Price", "Comps"])
+            sheet.append(["", "111", "PSA", "football", "Hambone Inventory Card", 40, 100])
+            sheet.append(["RAW-20260707-9999", "", "", "basketball", "1998 Fleer Ultra Michael Jordan Star Power", None, None])
+            sheet.append(["", "", "", "baseball", "Raw Card Without Sheet ID", None, None])
+            sheet.append(["", "", "", "football", "Second Raw Card Without Sheet ID", None, None])
             workbook.save(source_path)
 
             old_pipeline = app.CARD_PIPELINE_DIR
@@ -4542,10 +4546,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
                 inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
                 self.assertTrue((received_dir / "Hambone Lot.xlsx").exists())
-                self.assertEqual(len(inventory), 1)
+                self.assertEqual(len(inventory), 4)
                 self.assertEqual(inventory[0]["cert_number"], "111")
                 self.assertEqual(inventory[0]["assigned_person"], "Kevin Hambone")
-                self.assertIn("Added 1 inventory row", dummy.status_var.value)
+                self.assertEqual(inventory[1]["item_type"], "Raw")
+                self.assertEqual(inventory[1]["item_id"], "RAW-20260707-9999")
+                self.assertEqual(inventory[1]["cert_number"], "")
+                self.assertEqual(inventory[1]["sport"], "basketball")
+                self.assertEqual(inventory[1]["card_title"], "1998 Fleer Ultra Michael Jordan Star Power")
+                self.assertEqual(inventory[2]["item_type"], "Raw")
+                self.assertTrue(str(inventory[2]["item_id"]).startswith(f"RAW-{datetime.now().strftime('%Y%m%d')}-"))
+                self.assertEqual(inventory[2]["card_title"], "Raw Card Without Sheet ID")
+                self.assertEqual(inventory[3]["item_type"], "Raw")
+                self.assertTrue(str(inventory[3]["item_id"]).startswith(f"RAW-{datetime.now().strftime('%Y%m%d')}-"))
+                self.assertNotEqual(inventory[2]["item_id"], inventory[3]["item_id"])
+                self.assertEqual(inventory[3]["card_title"], "Second Raw Card Without Sheet ID")
+                self.assertIn("Added 4 inventory row", dummy.status_var.value)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INCOMING_SHEETS_DIR = old_incoming

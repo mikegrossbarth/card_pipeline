@@ -2286,6 +2286,7 @@ class CardPipelineApp(tk.Tk):
                 record = dict(record)
                 record["item_type"] = "Raw"
                 record["item_id"] = self._next_raw_item_id([*ledger, *by_key.values()])
+                record.pop("inventory_key", None)
             normalized = self._normalize_inventory_record(record)
             normalized = self._enrich_inventory_record_assignment(normalized)
             key = str(normalized.get("inventory_key") or "")
@@ -2412,20 +2413,20 @@ class CardPipelineApp(tk.Tk):
         candidates: list[dict[str, object]] = []
         for row in rows:
             cert = scan_to_cert(row.get("cert_number"))
-            if not cert:
-                continue
             if received_certs is not None and cert not in received_certs:
                 continue
             if (path.name.lower(), cert) in company_keys:
                 continue
             card_title = str(row.get("card_title") or "")
+            if not cert and not card_title:
+                continue
             sport = CardPipelineApp._inventory_sport_from_value(self, row.get("sport") or row.get("category"), card_title)
             candidates.append(
                 self._normalize_inventory_record(
                     {
                         "date_added": datetime.now().strftime("%Y-%m-%d"),
-                        "item_type": "Graded",
-                        "item_id": "",
+                        "item_type": "Graded" if cert else "Raw",
+                        "item_id": "" if cert else str(row.get("item_id") or "").strip(),
                         "assigned_person": assigned_person,
                         "sport": sport,
                         "cert_number": cert,
