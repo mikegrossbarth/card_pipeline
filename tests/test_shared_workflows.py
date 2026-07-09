@@ -4159,6 +4159,38 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.assignment_engine.last_row.card_ladder_value, 150)
         self.assertEqual(dummy.assignment_engine.last_row.card_ladder_comps_average, 100)
 
+    def test_raw_inventory_records_do_not_keep_company_assignment(self) -> None:
+        class FakeAssignment:
+            def recommend(self, row, person=""):
+                raise AssertionError("Raw inventory should not run assignment recommendations.")
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+
+        dummy = InventoryDummy()
+        dummy.assignment_engine = FakeAssignment()
+        normalized = dummy._normalize_inventory_record(
+            {
+                "item_type": "Raw",
+                "item_id": "RAW-20260708-0012",
+                "assigned_person": "Mikey",
+                "card_title": "2024 Panini Eminence Emmitt Smith Auto Diamond 2/5",
+                "inventory_value": 445,
+                "best_company": "ARENA CLUB",
+                "estimated_payout": 422.75,
+            }
+        )
+        self.assertEqual(normalized["best_company"], "")
+        self.assertIsNone(normalized["estimated_payout"])
+
+        enriched = dummy._enrich_inventory_record_assignment(dict(normalized), force=True)
+        self.assertEqual(enriched["best_company"], "")
+        self.assertIsNone(enriched["estimated_payout"])
+
     def test_inventory_assignment_uses_saved_sport_for_company_rules(self) -> None:
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value

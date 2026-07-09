@@ -2344,6 +2344,9 @@ class CardPipelineApp(tk.Tk):
         normalized["inventory_value"] = self._money_value(normalized.get("inventory_value") or normalized.get("value") or normalized.get("sale_price") or normalized.get("estimated_payout"))
         normalized["best_company"] = str(normalized.get("best_company") or normalized.get("company") or "").strip()
         normalized["estimated_payout"] = self._money_value(normalized.get("estimated_payout") or normalized.get("payout"))
+        if str(normalized.get("item_type") or "").strip().lower() == "raw":
+            normalized["best_company"] = ""
+            normalized["estimated_payout"] = None
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
         normalized["source"] = str(normalized.get("source") or "").strip()
         normalized["status"] = str(normalized.get("status") or "Active").strip() or "Active"
@@ -2688,6 +2691,10 @@ class CardPipelineApp(tk.Tk):
     def _enrich_inventory_record_assignment(self, record: dict[str, object], force: bool = False) -> dict[str, object]:
         hydrator = getattr(self, "_hydrate_inventory_record_source_values", None)
         normalized = hydrator(record) if callable(hydrator) else self._normalize_inventory_record(record)
+        if str(normalized.get("item_type") or "").strip().lower() == "raw":
+            normalized["best_company"] = ""
+            normalized["estimated_payout"] = None
+            return self._normalize_inventory_record(normalized)
         if not force and normalized.get("best_company") and normalized.get("estimated_payout") is not None:
             return normalized
         try:
