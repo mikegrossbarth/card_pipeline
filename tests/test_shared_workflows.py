@@ -151,6 +151,21 @@ class SharedStateTests(unittest.TestCase):
             self.assertEqual(read_json(state_path, {}), {"b": [1, 2, 3]})
             self.assertFalse(list(root.glob("*.tmp")))
 
+    def test_personal_lucas_profile_detection_and_default_person(self) -> None:
+        self.assertTrue(app.is_personal_lucas_profile({}, Path("lucas_settings.michael.json")))
+        self.assertTrue(app.is_personal_lucas_profile({"pipeline_root": "G:/My Drive/LUCAS_PERSONAL"}, Path("lucas_settings.json")))
+        self.assertTrue(app.is_personal_lucas_profile({"profile": "personal"}, Path("lucas_settings.json")))
+        self.assertFalse(app.is_personal_lucas_profile({"pipeline_root": "G:/My Drive/CARD_PIPELINE"}, Path("lucas_settings.json")))
+
+        class PersonalDummy:
+            _is_personal_lucas = app.CardPipelineApp._is_personal_lucas
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+        dummy = PersonalDummy()
+        dummy.app_settings = {"profile": "personal"}
+        self.assertEqual(dummy._personal_default_person(), "Mikey")
+        self.assertTrue(dummy._is_personal_lucas())
+
 
 class WorkbookCompanyProfitTests(unittest.TestCase):
     def test_company_sheet_week_start_rolls_forward_monday_at_8pm(self) -> None:
