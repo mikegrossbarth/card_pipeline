@@ -4626,6 +4626,49 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["sport"], "baseball")
 
+    def test_create_raw_rows_get_item_ids_before_working_sheet_save(self) -> None:
+        class CreateDummy:
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
+
+            def _load_inventory_ledger(self):
+                return [{"item_id": f"RAW-{datetime.now().strftime('%Y%m%d')}-0003"}]
+
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="", grader="", card_title="Raw Michael Jordan Insert", category="basketball"),
+            WorkbookRow(excel_row=3, cert_number="", grader="", card_title="Raw Kobe Bryant Insert", category="basketball"),
+            WorkbookRow(excel_row=4, cert_number="12345678", grader="PSA", card_title="Graded Card", category="football"),
+        ]
+        added = CreateDummy()._ensure_raw_item_ids_for_rows(rows)
+
+        self.assertEqual(added, 2)
+        self.assertEqual(rows[0].item_id, f"RAW-{datetime.now().strftime('%Y%m%d')}-0004")
+        self.assertEqual(rows[1].item_id, f"RAW-{datetime.now().strftime('%Y%m%d')}-0005")
+        self.assertEqual(rows[2].item_id, "")
+
+    def test_working_sheet_writer_persists_raw_item_id_column(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "raw-create.xlsx"
+            row = WorkbookRow(
+                excel_row=2,
+                cert_number="",
+                grader="",
+                card_title="Raw Michael Jordan Insert",
+                category="basketball",
+                item_id="RAW-20260709-0001",
+            )
+            write_working_sheet(path, [row], {2: "manual"})
+
+            workbook = load_workbook(path, read_only=True, data_only=True)
+            try:
+                sheet = workbook.active
+                self.assertEqual(sheet.cell(1, 1).value, "Item ID")
+                self.assertEqual(sheet.cell(2, 1).value, "RAW-20260709-0001")
+                self.assertEqual(sheet.cell(1, 2).value, "Certification Number")
+                self.assertEqual(sheet.cell(2, 5).value, "Raw Michael Jordan Insert")
+            finally:
+                workbook.close()
+
     def test_home_all_received_marker_adds_received_sheet_inventory(self) -> None:
         class Status:
             def __init__(self):
@@ -4655,6 +4698,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _move_working_sheet_to_incoming = app.CardPipelineApp._move_working_sheet_to_incoming
             _marker_for_stage = app.CardPipelineApp._marker_for_stage
             _retarget_inventory_rows_for_source = lambda self, source, person: 0
+            _is_personal_lucas = lambda self: False
+            _personal_default_person = app.CardPipelineApp._personal_default_person
             _enrich_inventory_record_assignment = lambda self, record, force=False: record
             add_inventory_records = app.CardPipelineApp.add_inventory_records
             save_home_sheet_markers = app.CardPipelineApp.save_home_sheet_markers

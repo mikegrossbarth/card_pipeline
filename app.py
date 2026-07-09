@@ -2347,6 +2347,36 @@ class CardPipelineApp(tk.Tk):
                 max_sequence = max(max_sequence, int(suffix))
         return f"{prefix}{max_sequence + 1:04d}"
 
+    def _ensure_raw_item_ids_for_rows(self, rows: list[WorkbookRow]) -> int:
+        existing_records = list(self._load_inventory_ledger())
+        for row in rows:
+            item_id = str(getattr(row, "item_id", "") or "").strip()
+            if item_id:
+                existing_records.append({"item_id": item_id})
+        added = 0
+        for row in rows:
+            cert = str(getattr(row, "cert_number", "") or "").strip()
+            item_id = str(getattr(row, "item_id", "") or "").strip()
+            has_row_data = any(
+                str(value or "").strip()
+                for value in (
+                    getattr(row, "card_title", ""),
+                    getattr(row, "grader", ""),
+                    getattr(row, "category", ""),
+                    getattr(row, "existing_value", ""),
+                    getattr(row, "card_ladder_value", ""),
+                    getattr(row, "card_ladder_comps_average", ""),
+                    getattr(row, "cy_value", ""),
+                )
+            )
+            if cert or item_id or not has_row_data:
+                continue
+            item_id = self._next_raw_item_id(existing_records)
+            setattr(row, "item_id", item_id)
+            existing_records.append({"item_id": item_id})
+            added += 1
+        return added
+
     def _normalize_inventory_record(self, record: dict[str, object]) -> dict[str, object]:
         normalized = dict(record)
         normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10]
@@ -2407,7 +2437,7 @@ class CardPipelineApp(tk.Tk):
             {
                 "date_added": datetime.now().strftime("%Y-%m-%d"),
                 "item_type": "Graded" if cert else "Raw",
-                "item_id": "",
+                "item_id": "" if cert else str(getattr(row, "item_id", "") or "").strip(),
                 "assigned_person": person or "Unassigned",
                 "sport": sport,
                 "cert_number": cert,
@@ -2641,6 +2671,7 @@ class CardPipelineApp(tk.Tk):
             cert_number=str(record.get("cert_number") or ""),
             grader=str(record.get("grader") or ""),
             card_title=str(record.get("card_title") or ""),
+            item_id=str(record.get("item_id") or ""),
             category=str(record.get("sport") or ""),
             existing_value=self._money_value(record.get("purchase_price")),
             card_ladder_value=card_ladder_value,
@@ -9553,6 +9584,7 @@ class CardPipelineApp(tk.Tk):
                 cert_number=cert,
                 card_title=card,
                 grader=grader,
+                item_id=str(row.get("item_id") or match.get("item_id") or ""),
                 category=category,
                 existing_value=purchase_price,
                 card_ladder_value=card_ladder_value,
@@ -10281,6 +10313,7 @@ class CardPipelineApp(tk.Tk):
         try:
             with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
                 path = working_sheet_path(WORKING_SHEETS_DIR, title)
+                raw_ids_added = self._ensure_raw_item_ids_for_rows(self.intake_rows)
                 write_working_sheet(path, self.intake_rows, self.intake_sources)
             if seller:
                 self._assign_sheet_to_seller("Working", path.name, seller, seller_sheet_type, seller_term)
@@ -10292,7 +10325,8 @@ class CardPipelineApp(tk.Tk):
             term_summary = self._seller_payout_summary_for_rows(self.intake_rows, {"assigned_person": seller, "seller_terms_applied": True, "seller_sheet_type": seller_sheet_type, "seller_rate": seller_term.get("rate"), "seller_deduction": seller_term.get("deduction")})
             if term_summary.get("seller_payout_pending"):
                 seller_note = f"{seller_note} {term_summary.get('seller_payout_warning')}."
-        self.status_var.set(f"Saved working sheet: {path}.{seller_note}")
+        raw_note = f" Added {raw_ids_added} raw item ID(s)." if raw_ids_added else ""
+        self.status_var.set(f"Saved working sheet: {path}.{seller_note}{raw_note}")
         self._append_activity("Create", f"Saved working sheet {path.name}.{seller_note}", {"sheet": path.name, "seller": seller, "seller_sheet_type": seller_sheet_type})
         self.intake_rows = []
         self.intake_sources = {}
@@ -10391,6 +10425,7 @@ class CardPipelineApp(tk.Tk):
                     cert_number=cert,
                     card_title=card,
                     grader=grader,
+                    item_id=str(row.get("item_id") or ""),
                     category=str(row.get("sport") or row.get("category") or "").strip(),
                     existing_value=row.get("purchase_price"),
                     card_ladder_value=row.get("card_ladder_value"),
