@@ -3864,6 +3864,46 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual([record["cert_number"] for record in filtered], ["1", "2", "3"])
 
+    def test_inventory_grader_filter_accepts_multiple_checked_graders(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class BoolVar:
+            def get(self):
+                return False
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("")
+        dummy.inventory_grader_var = FieldVar("PSA, CGC")
+        dummy.inventory_year_var = FieldVar("")
+        dummy.inventory_search_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        dummy.inventory_date_min_var = FieldVar("")
+        dummy.inventory_date_max_var = FieldVar("")
+        dummy.inventory_missing_photos_var = BoolVar()
+        rows = [
+            {"status": "Active", "grader": "PSA", "cert_number": "1"},
+            {"status": "Active", "grader": "BGS", "cert_number": "2"},
+            {"status": "Active", "grader": "CGC", "cert_number": "3"},
+            {"status": "Active", "grader": "", "cert_number": "4"},
+        ]
+
+        filtered = dummy._filtered_inventory_records(rows)
+
+        self.assertEqual([record["cert_number"] for record in filtered], ["1", "3"])
+
     def test_table_sorting_handles_money_and_blank_values(self) -> None:
         class SortDummy:
             _money_value = app.CardPipelineApp._money_value
