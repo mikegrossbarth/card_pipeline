@@ -1849,15 +1849,23 @@ class AssignmentEngineTests(unittest.TestCase):
                 card_title="1958 Topps Willie Mays PSA 5",
                 card_ladder_comps_average=600,
             )
-            ignored_bonus_two_goat = WorkbookRow(
+            vintage_goat_under_500 = WorkbookRow(
                 excel_row=7,
+                cert_number="",
+                grader="PSA",
+                category="baseball",
+                card_title="1963 Topps #200 Mickey Mantle PSA 2",
+                card_ladder_comps_average=425,
+            )
+            ignored_bonus_two_goat = WorkbookRow(
+                excel_row=8,
                 cert_number="",
                 grader="PSA",
                 card_title="1933 Goudey Babe Ruth PSA 2",
                 card_ladder_comps_average=600,
             )
             low_value_over_50_dnb = WorkbookRow(
-                excel_row=8,
+                excel_row=9,
                 cert_number="",
                 grader="PSA",
                 category="football",
@@ -1865,7 +1873,7 @@ class AssignmentEngineTests(unittest.TestCase):
                 card_ladder_comps_average=50,
             )
             high_value_over_50_dnb = WorkbookRow(
-                excel_row=9,
+                excel_row=10,
                 cert_number="",
                 grader="PSA",
                 category="football",
@@ -1881,8 +1889,9 @@ class AssignmentEngineTests(unittest.TestCase):
             self.assertTrue(engine.evaluate(accepted_other_grade)[0].accepted)
             self.assertFalse(engine.evaluate(pre_1989_football)[0].accepted)
             self.assertEqual(engine.evaluate(bonus_one_goat)[0].payout, 546)
-            self.assertEqual(engine.evaluate(regular_goat)[0].payout, 540)
-            self.assertEqual(engine.evaluate(ignored_bonus_two_goat)[0].payout, 540)
+            self.assertEqual(engine.evaluate(regular_goat)[0].payout, 480)
+            self.assertEqual(engine.evaluate(vintage_goat_under_500)[0].payout, 382.5)
+            self.assertEqual(engine.evaluate(ignored_bonus_two_goat)[0].payout, 480)
             self.assertTrue(engine.evaluate(low_value_over_50_dnb)[0].accepted)
             self.assertFalse(engine.evaluate(high_value_over_50_dnb)[0].accepted)
 

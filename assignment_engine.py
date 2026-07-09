@@ -756,7 +756,7 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
 
 def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "", rules: CompanyRules | None = None) -> float | None:
     haystack = clean_text(text)
-    payouts: list[float] = []
+    payouts: list[tuple[PayoutTier, float]] = []
     for tier in tiers:
         if value < tier.min_price:
             continue
@@ -764,8 +764,15 @@ def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "", rule
             continue
         if tier.matcher and not payout_category_matches(tier.matcher, haystack, rules, value):
             continue
-        payouts.append(value * tier.rate)
-    return max(payouts) if payouts else None
+        payouts.append((tier, value * tier.rate))
+    if not payouts:
+        return None
+    vintage_payouts = [
+        payout
+        for tier, payout in payouts
+        if is_vintage_payout_category(tier.matcher)
+    ]
+    return max(vintage_payouts) if vintage_payouts else max(payout for _tier, payout in payouts)
 
 
 def read_source_text(source: Any, base_dir: Path, interactive_google: bool = False) -> str:
@@ -2163,6 +2170,8 @@ def payout_category_matches(category: str, haystack: str, rules: CompanyRules | 
     if not expected:
         return True
     parsed_value = parse_card_for_matching(haystack)
+    if is_vintage_payout_category(category):
+        return vintage_card_matches(haystack)
     if is_goat_payout_category(category):
         goat_players = (rules.goat_players if rules and rules.goat_players else set()) or GOAT_PAYOUT_PLAYERS
         if not goat_players:
@@ -2181,6 +2190,15 @@ def payout_category_matches(category: str, haystack: str, rules: CompanyRules | 
 def is_goat_payout_category(category: Any) -> bool:
     text = clean_rule_text(category)
     return bool(re.search(r"\bgoats?\b", text))
+
+
+def is_vintage_payout_category(category: Any) -> bool:
+    return clean_rule_text(category) == "vintage"
+
+
+def vintage_card_matches(text: Any) -> bool:
+    year = card_year_from_text(text)
+    return year is not None and year < MODERN_YEAR_MIN
 
 
 def parse_card_for_matching(text: str) -> dict[str, Any]:
@@ -2451,6 +2469,8 @@ def term_matches(term: str, haystack: str) -> bool:
     }
     options = [words]
     alias_text = " ".join(words)
+    if alias_text == "vintage":
+        return vintage_card_matches(haystack)
     if alias_text == "unlicensed":
         return has_unlicensed_signal(haystack)
     if alias_text == "licensed":
