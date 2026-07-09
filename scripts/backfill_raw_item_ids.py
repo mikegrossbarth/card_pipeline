@@ -9,7 +9,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 
-RAW_ID_PATTERN = re.compile(r"^RAW-\d{8}-\d{4}$", re.IGNORECASE)
+RAW_ID_PATTERN = re.compile(r"^RAW-(?:[A-Z0-9]+-)?\d{8}-\d{4}$", re.IGNORECASE)
 ITEM_ID_HEADER = "Item ID"
 ITEM_ID_ALIASES = {"itemid", "rawitemid", "inventoryitemid", "inventoryid"}
 CERT_ALIASES = {"certificationnumber", "certnumber", "cert", "certification", "cert#"}
@@ -41,8 +41,13 @@ def _looks_like_header(sheet) -> bool:
     return bool(_first_header_col(headers, CARD_ALIASES) or _first_header_col(headers, CERT_ALIASES))
 
 
-def _next_raw_id(existing: set[str], sequence_date: str) -> str:
-    prefix = f"RAW-{sequence_date}-"
+def _raw_id_namespace(root: Path) -> str:
+    text = str(root).lower()
+    return "MIKEY" if "lucas_personal" in text or "personal" in text else "TEAM"
+
+
+def _next_raw_id(existing: set[str], sequence_date: str, namespace: str) -> str:
+    prefix = f"RAW-{namespace}-{sequence_date}-"
     max_sequence = 0
     for value in existing:
         text = str(value or "").strip().upper()
@@ -99,6 +104,7 @@ def _collect_existing_ids(root: Path) -> set[str]:
 def backfill_root(root: Path, dry_run: bool = False) -> dict[str, object]:
     existing_ids = _collect_existing_ids(root)
     sequence_date = datetime.now().strftime("%Y%m%d")
+    namespace = _raw_id_namespace(root)
     summary = {"root": str(root), "files_changed": 0, "ids_added": 0, "files": []}
     for folder_name in ("INCOMING SHEETS", "WORKING SHEETS"):
         folder = root / folder_name
@@ -128,7 +134,7 @@ def backfill_root(root: Path, dry_run: bool = False) -> dict[str, object]:
                         item_id = str(sheet.cell(row_index, item_id_col).value or "").strip()
                         if cert or not card or item_id:
                             continue
-                        sheet.cell(row_index, item_id_col).value = _next_raw_id(existing_ids, sequence_date)
+                        sheet.cell(row_index, item_id_col).value = _next_raw_id(existing_ids, sequence_date, namespace)
                         changed = True
                         added_for_file += 1
                 if changed and not dry_run:

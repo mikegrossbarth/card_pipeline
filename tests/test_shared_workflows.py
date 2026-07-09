@@ -4787,10 +4787,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_create_raw_rows_get_item_ids_before_working_sheet_save(self) -> None:
         class CreateDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = lambda self: "TEAM"
             _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
 
             def _load_inventory_ledger(self):
-                return [{"item_id": f"RAW-{datetime.now().strftime('%Y%m%d')}-0003"}]
+                return [{"item_id": f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0003"}]
 
         rows = [
             WorkbookRow(excel_row=2, cert_number="", grader="", card_title="Raw Michael Jordan Insert", category="basketball"),
@@ -4800,9 +4801,27 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         added = CreateDummy()._ensure_raw_item_ids_for_rows(rows)
 
         self.assertEqual(added, 2)
-        self.assertEqual(rows[0].item_id, f"RAW-{datetime.now().strftime('%Y%m%d')}-0004")
-        self.assertEqual(rows[1].item_id, f"RAW-{datetime.now().strftime('%Y%m%d')}-0005")
+        self.assertEqual(rows[0].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0004")
+        self.assertEqual(rows[1].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0005")
         self.assertEqual(rows[2].item_id, "")
+
+    def test_raw_item_ids_are_namespaced_by_profile(self) -> None:
+        class RawIdDummy:
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+
+            def __init__(self, namespace: str):
+                self.namespace = namespace
+
+            def _raw_item_id_namespace(self):
+                return self.namespace
+
+        today = datetime.now().strftime("%Y%m%d")
+        team_id = RawIdDummy("TEAM")._next_raw_item_id([])
+        personal_id = RawIdDummy("MIKEY")._next_raw_item_id([])
+
+        self.assertEqual(team_id, f"RAW-TEAM-{today}-0001")
+        self.assertEqual(personal_id, f"RAW-MIKEY-{today}-0001")
+        self.assertNotEqual(team_id, personal_id)
 
     def test_working_sheet_writer_persists_raw_item_id_column(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -4842,6 +4861,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = lambda self: "TEAM"
             _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
             _company_sheet_source_cert_keys = lambda self: set()
             _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
@@ -4928,10 +4948,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(inventory[1]["sport"], "basketball")
                 self.assertEqual(inventory[1]["card_title"], "1998 Fleer Ultra Michael Jordan Star Power")
                 self.assertEqual(inventory[2]["item_type"], "Raw")
-                self.assertTrue(str(inventory[2]["item_id"]).startswith(f"RAW-{datetime.now().strftime('%Y%m%d')}-"))
+                self.assertTrue(str(inventory[2]["item_id"]).startswith(f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-"))
                 self.assertEqual(inventory[2]["card_title"], "Raw Card Without Sheet ID")
                 self.assertEqual(inventory[3]["item_type"], "Raw")
-                self.assertTrue(str(inventory[3]["item_id"]).startswith(f"RAW-{datetime.now().strftime('%Y%m%d')}-"))
+                self.assertTrue(str(inventory[3]["item_id"]).startswith(f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-"))
                 self.assertNotEqual(inventory[2]["item_id"], inventory[3]["item_id"])
                 self.assertEqual(inventory[3]["card_title"], "Second Raw Card Without Sheet ID")
                 self.assertIn("Added 4 inventory row", dummy.status_var.value)
@@ -5714,6 +5734,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = lambda self: "TEAM"
             add_raw_inventory_card = app.CardPipelineApp.add_raw_inventory_card
             refresh_inventory_tab = lambda self: None
             _append_activity = lambda self, action, summary, details=None: None
@@ -5780,6 +5801,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_sale_expense_record = app.CardPipelineApp._inventory_sale_expense_record
             _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = lambda self: "TEAM"
             mark_inventory_record_sold = app.CardPipelineApp.mark_inventory_record_sold
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             refresh_profit_tab = lambda self: None

@@ -23,6 +23,10 @@ class InventorySyncApp:
     _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
     add_inventory_records = app.CardPipelineApp.add_inventory_records
 
+    def _raw_item_id_namespace(self) -> str:
+        root_text = str(app.CARD_PIPELINE_DIR).lower()
+        return "MIKEY" if "lucas_personal" in root_text or "personal" in root_text else "TEAM"
+
     def _company_sheet_source_cert_keys(self) -> set[tuple[str, str]]:
         return set()
 
