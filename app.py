@@ -97,11 +97,13 @@ try:
         ModelQuotaExceeded,
         ModelResponseParseError,
         TemporaryModelUnavailable,
+        _verify_cert_only_sync,
         identify_cards_sync,
     )
 except Exception:
     genai = None
     identify_cards_sync = None
+    _verify_cert_only_sync = None
     TemporaryModelUnavailable = ModelQuotaExceeded = ModelResponseParseError = Exception
 SETTINGS_PATH = Path(os.environ.get("LUCAS_SETTINGS_PATH") or ROOT / "lucas_settings.json").expanduser()
 DEFAULT_CARD_PIPELINE_DIR = ROOT / "CARD_PIPELINE"
@@ -8904,6 +8906,7 @@ class CardPipelineApp(tk.Tk):
                         ("photo_status", f"Scanning {i}/{n}: {p.name} - {message}")
                     ),
                 )
+                self._inventory_photo_rescue_single_bgs_cert(cards, image_b64, client=self.photo_client)
                 rows = [self._photo_card_to_row(path, card) for card in cards if self._photo_card_has_inventory(card)]
                 detected_total += len(rows)
                 self.events.put(("photo_rows", rows))
@@ -9157,6 +9160,36 @@ class CardPipelineApp(tk.Tk):
                         certs.add(cert)
         return certs
 
+    def _inventory_photo_rescue_single_bgs_cert(self, cards: list[dict], image_b64: str, client: object | None = None) -> set[str]:
+        if _verify_cert_only_sync is None or len(cards) != 1 or not isinstance(cards[0], dict):
+            return set()
+        card = cards[0]
+        if scan_to_cert(card.get("cert_number")):
+            return set()
+        company = str(card.get("grading_company") or "").strip().upper()
+        label_text = str(card.get("label_text") or "")
+        if company != "BGS" and "BGS" not in label_text.upper() and "BECKETT" not in label_text.upper():
+            return set()
+        ocr_client = client or getattr(self, "inventory_photo_client", None) or getattr(self, "photo_client", None)
+        if ocr_client is None:
+            return set()
+        try:
+            verification = _verify_cert_only_sync(ocr_client, image_b64)
+        except Exception as error:
+            app_debug_log(f"BGS full-photo cert rescue skipped: {error}")
+            return set()
+        verified_cert = scan_to_cert(verification.get("cert_number"))
+        if not verified_cert:
+            return set()
+        verified_company = str(verification.get("grading_company") or "").strip().upper()
+        if verified_company and verified_company not in {"BGS", "BECKETT", "UNKNOWN"}:
+            return set()
+        card["cert_number"] = verified_cert
+        card["cert_verified"] = "YES"
+        if verification.get("label_text") and not card.get("label_text"):
+            card["label_text"] = str(verification.get("label_text") or "")
+        return {verified_cert}
+
     def _active_inventory_keys_by_cert(self, rows: list[dict[str, object]]) -> dict[str, list[str]]:
         by_cert: dict[str, list[str]] = defaultdict(list)
         for record in rows:
@@ -9332,6 +9365,9 @@ class CardPipelineApp(tk.Tk):
                         image_b64 = self._inventory_photo_base64(image_path)
                         cards = identify_cards_sync(self.inventory_photo_client, image_b64)
                         certs = self._inventory_photo_certs_from_cards(cards)
+                        rescued_certs = self._inventory_photo_rescue_single_bgs_cert(cards, image_b64)
+                        if rescued_certs:
+                            certs = rescued_certs
                         scanned += 1
                     except Exception as error:
                         errors.append(f"{image.get('relative_path')}: {error}")
@@ -9601,6 +9637,7 @@ class CardPipelineApp(tk.Tk):
                         ("review_status", f"Scanning {i}/{n}: {p.name} - {message}")
                     ),
                 )
+                self._inventory_photo_rescue_single_bgs_cert(cards, image_b64, client=self.photo_client)
                 rows = [self._photo_card_to_review_row(path, card) for card in cards if self._photo_card_has_inventory(card)]
                 detected_total += len(rows)
                 self.events.put(("review_rows", rows))
