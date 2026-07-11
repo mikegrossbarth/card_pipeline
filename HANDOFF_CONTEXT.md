@@ -124,7 +124,9 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 - Home right-click delete for incoming/working/received sheets includes a confirmation prompt.
 - Comping no longer recalculates assignments on load. Assignment recalculates only for rows involved in the user-chosen comp run or when explicitly needed.
 - Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.
-- Card Ladder recovery note, 2026-06-17: known-good helper version is `2026-06-17-no-blind-grader-option-v22`. The verified CGC grader test opens the cert modal, uses trusted debugger clicks only when synthetic clicks fail, selects CGC, and leaves the modal open. Do not restore blind guessed grader-option coordinates; they closed/submitted the modal.
+- Card Ladder recovery note, 2026-06-17: known-good helper version is `2026-07-11-stale-first-row-retry-v23`. The verified CGC grader test opens the cert modal, uses trusted debugger clicks only when synthetic clicks fail, selects CGC, and leaves the modal open. Do not restore blind guessed grader-option coordinates; they closed/submitted the modal.
+
+- Card Ladder helper update, 2026-07-11: current helper version is `2026-07-11-stale-first-row-retry-v23`. It preserves the v22 CGC/trusted-click behavior and adds a one-time retry when the first queued cert stays on a previous Card Ladder result page after submit.
 
 ## Platform Split
 
@@ -266,9 +268,9 @@ Common gotchas:
 
 - User must be logged into Card Ladder in the Chrome profile where the unpacked extension is loaded.
 - Old unpacked extension versions should be removed or disabled.
-- Current extension/background version: `2026-06-17-no-blind-grader-option-v22`.
-- Current content-script version: `2026-06-17-no-blind-grader-option-v22`.
-- Current bridge expected helper version: `2026-06-17-no-blind-grader-option-v22`.
+- Current extension/background version: `2026-07-11-stale-first-row-retry-v23`.
+- Current content-script version: `2026-07-11-stale-first-row-retry-v23`.
+- Current bridge expected helper version: `2026-07-11-stale-first-row-retry-v23`.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
 - Old partial Card Ladder captures request extension reload/manual review.
@@ -314,5 +316,5 @@ python -c "import app; root = app.CardPipelineApp(); root.update_idletasks(); ro
 Tell a new chat:
 
 ```text
-Work in C:\Users\User\Documents\Codex\2026-06-04\card_pipeline for Windows and C:\Users\User\Documents\Codex\2026-06-13\card-pipeline-mac for Mac. Read HANDOFF_CONTEXT.md first. Current known-good Card Ladder helper is 2026-06-17-no-blind-grader-option-v22. Do not reintroduce blind guessed grader-option coordinates; v22 fixed CGC by opening the cert modal, avoiding blind option clicks, re-preparing the modal if synthetic selection closes it, then using trusted chrome.debugger clicks on the visible grader bar only as fallback. The debugger banner is expected during trusted fallback because Chrome owns that UI. Windows has no CourtYard automation; Mac keeps CY automation. Keep main and master in both repos pushed.
+Work in C:\Users\User\Documents\Codex\2026-06-04\card_pipeline for Windows and C:\Users\User\Documents\Codex\2026-06-13\card-pipeline-mac for Mac. Read HANDOFF_CONTEXT.md first. Current known-good Card Ladder helper is 2026-07-11-stale-first-row-retry-v23. Do not reintroduce blind guessed grader-option coordinates; v22 fixed CGC by opening the cert modal, avoiding blind option clicks, re-preparing the modal if synthetic selection closes it, then using trusted chrome.debugger clicks on the visible grader bar only as fallback. The debugger banner is expected during trusted fallback because Chrome owns that UI. Windows has no CourtYard automation; Mac keeps CY automation. Keep main and master in both repos pushed.
 ```
