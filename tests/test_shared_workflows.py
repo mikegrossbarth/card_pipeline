@@ -28,7 +28,7 @@ import assignment_engine
 import google_sheets_import
 import lucas_diagnostics
 import cardladder_ocr
-from bridge_server import clean_profile_title as bridge_clean_profile_title, keep_urls_match
+from bridge_server import BridgeState, clean_profile_title as bridge_clean_profile_title, generic_profile_review_reason, keep_urls_match
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
@@ -80,6 +80,37 @@ class SharedStateTests(unittest.TestCase):
             for raw in raw_titles:
                 with self.subTest(cleaner=getattr(cleaner, "__module__", ""), raw=raw):
                     self.assertEqual(cleaner(raw), "2024 Panini Prizm Silver Caitlin Clark")
+
+    def test_card_ladder_generic_short_profile_title_requires_review(self) -> None:
+        reason = generic_profile_review_reason(
+            "2024 Topps",
+            "PSA",
+            "9",
+            {"resultCount": 13},
+        )
+        self.assertIn("overly broad profile title", reason)
+        self.assertIn("2024 Topps PSA 9", reason)
+
+    def test_card_ladder_generic_short_profile_title_is_not_saved_to_row(self) -> None:
+        row = WorkbookRow(excel_row=7, cert_number="148874718", card_title="", grader="PSA")
+        BridgeState()._apply_cardladder_result_to_row(
+            row,
+            {
+                "status": "ok",
+                "value": 60,
+                "ocr": {
+                    "profileTitle": "2024 Topps",
+                    "profileGrader": "PSA",
+                    "profileGrade": "9",
+                    "resultCount": 13,
+                    "comps": [{"title": "Shohei Ohtani 2024 Topps Heritage PSA 9", "price": "$60"}],
+                },
+            },
+        )
+        self.assertEqual(row.card_title, "")
+        self.assertIsNone(row.card_ladder_value)
+        self.assertEqual(row.status, "Card Ladder review")
+        self.assertIn("overly broad profile title", row.notes)
 
     def test_google_ssl_context_uses_certifi_when_no_cert_env_is_set(self) -> None:
         with TemporaryDirectory() as tmp:

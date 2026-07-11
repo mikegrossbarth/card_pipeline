@@ -441,8 +441,6 @@ def generic_profile_review_reason(profile_title: str, grader: str, grade: str, o
     result_count = safe_int(ocr.get("resultCount") or ocr.get("result_count"))
     if not is_generic_cardladder_profile_title(title, grader, grade):
         return ""
-    if result_count is not None and result_count < 25:
-        return ""
     return (
         f"Card Ladder returned an overly broad profile title ({build_card_title(title, grader, grade) or title})"
         + (f" with {result_count} results" if result_count is not None else "")
