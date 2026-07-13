@@ -548,6 +548,10 @@ class AssignmentDecision:
     payout: float | None = None
     reason: str = ""
     source_value: float | None = None
+    payout_rate: float | None = None
+    payout_category: str = ""
+    payout_min_price: float = 0
+    payout_max_price: float | None = None
 
 
 class AssignmentEngine:
@@ -624,11 +628,24 @@ class AssignmentEngine:
                 decisions.append(AssignmentDecision(company.name, False, reason="card does not match company rules", source_value=source_value))
                 continue
             payout_tiers = company_policy.payout_tiers if company_policy and company_policy.payout_tiers else company.payout_tiers
-            payout = payout_for_value(payout_tiers, source_value, card_text, company.rules)
-            if payout is None:
+            payout_match = payout_match_for_value(payout_tiers, source_value, card_text, company.rules)
+            if payout_match is None:
                 decisions.append(AssignmentDecision(company.name, True, None, "accepted, but no payout tier matched", source_value))
                 continue
-            decisions.append(AssignmentDecision(company.name, True, payout, "accepted and payout tier matched", source_value))
+            payout_tier, payout = payout_match
+            decisions.append(
+                AssignmentDecision(
+                    company.name,
+                    True,
+                    payout,
+                    "accepted and payout tier matched",
+                    source_value,
+                    payout_tier.rate,
+                    payout_tier.matcher,
+                    payout_tier.min_price,
+                    payout_tier.max_price,
+                )
+            )
         return decisions
 
 
@@ -754,7 +771,7 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
     return True
 
 
-def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "", rules: CompanyRules | None = None) -> float | None:
+def payout_match_for_value(tiers: list[PayoutTier], value: float, text: str = "", rules: CompanyRules | None = None) -> tuple[PayoutTier, float] | None:
     haystack = clean_text(text)
     payouts: list[tuple[PayoutTier, float]] = []
     for tier in tiers:
@@ -768,11 +785,16 @@ def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "", rule
     if not payouts:
         return None
     vintage_payouts = [
-        payout
+        (tier, payout)
         for tier, payout in payouts
         if is_vintage_payout_category(tier.matcher)
     ]
-    return max(vintage_payouts) if vintage_payouts else max(payout for _tier, payout in payouts)
+    return max(vintage_payouts, key=lambda item: item[1]) if vintage_payouts else max(payouts, key=lambda item: item[1])
+
+
+def payout_for_value(tiers: list[PayoutTier], value: float, text: str = "", rules: CompanyRules | None = None) -> float | None:
+    match = payout_match_for_value(tiers, value, text, rules)
+    return match[1] if match else None
 
 
 def read_source_text(source: Any, base_dir: Path, interactive_google: bool = False) -> str:
