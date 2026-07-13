@@ -4227,9 +4227,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
             _profit_period_label = app.CardPipelineApp._profit_period_label
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
+            _profit_plot_label = app.CardPipelineApp._profit_plot_label
             _profit_chart_title = app.CardPipelineApp._profit_chart_title
+            _profit_sport_label = app.CardPipelineApp._profit_sport_label
+            _profit_chart_bucket_label = app.CardPipelineApp._profit_chart_bucket_label
+            _profit_chart_bucket_display = app.CardPipelineApp._profit_chart_bucket_display
+            _profit_chart_bucket_range = app.CardPipelineApp._profit_chart_bucket_range
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
+            _profit_chart_lines = app.CardPipelineApp._profit_chart_lines
             _expense_related_label = app.CardPipelineApp._expense_related_label
             _expense_link_options = app.CardPipelineApp._expense_link_options
             _delete_profit_expense_records = app.CardPipelineApp._delete_profit_expense_records
@@ -6723,21 +6729,28 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
             _profit_period_label = app.CardPipelineApp._profit_period_label
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
+            _profit_plot_label = app.CardPipelineApp._profit_plot_label
             _profit_chart_title = app.CardPipelineApp._profit_chart_title
+            _profit_sport_label = app.CardPipelineApp._profit_sport_label
+            _profit_chart_bucket_label = app.CardPipelineApp._profit_chart_bucket_label
+            _profit_chart_bucket_display = app.CardPipelineApp._profit_chart_bucket_display
+            _profit_chart_bucket_range = app.CardPipelineApp._profit_chart_bucket_range
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
+            _profit_chart_lines = app.CardPipelineApp._profit_chart_lines
 
         rows = [
-            {"assigned_person": "Lucas", "date_added": "2026-06-17", "profit": 30},
-            {"assigned_person": "Lucas", "date_added": "2026-06-13", "profit": 20},
-            {"assigned_person": "Lucas", "date_added": "2026-06-10", "profit": 100},
-            {"assigned_person": "Mikey", "date_added": "2026-06-17", "profit": 7},
-            {"assigned_person": "Lucas", "date_added": "not-a-date", "profit": 50},
+            {"assigned_person": "Lucas", "date_added": "2026-06-17", "profit": 30, "sale_price": 100, "sport": "football"},
+            {"assigned_person": "Lucas", "date_added": "2026-06-13", "profit": 20, "sale_price": 80, "sport": "baseball"},
+            {"assigned_person": "Lucas", "date_added": "2026-06-10", "profit": 100, "sale_price": 200, "sport": "basketball"},
+            {"assigned_person": "Mikey", "date_added": "2026-06-17", "profit": 7, "sale_price": 20, "sport": "golf"},
+            {"assigned_person": "Lucas", "date_added": "not-a-date", "profit": 50, "sale_price": 100, "sport": "football"},
         ]
 
         dummy = ProfitDummy()
         self.assertEqual(dummy._profit_period_label(), "Year")
         self.assertEqual(dummy._profit_graph_label(), "Overall Profit")
+        self.assertEqual(dummy._profit_plot_label(), "Overall")
         self.assertEqual(dummy._profit_chart_title(), "Overall Profit (Year)")
 
         dummy.profit_person_var = types.SimpleNamespace(get=lambda: "luc")
@@ -6757,6 +6770,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(daily_values, [20, 0.0, 0.0, 0.0, 30])
         self.assertEqual(overall_days, days)
         self.assertEqual(overall_values, [20, 20.0, 20.0, 20.0, 50.0])
+
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Profit to Sales Ratio")
+        ratio_days, ratio_values = dummy._profit_chart_series(filtered)
+        self.assertEqual(ratio_days, days)
+        self.assertEqual(ratio_values[0], 0.25)
+        self.assertEqual(ratio_values[-1], 0.3)
+
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Daily Trend")
+        dummy.profit_plot_var = types.SimpleNamespace(get=lambda: "By Sport")
+        self.assertEqual(dummy._profit_chart_title(), "Daily Trend by Sport (5 Days)")
+        sport_days, sport_lines, percent_mode = dummy._profit_chart_lines(filtered)
+        self.assertFalse(percent_mode)
+        self.assertEqual(sport_days, days)
+        sport_values = {line["label"]: line["values"] for line in sport_lines}
+        self.assertEqual(sport_values["Football"][-1], 30)
+        self.assertEqual(sport_values["Baseball"][0], 20)
 
         ytd_rows = [
             {"assigned_person": "Lucas", "date_added": "2026-01-05", "profit": 40},

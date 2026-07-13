@@ -143,9 +143,21 @@ COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"
 DEFAULT_COMPANY_RESET_WEEKDAY = "Monday"
 DEFAULT_COMPANY_RESET_TIME = "20:00"
 PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "YTD", "Total")
-PROFIT_GRAPH_OPTIONS = ("Daily Trend", "Overall Profit")
+PROFIT_GRAPH_OPTIONS = ("Overall Profit", "Profit to Sales Ratio", "Daily Trend")
+PROFIT_PLOT_OPTIONS = ("Overall", "By Sport")
 DEFAULT_PROFIT_PERIOD = "Year"
 DEFAULT_PROFIT_GRAPH = "Overall Profit"
+DEFAULT_PROFIT_PLOT = "Overall"
+PROFIT_SPORT_COLORS = {
+    "Football": "#3b82f6",
+    "Baseball": "#ef4444",
+    "Basketball": "#f4b400",
+    "Golf": "#22c55e",
+    "Hockey": "#a855f7",
+    "Soccer": "#14b8a6",
+    "TCG": "#f97316",
+    "Other": "#94a3b8",
+}
 EXPENSE_CATEGORY_OPTIONS = ("Travel", "Supplies", "Travel Meal", "Fees", "Shipping")
 EXPENSE_LINK_OPTIONS = ("General", "Card", "Sheet")
 INVENTORY_GRADER_OPTIONS = ("PSA", "BGS", "CGC", "SGC")
@@ -778,12 +790,14 @@ class CardPipelineApp(tk.Tk):
         self.profit_person_var = tk.StringVar()
         self.profit_period_var = tk.StringVar(value=DEFAULT_PROFIT_PERIOD)
         self.profit_graph_var = tk.StringVar(value=DEFAULT_PROFIT_GRAPH)
+        self.profit_plot_var = tk.StringVar(value=DEFAULT_PROFIT_PLOT)
         self.profit_search_var = tk.StringVar()
         self.profit_chart_title_var = tk.StringVar(value=self._profit_chart_title())
         self.profit_view_mode = tk.StringVar(value="Sold Cards")
         self.profit_rows: list[dict[str, object]] = []
         self.filtered_profit_rows: list[dict[str, object]] = []
         self.profit_tree_records: dict[str, dict[str, object]] = {}
+        self.profit_sport_cache: dict[str, str] = {}
         self.profit_sort_column = "date"
         self.profit_sort_descending = True
 
@@ -2149,24 +2163,34 @@ class CardPipelineApp(tk.Tk):
         )
         self.profit_period_combo.grid(row=0, column=period_combo_column, sticky="w")
         self.profit_period_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
-        ttk.Label(controls, text="Graph", style="Muted.TLabel").grid(row=0, column=5, sticky="e", padx=(18, 6))
+        ttk.Label(controls, text="Metric", style="Muted.TLabel").grid(row=0, column=5, sticky="e", padx=(18, 6))
         self.profit_graph_combo = ttk.Combobox(
             controls,
             textvariable=self.profit_graph_var,
             values=PROFIT_GRAPH_OPTIONS,
-            width=14,
+            width=20,
             state="readonly",
         )
         self.profit_graph_combo.grid(row=0, column=6, sticky="w")
         self.profit_graph_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
-        ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
+        ttk.Label(controls, text="Plot", style="Muted.TLabel").grid(row=0, column=7, sticky="e", padx=(18, 6))
+        self.profit_plot_combo = ttk.Combobox(
+            controls,
+            textvariable=self.profit_plot_var,
+            values=PROFIT_PLOT_OPTIONS,
+            width=10,
+            state="readonly",
+        )
+        self.profit_plot_combo.grid(row=0, column=8, sticky="w")
+        self.profit_plot_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
+        ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=9, sticky="w", padx=(10, 0))
         self.profit_recover_button = ttk.Button(controls, text="Recover Sold Ledger", command=self.recover_sold_ledger, style="Soft.TButton")
-        self.profit_recover_button.grid(row=0, column=8, sticky="w", padx=(8, 0))
-        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=9, sticky="w", padx=(8, 0))
-        controls.columnconfigure(10, weight=1)
+        self.profit_recover_button.grid(row=0, column=10, sticky="w", padx=(8, 0))
+        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=11, sticky="w", padx=(8, 0))
+        controls.columnconfigure(12, weight=1)
         self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=10, sticky="w", pady=(10, 0))
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(6, 0))
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=12, sticky="w", pady=(10, 0))
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=12, sticky="w", pady=(6, 0))
 
         self.profit_split = tk.PanedWindow(
             self.profit_tab,
@@ -5127,11 +5151,93 @@ class CardPipelineApp(tk.Tk):
         graph = self.profit_graph_var.get().strip() if hasattr(self, "profit_graph_var") else DEFAULT_PROFIT_GRAPH
         return graph if graph in PROFIT_GRAPH_OPTIONS else DEFAULT_PROFIT_GRAPH
 
+    def _profit_plot_label(self) -> str:
+        plot = self.profit_plot_var.get().strip() if hasattr(self, "profit_plot_var") else DEFAULT_PROFIT_PLOT
+        return plot if plot in PROFIT_PLOT_OPTIONS else DEFAULT_PROFIT_PLOT
+
     def _profit_chart_title(self) -> str:
-        return f"{self._profit_graph_label()} ({self._profit_period_label()})"
+        plot_label = self._profit_plot_label() if hasattr(self, "_profit_plot_label") else DEFAULT_PROFIT_PLOT
+        plot_suffix = " by Sport" if plot_label == "By Sport" else ""
+        return f"{self._profit_graph_label()}{plot_suffix} ({self._profit_period_label()})"
+
+    def _profit_sport_label(self, record: dict[str, object]) -> str:
+        def display_sport(value: str) -> str:
+            return value.upper() if value.lower() == "tcg" else value.title()
+        cached = str(record.get("_profit_sport_label") or "").strip()
+        if cached:
+            return cached
+        explicit = str(record.get("sport") or record.get("category") or "").strip()
+        if explicit:
+            label = display_sport(assignment_engine.canonical_sport_label(explicit) or explicit)
+            record["_profit_sport_label"] = label
+            return label
+        title = str(record.get("card_title") or "").strip()
+        if title:
+            cache_key = title.lower()
+            cache = self.profit_sport_cache if hasattr(self, "profit_sport_cache") else {}
+            cached_title_sport = str(cache.get(cache_key) or "").strip()
+            if cached_title_sport:
+                record["_profit_sport_label"] = cached_title_sport
+                return cached_title_sport
+            parsed = assignment_engine.parse_card_for_matching(title)
+            sport = assignment_engine.canonical_sport_label(parsed.get("sport") or "")
+            if sport:
+                label = display_sport(sport)
+                cache[cache_key] = label
+                record["_profit_sport_label"] = label
+                return label
+            cache[cache_key] = "Other"
+        record["_profit_sport_label"] = "Other"
+        return "Other"
+
+    def _profit_chart_bucket_label(self, sold_date) -> str:
+        period = self._profit_period_label()
+        if period in {"Year", "YTD", "Total"}:
+            return sold_date.strftime("%Y-%m")
+        return sold_date.isoformat()
+
+    def _profit_chart_bucket_display(self, bucket: str) -> str:
+        if len(bucket) == 7 and bucket[4] == "-":
+            try:
+                return datetime.strptime(bucket, "%Y-%m").strftime("%b")
+            except ValueError:
+                return bucket
+        return bucket[5:] if len(bucket) >= 10 else bucket
+
+    def _profit_chart_bucket_range(self, rows: list[dict[str, object]], monthly: bool) -> list[str]:
+        period = self._profit_period_label()
+        period_start, period_end = self._profit_period_bounds(period)
+        if monthly and period in {"Year", "YTD"}:
+            year = (period_end or self._profit_today()).year
+            month_end = 12 if period == "Year" else (period_end or self._profit_today()).month
+            return [f"{year}-{month:02d}" for month in range(1, month_end + 1)]
+        if monthly:
+            buckets = {
+                self._profit_chart_bucket_label(sold_date)
+                for record in rows
+                for sold_date in [self._profit_record_date(record.get("date_added"))]
+                if sold_date is not None
+            }
+            return sorted(buckets)
+        if period_start is not None and period_end is not None:
+            labels: list[str] = []
+            cursor = period_start
+            while cursor <= period_end:
+                labels.append(cursor.isoformat())
+                cursor += timedelta(days=1)
+            return labels
+        buckets = {
+            self._profit_chart_bucket_label(sold_date)
+            for record in rows
+            for sold_date in [self._profit_record_date(record.get("date_added"))]
+            if sold_date is not None
+        }
+        return sorted(buckets)
 
     def _profit_chart_series(self, rows: list[dict[str, object]]) -> tuple[list[str], list[float]]:
         daily: dict[str, float] = {}
+        sales: dict[str, float] = {}
+        ratio_mode = self._profit_graph_label() == "Profit to Sales Ratio"
         for record in rows:
             profit = self._money_value(record.get("profit"))
             sold_date = self._profit_record_date(record.get("date_added"))
@@ -5139,13 +5245,19 @@ class CardPipelineApp(tk.Tk):
                 continue
             day = sold_date.isoformat()
             daily[day] = daily.get(day, 0.0) + float(profit)
+            sale = self._money_value(record.get("sale_price"))
+            if sale is not None:
+                sales[day] = sales.get(day, 0.0) + float(sale)
         period_start, period_end = self._profit_period_bounds(self._profit_period_label())
         if period_start is not None:
             cursor = period_start
             while cursor <= period_end:
                 daily.setdefault(cursor.isoformat(), 0.0)
+                sales.setdefault(cursor.isoformat(), 0.0)
                 cursor += timedelta(days=1)
         days = sorted(daily)
+        if ratio_mode:
+            return days, [daily[day] / sales[day] if sales.get(day) else 0.0 for day in days]
         daily_values = [daily[day] for day in days]
         if self._profit_graph_label() != "Overall Profit":
             return days, daily_values
@@ -5155,6 +5267,51 @@ class CardPipelineApp(tk.Tk):
             running += value
             cumulative_values.append(running)
         return days, cumulative_values
+
+    def _profit_chart_lines(self, rows: list[dict[str, object]]) -> tuple[list[str], list[dict[str, object]], bool]:
+        if self._profit_plot_label() != "By Sport":
+            labels, values = self._profit_chart_series(rows)
+            return labels, [{"label": self._profit_graph_label(), "values": values, "color": "#22c55e"}], self._profit_graph_label() == "Profit to Sales Ratio"
+        monthly = self._profit_period_label() in {"Year", "YTD", "Total"}
+        buckets = self._profit_chart_bucket_range(rows, monthly)
+        profit_by_sport: dict[str, dict[str, float]] = {}
+        sales_by_sport: dict[str, dict[str, float]] = {}
+        for record in rows:
+            if str(record.get("record_type") or "").strip().lower() == "expense":
+                continue
+            profit = self._money_value(record.get("profit"))
+            sold_date = self._profit_record_date(record.get("date_added"))
+            if profit is None or sold_date is None:
+                continue
+            sport = self._profit_sport_label(record)
+            bucket = self._profit_chart_bucket_label(sold_date)
+            profit_by_sport.setdefault(sport, {})[bucket] = profit_by_sport.setdefault(sport, {}).get(bucket, 0.0) + float(profit)
+            sale = self._money_value(record.get("sale_price"))
+            if sale is not None:
+                sales_by_sport.setdefault(sport, {})[bucket] = sales_by_sport.setdefault(sport, {}).get(bucket, 0.0) + float(sale)
+        if not buckets:
+            buckets = sorted({bucket for sport_values in profit_by_sport.values() for bucket in sport_values})
+        sport_totals = {
+            sport: sum(abs(value) for value in profit_by_sport.get(sport, {}).values()) + sum(abs(value) for value in sales_by_sport.get(sport, {}).values()) * 0.01
+            for sport in set(profit_by_sport) | set(sales_by_sport)
+        }
+        preferred = [sport for sport in ("Football", "Baseball", "Basketball") if sport in sport_totals]
+        remaining = [sport for sport, _total in sorted(sport_totals.items(), key=lambda item: item[1], reverse=True) if sport not in preferred]
+        sports = (preferred + remaining)[:6]
+        ratio_mode = self._profit_graph_label() == "Profit to Sales Ratio"
+        lines: list[dict[str, object]] = []
+        for index, sport in enumerate(sports):
+            values = []
+            for bucket in buckets:
+                profit = profit_by_sport.get(sport, {}).get(bucket, 0.0)
+                if ratio_mode:
+                    sale = sales_by_sport.get(sport, {}).get(bucket, 0.0)
+                    values.append(profit / sale if sale else 0.0)
+                else:
+                    values.append(profit)
+            color = PROFIT_SPORT_COLORS.get(sport) or ["#22c55e", "#eab308", "#38bdf8", "#fb7185", "#c084fc", "#f97316"][index % 6]
+            lines.append({"label": sport, "values": values, "color": color})
+        return buckets, lines, ratio_mode
 
     def _set_profit_view_mode(self, mode: str) -> None:
         self.profit_view_mode.set(mode)
@@ -5950,48 +6107,61 @@ class CardPipelineApp(tk.Tk):
         plot_w = max(width - pad_left - pad_right, 10)
         plot_h = max(height - pad_top - pad_bottom, 10)
         chart_rows = self.filtered_profit_rows if hasattr(self, "filtered_profit_rows") else self.profit_rows
-        days, chart_values = self._profit_chart_series(chart_rows)
+        labels, chart_lines, percent_mode = self._profit_chart_lines(chart_rows)
         chart_title = self._profit_chart_title()
         if hasattr(self, "profit_chart_title_var"):
             self.profit_chart_title_var.set(chart_title)
-        if not days:
+        if not labels or not chart_lines:
             canvas.create_text(width / 2, height / 2, text="No profit data yet", fill="#b3b3b3", font=("Segoe UI", 12, "bold"))
             return
-        values = chart_values + [0.0]
+        values = [float(value) for line in chart_lines for value in line.get("values", [])] + [0.0]
         min_y = min(values)
         max_y = max(values)
         if min_y == max_y:
             min_y -= 1
             max_y += 1
         def x_at(index: int) -> float:
-            if len(days) == 1:
+            if len(labels) == 1:
                 return pad_left + plot_w / 2
-            return pad_left + (plot_w * index / (len(days) - 1))
+            return pad_left + (plot_w * index / (len(labels) - 1))
         def y_at(value: float) -> float:
             return pad_top + (max_y - value) / (max_y - min_y) * plot_h
+        def value_label(value: float) -> str:
+            return f"{value * 100:.2f}%" if percent_mode else format_money(value)
         zero_y = y_at(0.0)
         grid_lines = 4
         for line_index in range(grid_lines + 1):
             y = pad_top + (plot_h * line_index / grid_lines)
             value = max_y - ((max_y - min_y) * line_index / grid_lines)
             canvas.create_line(pad_left, y, pad_left + plot_w, y, fill="#2f2f2f")
-            canvas.create_text(8, y - 6, anchor="nw", text=format_money(value), fill="#8f8f8f", font=("Segoe UI", 8))
-        vertical_lines = min(max(len(days), 2), 8)
+            canvas.create_text(8, y - 6, anchor="nw", text=value_label(value), fill="#8f8f8f", font=("Segoe UI", 8))
+        vertical_lines = min(max(len(labels), 2), 8)
         for line_index in range(vertical_lines):
             x = pad_left + (plot_w * line_index / max(vertical_lines - 1, 1))
             canvas.create_line(x, pad_top, x, pad_top + plot_h, fill="#2a2a2a")
         canvas.create_line(pad_left, pad_top, pad_left, pad_top + plot_h, fill="#555555")
         canvas.create_line(pad_left, zero_y, pad_left + plot_w, zero_y, fill="#555555")
-        points = [(x_at(index), y_at(value)) for index, value in enumerate(chart_values)]
-        for first, second in zip(points, points[1:]):
-            canvas.create_line(*first, *second, fill="#22c55e", width=3)
-        for index, (x, y) in enumerate(points):
-            value = chart_values[index]
-            color = "#22c55e" if value >= 0 else "#ef4444"
-            canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline="")
-            if len(days) <= 14 or index % max(1, len(days) // 8) == 0:
-                canvas.create_text(x, height - max(18, pad_bottom - 20), text=days[index][5:], fill="#b3b3b3", font=("Segoe UI", 8))
-        canvas.create_text(pad_left, 8, anchor="nw", text=f"Line: {chart_title.lower()}", fill="#22c55e", font=("Segoe UI", 9, "bold"))
+        for line in chart_lines:
+            line_values = [float(value) for value in line.get("values", [])]
+            color = str(line.get("color") or "#22c55e")
+            points = [(x_at(index), y_at(value)) for index, value in enumerate(line_values)]
+            for first, second in zip(points, points[1:]):
+                canvas.create_line(*first, *second, fill=color, width=3)
+            for index, (x, y) in enumerate(points):
+                value = line_values[index]
+                point_color = "#ef4444" if value < 0 and not percent_mode else color
+                canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=point_color, outline="")
+        for index, label in enumerate(labels):
+            if len(labels) <= 14 or index % max(1, len(labels) // 8) == 0:
+                canvas.create_text(x_at(index), height - max(18, pad_bottom - 20), text=self._profit_chart_bucket_display(label), fill="#b3b3b3", font=("Segoe UI", 8))
+        legend_x = pad_left
+        legend_y = 8
+        for line in chart_lines[:6]:
+            color = str(line.get("color") or "#22c55e")
+            label = str(line.get("label") or "")
+            canvas.create_oval(legend_x, legend_y + 4, legend_x + 8, legend_y + 12, fill=color, outline="")
+            canvas.create_text(legend_x + 12, legend_y, anchor="nw", text=label, fill=color, font=("Segoe UI", 9, "bold"))
+            legend_x += max(88, len(label) * 8 + 34)
 
     def choose_working_folder(self) -> None:
         selected = filedialog.askdirectory(
