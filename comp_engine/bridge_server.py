@@ -165,7 +165,6 @@ class BridgeState:
             return {
                 "instanceId": self.instance_id,
                 "command": command,
-                "keepNoteSources": list(self.keep_note_sources),
                 "lastKeepSync": dict(self.last_keep_sync),
             }
 
@@ -314,7 +313,6 @@ class BridgeState:
                 "cardladderRunning": self.cardladder_running,
                 "cancelRequested": self.cancel_requested,
                 "compStrategy": self.comp_strategy,
-                "keepNoteSources": list(self.keep_note_sources),
                 "lastKeepSync": dict(self.last_keep_sync),
                 "rows": [asdict(row) for row in self.rows],
             }
