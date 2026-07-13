@@ -506,6 +506,8 @@ Each company can use:
 - Google Sheet through OAuth
 - payout tiers inside the same workbook on a `Payouts` tab
 
+For manual rules, use **Company Card Year Range** when a company has a broad year cutoff. For example, set Fanatics **Min Year** to `1990` so pre-1990 cards are rejected before sport/value rules are evaluated.
+
 For Google Keep rule sources, sync is done per company:
 
 ```text
