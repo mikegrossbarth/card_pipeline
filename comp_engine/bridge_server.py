@@ -321,8 +321,15 @@ class BridgeState:
 def parse_value(value) -> float | None:
     if value is None or value == "":
         return None
+    text = str(value).replace("$", "").replace(",", "").strip()
+    multiplier = 1
+    if text.lower().endswith("k"):
+        multiplier = 1000
+        text = text[:-1].strip()
+    if re.fullmatch(r"-?\d{1,3}\.\d{3}", text):
+        text = text.replace(".", "")
     try:
-        return float(str(value).replace("$", "").replace(",", "").strip())
+        return float(text) * multiplier
     except ValueError:
         return None
 

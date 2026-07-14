@@ -35,8 +35,10 @@ ${functionSource("sourceLineMatch")}
 ${functionSource("currentCompChunkOnly")}
 ${functionSource("cleanCompTitle")}
 ${functionSource("parseCompChunk")}
+${functionSource("parseMoneyValue")}
 globalThis.parseCompChunk = parseCompChunk;
 globalThis.sourceLineMatch = sourceLineMatch;
+globalThis.parseMoneyValue = parseMoneyValue;
 `;
 
 const context = {};
@@ -58,5 +60,7 @@ assert.strictEqual(comp.date_sold, "Jun 1, 2026");
 assert.strictEqual(comp.price, "$25.00");
 assert.match(comp.title, /Joe Montana/);
 assert.doesNotMatch(comp.title, /Chet Holmgren/);
+assert.strictEqual(context.parseMoneyValue("$20.27k"), 20270);
+assert.strictEqual(context.parseMoneyValue("$20.27"), 20.27);
 
 console.log("extension parser regression ok");
