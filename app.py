@@ -9666,7 +9666,7 @@ class CardPipelineApp(tk.Tk):
                 direct = scan_to_cert(text)
                 if direct:
                     certs.add(direct)
-                for match in re.findall(r"\b\d{5,12}\b", text):
+                for match in re.findall(r"\b\d{5,16}\b", text):
                     cert = scan_to_cert(match)
                     if cert:
                         certs.add(cert)
