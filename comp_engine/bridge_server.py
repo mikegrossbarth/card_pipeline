@@ -17,9 +17,9 @@ from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
 import assignment_engine
 
-BRIDGE_VERSION = "2026-07-11-cardladder-stale-first-row-retry-v23"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-07-11-stale-first-row-retry-v23"
-EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.6"
+BRIDGE_VERSION = "2026-07-21-cardladder-visible-cert-result-v24"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-07-21-visible-cert-result-v24"
+EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.7"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 COMP_STRATEGY_AVERAGE = "average_last_5"
 COMP_STRATEGY_HIGH = "highest_last_5"
@@ -40,6 +40,11 @@ def fill_missing_category_from_title(row: WorkbookRow) -> None:
     sport = str(parsed.get("sport") or "").strip()
     if sport:
         row.category = sport
+
+
+def normalize_result_cert(value: object) -> str:
+    cert = re.sub(r"\D", "", str(value or ""))
+    return cert if len(cert) >= 6 else ""
 
 
 class BridgeState:
@@ -201,6 +206,14 @@ class BridgeState:
         value = parse_value(result.get("value"))
         row.card_ladder_value = value
         ocr = result.get("ocr") if isinstance(result.get("ocr"), dict) else {}
+        result_cert = (
+            normalize_result_cert(result.get("certNumber"))
+            or normalize_result_cert(result.get("cert_number"))
+            or normalize_result_cert(ocr.get("certNumber"))
+            or normalize_result_cert(ocr.get("cert_number"))
+        )
+        if result_cert and not normalize_result_cert(row.cert_number):
+            row.cert_number = result_cert
         comps = ocr.get("comps") if isinstance(ocr.get("comps"), list) else []
         profile_title = clean_profile_title(ocr.get("profileTitle") or ocr.get("profile_title") or ocr.get("profile"))
         profile_grader = clean_grader(ocr.get("profileGrader") or ocr.get("profile_grader") or row.grader)
