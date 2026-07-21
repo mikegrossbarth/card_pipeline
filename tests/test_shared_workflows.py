@@ -1361,6 +1361,20 @@ class AssignmentEngineTests(unittest.TestCase):
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 25.0)
 
+    def test_comp_price_can_filter_low_percentage_outliers(self) -> None:
+        comps = [
+            {"date_sold": "Jul 1, 2026", "price": "$1,500.00", "source": "EBAY", "title": "Test Card PSA 10 auction"},
+            {"date_sold": "Jul 2, 2026", "price": "$1,500.00", "source": "ALT", "title": "Test Card PSA 10 fixed price"},
+            {"date_sold": "Jul 3, 2026", "price": "$1,500.00", "source": "PWCC", "title": "Test Card PSA 10 premier"},
+            {"date_sold": "Jul 4, 2026", "price": "$1,500.00", "source": "GOLDIN", "title": "Test Card PSA 10 elite"},
+            {"date_sold": "Jul 5, 2026", "price": "$100.00", "title": "Damaged/fake Test Card PSA 10"},
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_AVERAGE), 1220.0)
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_AVERAGE, 75), 1500.0)
+        formatted = app.format_comps(comps, app.COMP_STRATEGY_AVERAGE, 75)
+        self.assertIn("Low comp filter: removed 1 comp(s) below $915.00", formatted)
+
     def test_date_weighted_averages_when_two_newest_are_within_seven_days(self) -> None:
         newest = datetime.now() - timedelta(days=2)
         second = newest - timedelta(days=4)
@@ -2524,6 +2538,42 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.comp_sheet_sources, {2: "sheet-2", 3: "sheet-4"})
         self.assertFalse(dummy.comp_output_saved)
         self.assertIn("Save back to source sheet", dummy.status_var.value)
+
+    def test_lot_purchase_fill_caps_at_lot_total_and_zeroes_remaining_rows(self) -> None:
+        class Dummy:
+            _money_value = app.CardPipelineApp._money_value
+            _lot_purchase_base_value = app.CardPipelineApp._lot_purchase_base_value
+            _lot_purchase_allocations = app.CardPipelineApp._lot_purchase_allocations
+
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="One", card_ladder_comps_average=1000),
+            WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Two", card_ladder_comps_average=3000),
+            WorkbookRow(excel_row=4, cert_number="3", grader="PSA", card_title="Three", card_ladder_comps_average=3000),
+            WorkbookRow(excel_row=5, cert_number="4", grader="PSA", card_title="Four", card_ladder_comps_average=3000),
+        ]
+
+        allocations, info = Dummy()._lot_purchase_allocations(rows, 2500, 50, "Comps Average")
+
+        self.assertEqual(allocations, [500.0, 1500.0, 500.0, 0.0])
+        self.assertTrue(info["capped"])
+        self.assertEqual(info["allocated"], 2500.0)
+
+    def test_lot_purchase_fill_reports_unallocated_balance_when_values_run_short(self) -> None:
+        class Dummy:
+            _money_value = app.CardPipelineApp._money_value
+            _lot_purchase_base_value = app.CardPipelineApp._lot_purchase_base_value
+            _lot_purchase_allocations = app.CardPipelineApp._lot_purchase_allocations
+
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="One", card_ladder_comps_average=1000),
+            WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Two", card_ladder_comps_average=1000),
+        ]
+
+        allocations, info = Dummy()._lot_purchase_allocations(rows, 4000, 50, "Comps Average")
+
+        self.assertEqual(allocations, [500.0, 500.0])
+        self.assertFalse(info["capped"])
+        self.assertEqual(info["remaining"], 3000.0)
 
     def test_unassigned_player_is_recorded_for_unmatched_valued_row(self) -> None:
         class Dummy:
@@ -4745,6 +4795,42 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.inventory_search_var = FieldVar("hidden sold")
         self.assertEqual(dummy._filtered_inventory_records(rows), [])
 
+    def test_inventory_filter_finds_missing_card_descriptions(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
+            _inventory_record_missing_card_description = app.CardPipelineApp._inventory_record_missing_card_description
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("")
+        dummy.inventory_grader_var = FieldVar("")
+        dummy.inventory_year_var = FieldVar("")
+        dummy.inventory_search_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        dummy.inventory_date_min_var = FieldVar("")
+        dummy.inventory_date_max_var = FieldVar("")
+        dummy.inventory_missing_title_var = FieldVar(True)
+        dummy.inventory_missing_photos_var = FieldVar(False)
+        rows = [
+            {"status": "Active", "cert_number": "111", "card_title": "", "inventory_value": 50},
+            {"status": "Active", "cert_number": "222", "card_title": "222", "inventory_value": 50},
+            {"status": "Active", "cert_number": "333", "card_title": "2024 Prizm Real Card PSA 10", "inventory_value": 50},
+            {"status": "Sold", "cert_number": "444", "card_title": "", "inventory_value": 50},
+        ]
+
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["111", "222"])
+
     def test_inventory_sport_filter_accepts_multiple_checked_sports(self) -> None:
         class FieldVar:
             def __init__(self, value=""):
@@ -4973,6 +5059,34 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.copy_tree_row_values(dummy.inventory_tree, "row-1", "sheet row")
         self.assertEqual(dummy.clipboard, "2026-06-18\tKevin Hambone\tBasketball\t12345678\tPSA\tTest Card")
         self.assertEqual(dummy.status_var.value, "Copied sheet row.")
+
+    def test_copy_replaces_clipboard_when_first_clear_does_not_settle(self) -> None:
+        class ClipboardDummy:
+            _copy_inventory_text = app.CardPipelineApp._copy_inventory_text
+
+            def __init__(self):
+                self.clipboard = "12345678"
+                self.clear_calls = 0
+
+            def clipboard_clear(self):
+                self.clear_calls += 1
+                if self.clear_calls > 1:
+                    self.clipboard = ""
+
+            def clipboard_append(self, text):
+                self.clipboard += text
+
+            def clipboard_get(self):
+                return self.clipboard
+
+            def update(self):
+                pass
+
+        dummy = ClipboardDummy()
+        dummy._copy_inventory_text("12345678")
+
+        self.assertEqual(dummy.clipboard, "12345678")
+        self.assertEqual(dummy.clear_calls, 2)
 
     def test_inventory_table_shows_source_values_separately(self) -> None:
         class FieldVar:
