@@ -3201,6 +3201,11 @@ class CardPipelineApp(tk.Tk):
     def _personal_default_person(self) -> str:
         return "Mikey"
 
+    def _owner_for_profile(self, person: object = "") -> str:
+        if self._is_personal_lucas():
+            return self._personal_default_person()
+        return str(person or "").strip() or "Unassigned"
+
     def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
         if not moved_keys:
             return
@@ -3340,7 +3345,9 @@ class CardPipelineApp(tk.Tk):
         return removed
 
     def _general_sold_sheet_name(self, person: str) -> str:
-        return f"{str(person or '').strip() or 'Unassigned'} General Sold"
+        owner_for_profile = getattr(self, "_owner_for_profile", lambda value="": str(value or "").strip() or "Unassigned")
+        person_name = owner_for_profile(person)
+        return f"{person_name} General Sold"
 
     def _inventory_sale_profit_record(self, record: dict[str, object], company: str, sale_price: float) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
@@ -5155,7 +5162,8 @@ class CardPipelineApp(tk.Tk):
             normalized["cert_number"] = related_cert if related_type == "Card" else ""
             normalized["weekly_sheet_name"] = ""
             normalized["source_sheet"] = related_sheet if related_type in {"Card", "Sheet"} and related_sheet else "Expenses"
-            normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+            owner_for_profile = getattr(self, "_owner_for_profile", lambda person="": str(person or "").strip() or "Unassigned")
+            normalized["assigned_person"] = owner_for_profile(normalized.get("assigned_person") or normalized.get("person"))
             normalized["notes"] = notes
             normalized["ledger_added_at"] = str(normalized.get("ledger_added_at") or "").strip()
             normalized["ledger_key"] = self._profit_record_key(normalized)
@@ -5174,7 +5182,12 @@ class CardPipelineApp(tk.Tk):
         normalized["weekly_sheet_name"] = str(normalized.get("weekly_sheet_name") or "").strip()
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
         normalized["original_source_sheet"] = str(normalized.get("original_source_sheet") or "").strip()
-        normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+        owner_for_profile = getattr(self, "_owner_for_profile", lambda person="": str(person or "").strip() or "Unassigned")
+        assigned_person = owner_for_profile(normalized.get("assigned_person") or normalized.get("person"))
+        if getattr(self, "_is_personal_lucas", lambda: False)():
+            if str(normalized.get("source_sheet") or "").strip().lower() == "unassigned general sold":
+                normalized["source_sheet"] = self._general_sold_sheet_name(assigned_person)
+        normalized["assigned_person"] = assigned_person
         normalized["ledger_added_at"] = str(normalized.get("ledger_added_at") or "").strip()
         photo_paths = normalized.get("photo_paths") or normalized.get("photos") or []
         if isinstance(photo_paths, str):
@@ -5187,12 +5200,14 @@ class CardPipelineApp(tk.Tk):
         return normalized
 
     def _person_for_profit_record(self, record: dict[str, object]) -> str:
+        if getattr(self, "_is_personal_lucas", lambda: False)():
+            return self._personal_default_person()
         existing = str(record.get("assigned_person") or "").strip()
         if existing and existing.lower() != "unassigned":
             return existing
         source_sheet = Path(str(record.get("source_sheet") or "")).name
         if not source_sheet:
-            return ""
+            return existing
         for stage in ("Incoming", "Received", "Working"):
             marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_sheet), {})
             person = str(marker.get("assigned_person") or "").strip()
@@ -5204,7 +5219,7 @@ class CardPipelineApp(tk.Tk):
                 person = str(marker.get("assigned_person") or "").strip()
                 if person:
                     return person
-        return ""
+        return existing
 
     def _enrich_profit_records_with_people(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         enriched: list[dict[str, object]] = []

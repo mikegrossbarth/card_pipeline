@@ -211,6 +211,66 @@ class SharedStateTests(unittest.TestCase):
         self.assertEqual(dummy._personal_default_person(), "Mikey")
         self.assertTrue(dummy._is_personal_lucas())
 
+    def test_personal_lucas_profit_records_default_to_mikey(self) -> None:
+        class ProfitDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+            _owner_for_profile = app.CardPipelineApp._owner_for_profile
+
+            def __init__(self, personal: bool):
+                self.personal = personal
+
+            def _is_personal_lucas(self):
+                return self.personal
+
+        personal = ProfitDummy(True)
+        team = ProfitDummy(False)
+
+        personal_record = personal._normalize_profit_record(
+            {
+                "assigned_person": "Kevin Hambone",
+                "cert_number": "123",
+                "company": "General Sold",
+                "date_added": "2026-07-15",
+                "weekly_sheet_name": "Inventory Sale",
+                "source_sheet": "Unassigned General Sold",
+                "purchase_price": 10,
+                "sale_price": 15,
+            }
+        )
+        personal_expense = personal._normalize_profit_record(
+            {
+                "record_type": "expense",
+                "assigned_person": "Kevin Hambone",
+                "date_added": "2026-07-15",
+                "expense_type": "Shipping",
+                "expense_amount": 4,
+            }
+        )
+        team_record = team._normalize_profit_record(
+            {
+                "assigned_person": "Kevin Hambone",
+                "cert_number": "123",
+                "company": "General Sold",
+                "date_added": "2026-07-15",
+                "weekly_sheet_name": "Inventory Sale",
+                "source_sheet": "Unassigned General Sold",
+                "purchase_price": 10,
+                "sale_price": 15,
+            }
+        )
+
+        self.assertEqual(personal_record["assigned_person"], "Mikey")
+        self.assertEqual(personal_record["source_sheet"], "Mikey General Sold")
+        self.assertTrue(personal_record["ledger_key"].endswith("|mikey general sold"))
+        self.assertEqual(personal_expense["assigned_person"], "Mikey")
+        self.assertEqual(personal._general_sold_sheet_name("Kevin Hambone"), "Mikey General Sold")
+        self.assertEqual(team_record["assigned_person"], "Kevin Hambone")
+        self.assertEqual(team._general_sold_sheet_name(""), "Unassigned General Sold")
+
     def test_personal_lucas_marker_edit_forces_mikey(self) -> None:
         class StatusVar:
             def set(self, value):
