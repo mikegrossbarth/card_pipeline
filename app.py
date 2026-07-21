@@ -3063,10 +3063,15 @@ class CardPipelineApp(tk.Tk):
             ("Est. Payout", payout_var, 18),
             ("Notes", notes_var, 52),
         ]
+        person_row = None
         if not personal_inventory:
-            fields.insert(0, ("Person", person_var, 28))
+            person_row = 1
+            ttk.Label(frame, text="Person", style="Panel.TLabel").grid(row=person_row, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
+            person_combo = ttk.Combobox(frame, textvariable=person_var, width=28)
+            person_combo.grid(row=person_row, column=1, columnspan=3, sticky="ew", pady=(0, 8))
+            self._bind_person_autocomplete(person_combo)
         for index, (label, var, width) in enumerate(fields):
-            row = 1 + index
+            row = 1 + index + (1 if person_row is not None else 0)
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
             ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=1, columnspan=3, sticky="ew", pady=(0, 8))
 
@@ -5183,7 +5188,7 @@ class CardPipelineApp(tk.Tk):
 
     def _person_for_profit_record(self, record: dict[str, object]) -> str:
         existing = str(record.get("assigned_person") or "").strip()
-        if existing:
+        if existing and existing.lower() != "unassigned":
             return existing
         source_sheet = Path(str(record.get("source_sheet") or "")).name
         if not source_sheet:

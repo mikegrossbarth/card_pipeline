@@ -7000,6 +7000,21 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(rows[0]["profit"], 50)
         self.assertEqual(dummy._filtered_profit_records(rows), rows)
 
+        placeholder_rows = dummy._enrich_profit_records_with_people([
+            {
+                "date_added": "2026-06-11",
+                "company": "Arena Club",
+                "source_sheet": "Lot A.xlsx",
+                "cert_number": "456",
+                "card_title": "Unassigned Placeholder Card",
+                "purchase_price": 40,
+                "sale_price": 90,
+                "assigned_person": "Unassigned",
+            }
+        ])
+
+        self.assertEqual(placeholder_rows[0]["assigned_person"], "Lucas")
+
         dummy.profit_search_var = types.SimpleNamespace(get=lambda: "123 test")
         self.assertEqual(dummy._filtered_profit_records(rows), rows)
 
