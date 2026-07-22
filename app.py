@@ -143,10 +143,10 @@ NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
 COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 DEFAULT_COMPANY_RESET_WEEKDAY = "Monday"
 DEFAULT_COMPANY_RESET_TIME = "20:00"
-PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "YTD", "Total")
+PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Last 30 Days", "Calendar Month", "Year", "YTD", "Total")
 PROFIT_GRAPH_OPTIONS = ("Overall Profit", "Profit to Sales Ratio", "Daily Trend", "Profit by Company")
 PROFIT_PLOT_OPTIONS = ("Overall", "By Sport")
-DEFAULT_PROFIT_PERIOD = "Year"
+DEFAULT_PROFIT_PERIOD = "Calendar Month"
 DEFAULT_PROFIT_GRAPH = "Overall Profit"
 DEFAULT_PROFIT_PLOT = "Overall"
 PROFIT_SPORT_COLORS = {
@@ -1452,7 +1452,7 @@ class CardPipelineApp(tk.Tk):
 
         self.review_mode_host = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         self.review_mode_host.pack(fill=tk.X, pady=(0, 10))
-        self.receive_tree = self._build_table(self.receive_tab, editable=True, columns=RECEIVE_COLUMNS)
+        self.receive_tree = self._build_table(self.receive_tab, editable=True, columns=self._personal_person_last_columns(RECEIVE_COLUMNS))
         self._bind_context_menu(self.receive_tree, self._show_receive_context_menu)
         receive_bottom = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         receive_bottom.pack(fill=tk.X, pady=(10, 0))
@@ -1740,6 +1740,11 @@ class CardPipelineApp(tk.Tk):
         container.rowconfigure(0, weight=1)
         return tree
 
+    def _personal_person_last_columns(self, columns: tuple[str, ...]) -> tuple[str, ...]:
+        if not getattr(self, "_is_personal_lucas", lambda: False)() or "person" not in columns:
+            return columns
+        return tuple(column for column in columns if column != "person") + ("person",)
+
     def _configure_sortable_tree_headings(self, tree: ttk.Treeview, headings: dict[str, str], table: str) -> None:
         if table == "inventory":
             sort_column = self.inventory_sort_column
@@ -1987,7 +1992,7 @@ class CardPipelineApp(tk.Tk):
 
         self.inventory_tree = self._build_home_tree(
             self.inventory_tab,
-            columns=INVENTORY_TABLE_COLUMNS,
+            columns=self._personal_person_last_columns(INVENTORY_TABLE_COLUMNS),
             headings=INVENTORY_HEADINGS,
             widths=INVENTORY_COLUMN_WIDTHS,
             height=22,
@@ -3791,7 +3796,7 @@ class CardPipelineApp(tk.Tk):
             )
 
     def _inventory_editable_columns(self) -> list[str]:
-        return [column for column in INVENTORY_TABLE_COLUMNS if column in INVENTORY_EDIT_COLUMN_FIELDS]
+        return [column for column in self._personal_person_last_columns(INVENTORY_TABLE_COLUMNS) if column in INVENTORY_EDIT_COLUMN_FIELDS]
 
     def _inventory_bulk_click(self, event: tk.Event) -> None:
         if not getattr(self, "inventory_bulk_edit_var", None) or not self.inventory_bulk_edit_var.get():
@@ -4691,31 +4696,32 @@ class CardPipelineApp(tk.Tk):
                 total_purchase += purchase
             if value is not None:
                 total_value += value
+            values_by_column = {
+                "date": record.get("date_added") or "",
+                "type": record.get("item_type") or "",
+                "item_id": record.get("item_id") or "",
+                "person": record.get("assigned_person") or "Unassigned",
+                "sport": record.get("sport") or "",
+                "cert": record.get("cert_number") or "",
+                "grader": record.get("grader") or "",
+                "card": record.get("card_title") or "",
+                "purchase": format_money(purchase),
+                "cl_value": format_money(card_ladder),
+                "comps": format_money(comps),
+                "cy_value": format_money(cy_value),
+                "cy_confidence": record.get("cy_confidence") if record.get("cy_confidence") is not None else "",
+                "best_company": record.get("best_company") or "",
+                "estimated": format_money(record.get("estimated_payout")),
+                "paid_with": record.get("paid_with") or "",
+                "source_sheet": record.get("source_sheet") or "",
+                "status": record.get("status") or "",
+                "photos": str(len(record.get("photo_paths") or [])),
+                "notes": inventory_display_notes(record),
+            }
             iid = self.inventory_tree.insert(
                 "",
                 tk.END,
-                values=(
-                    record.get("date_added") or "",
-                    record.get("item_type") or "",
-                    record.get("item_id") or "",
-                    record.get("assigned_person") or "Unassigned",
-                    record.get("sport") or "",
-                    record.get("cert_number") or "",
-                    record.get("grader") or "",
-                    record.get("card_title") or "",
-                    format_money(purchase),
-                    format_money(card_ladder),
-                    format_money(comps),
-                    format_money(cy_value),
-                    record.get("cy_confidence") if record.get("cy_confidence") is not None else "",
-                    record.get("best_company") or "",
-                    format_money(record.get("estimated_payout")),
-                    record.get("paid_with") or "",
-                    record.get("source_sheet") or "",
-                    record.get("status") or "",
-                    str(len(record.get("photo_paths") or [])),
-                    inventory_display_notes(record),
-                ),
+                values=tuple(values_by_column.get(column, "") for column in self.inventory_tree["columns"]),
             )
             self.inventory_tree_records[iid] = record
         self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Source Value: {format_money(total_value)}")
@@ -5343,14 +5349,25 @@ class CardPipelineApp(tk.Tk):
             return today - timedelta(days=4), today
         if label == "week":
             return today - timedelta(days=6), today
-        if label == "month":
+        if label in {"last 30 days", "last 30 day", "30 days", "rolling 30 days", "rolling month"}:
             return today - timedelta(days=29), today
+        if label in {"calendar month", "month", "this month", "mtd"}:
+            return today.replace(day=1), today
         if label in {"year", "ytd", "year to date"}:
             return today.replace(month=1, day=1), today
         return None, today
 
+    def _canonical_profit_period(self, period: str) -> str:
+        label = str(period or "").strip()
+        normalized = label.lower()
+        if normalized in {"month", "this month", "mtd"}:
+            return "Calendar Month"
+        if normalized in {"30 days", "last 30 day", "rolling 30 days", "rolling month"}:
+            return "Last 30 Days"
+        return label
+
     def _profit_period_label(self) -> str:
-        period = self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else DEFAULT_PROFIT_PERIOD
+        period = self._canonical_profit_period(self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else DEFAULT_PROFIT_PERIOD)
         return period if period in PROFIT_PERIOD_OPTIONS else DEFAULT_PROFIT_PERIOD
 
     def _profit_graph_label(self) -> str:
@@ -5599,6 +5616,7 @@ class CardPipelineApp(tk.Tk):
                 "sheet": "Company Sheet",
             }
             widths = {"date": 95, "person": 135, "company": 140, "card": 390, "cert": 100, "purchase": 105, "sale": 105, "profit": 105, "sheet": 200}
+        columns = self._personal_person_last_columns(columns)
         self.profit_tree.configure(columns=columns)
         if self.profit_sort_column not in columns:
             self.profit_sort_column = columns[0]
@@ -6225,36 +6243,38 @@ class CardPipelineApp(tk.Tk):
             if mode == "Expenses":
                 if not is_expense:
                     continue
+                values_by_column = {
+                    "date": record.get("date_added") or "",
+                    "person": record.get("assigned_person") or "Unassigned",
+                    "type": record.get("expense_type") or "",
+                    "amount": format_money(record.get("expense_amount")),
+                    "related": self._expense_related_label(record),
+                    "notes": record.get("notes") or "",
+                }
                 iid = self.profit_tree.insert(
                     "",
                     tk.END,
-                    values=(
-                        record.get("date_added") or "",
-                        record.get("assigned_person") or "Unassigned",
-                        record.get("expense_type") or "",
-                        format_money(record.get("expense_amount")),
-                        self._expense_related_label(record),
-                        record.get("notes") or "",
-                    ),
+                    values=tuple(values_by_column.get(column, "") for column in self.profit_tree["columns"]),
                     tags=("profit_negative",),
                 )
                 self.profit_tree_records[iid] = record
             elif mode != "Sold Sheets":
                 tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
+                values_by_column = {
+                    "date": record.get("date_added") or "",
+                    "person": record.get("assigned_person") or "Unassigned",
+                    "company": record.get("company") or "",
+                    "card": record.get("card_title") or "",
+                    "cert": record.get("cert_number") or record.get("item_id") or "",
+                    "purchase": format_money(purchase),
+                    "sale": format_money(sale),
+                    "profit": format_money(profit),
+                    "sheet": record.get("weekly_sheet_name") or record.get("source_sheet") or "",
+                }
                 iid = self.profit_tree.insert(
                     "",
                     tk.END,
-                    values=(
-                        record.get("date_added") or "",
-                        record.get("assigned_person") or "Unassigned",
-                        record.get("company") or "",
-                        record.get("card_title") or "",
-                        record.get("cert_number") or record.get("item_id") or "",
-                        format_money(purchase),
-                        format_money(sale),
-                        format_money(profit),
-                        record.get("weekly_sheet_name") or record.get("source_sheet") or "",
-                    ),
+                    values=tuple(values_by_column.get(column, "") for column in self.profit_tree["columns"]),
                     tags=(tag,),
                 )
                 self.profit_tree_records[iid] = record
@@ -6271,35 +6291,46 @@ class CardPipelineApp(tk.Tk):
             for sheet_row in sheet_rows:
                 profit = self._money_value(sheet_row.get("profit"))
                 tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
+                values_by_column = {
+                    "person": sheet_row.get("person") or "",
+                    "sheet": sheet_row.get("sheet") or "",
+                    "companies": sheet_row.get("companies") or "",
+                    "cards": sheet_row.get("cards") or 0,
+                    "purchase": format_money(sheet_row.get("purchase")),
+                    "sale": format_money(sheet_row.get("sale")),
+                    "profit": format_money(profit),
+                    "last_sale": sheet_row.get("last_sale") or "",
+                }
                 self.profit_tree.insert(
                     "",
                     tk.END,
-                    values=(
-                        sheet_row.get("person") or "",
-                        sheet_row.get("sheet") or "",
-                        sheet_row.get("companies") or "",
-                        sheet_row.get("cards") or 0,
-                        format_money(sheet_row.get("purchase")),
-                        format_money(sheet_row.get("sale")),
-                        format_money(profit),
-                        sheet_row.get("last_sale") or "",
-                    ),
+                    values=tuple(values_by_column.get(column, "") for column in self.profit_tree["columns"]),
                     tags=(tag,),
                 )
         display_count = len([record for record in self.filtered_profit_rows if str(record.get("record_type") or "").strip().lower() == "expense"]) if mode == "Expenses" else len(self.filtered_profit_rows)
         if self.filtered_profit_rows:
-            total_values = (
-                ("TOTAL", "", "", format_money(total_expenses), "", "")
-                if mode == "Expenses"
-                else
-                ("TOTAL", "", "", f"{len(self.filtered_profit_rows)} card(s)", format_money(total_purchase), format_money(total_sale), format_money(total_profit), "")
-                if mode == "Sold Sheets"
-                else ("TOTAL", "", "", f"{len(self.filtered_profit_rows)} card(s)", "", format_money(total_purchase), format_money(total_sale), format_money(total_profit), "")
-            )
+            if mode == "Expenses":
+                total_by_column = {"date": "TOTAL", "amount": format_money(total_expenses)}
+            elif mode == "Sold Sheets":
+                total_by_column = {
+                    "person": "TOTAL",
+                    "cards": f"{len(self.filtered_profit_rows)} card(s)",
+                    "purchase": format_money(total_purchase),
+                    "sale": format_money(total_sale),
+                    "profit": format_money(total_profit),
+                }
+            else:
+                total_by_column = {
+                    "date": "TOTAL",
+                    "card": f"{len(self.filtered_profit_rows)} card(s)",
+                    "purchase": format_money(total_purchase),
+                    "sale": format_money(total_sale),
+                    "profit": format_money(total_profit),
+                }
             self.profit_tree.insert(
                 "",
                 tk.END,
-                values=total_values,
+                values=tuple(total_by_column.get(column, "") for column in self.profit_tree["columns"]),
                 tags=("total_row",),
             )
         self.profit_metric_var.set(

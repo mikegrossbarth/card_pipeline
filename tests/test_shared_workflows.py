@@ -411,6 +411,18 @@ class SharedStateTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.RECEIVED_SHEETS_DIR = old_received
 
+    def test_personal_lucas_moves_person_column_to_end(self) -> None:
+        class Dummy:
+            _personal_person_last_columns = app.CardPipelineApp._personal_person_last_columns
+
+            def _is_personal_lucas(self):
+                return True
+
+        self.assertEqual(
+            Dummy()._personal_person_last_columns(("date", "person", "cert", "card")),
+            ("date", "cert", "card", "person"),
+        )
+
     def test_home_sheet_sort_modes(self) -> None:
         class SortVar:
             def __init__(self, value):
@@ -7283,6 +7295,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_today = lambda self: datetime(2026, 6, 17).date()
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _canonical_profit_period = app.CardPipelineApp._canonical_profit_period
             _profit_period_label = app.CardPipelineApp._profit_period_label
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
             _profit_plot_label = app.CardPipelineApp._profit_plot_label
@@ -7307,10 +7320,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         ]
 
         dummy = ProfitDummy()
-        self.assertEqual(dummy._profit_period_label(), "Year")
+        self.assertEqual(dummy._profit_period_label(), "Calendar Month")
         self.assertEqual(dummy._profit_graph_label(), "Overall Profit")
         self.assertEqual(dummy._profit_plot_label(), "Overall")
-        self.assertEqual(dummy._profit_chart_title(), "Overall Profit (Year)")
+        self.assertEqual(dummy._profit_chart_title(), "Overall Profit (Calendar Month)")
         self.assertEqual(dummy._profit_chart_tooltip_value(123.45, False), "$123.45")
         self.assertEqual(dummy._profit_chart_tooltip_value(0.1234, True), "12.34%")
 
@@ -7383,6 +7396,44 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(len(ytd_days), 168)
         self.assertEqual(ytd_values[ytd_days.index("2026-01-05")], 40)
         self.assertEqual(ytd_values[ytd_days.index("2026-06-17")], 30)
+
+    def test_profit_periods_include_calendar_month_and_last_thirty_days(self) -> None:
+        class ProfitDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_today = lambda self: datetime(2026, 7, 5).date()
+            _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _canonical_profit_period = app.CardPipelineApp._canonical_profit_period
+            _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
+
+        rows = [
+            {"assigned_person": "Lucas", "date_added": "2026-06-05", "profit": 10},
+            {"assigned_person": "Lucas", "date_added": "2026-06-06", "profit": 20},
+            {"assigned_person": "Lucas", "date_added": "2026-07-05", "profit": 30},
+        ]
+
+        dummy = ProfitDummy()
+        dummy.profit_person_var = types.SimpleNamespace(get=lambda: "")
+        dummy.profit_search_var = types.SimpleNamespace(get=lambda: "")
+
+        period_start, period_end = dummy._profit_period_bounds("Last 30 Days")
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Last 30 Days")
+        filtered = dummy._filtered_profit_records(rows)
+
+        self.assertEqual(period_start.isoformat(), "2026-06-06")
+        self.assertEqual(period_end.isoformat(), "2026-07-05")
+        self.assertEqual([record["date_added"] for record in filtered], ["2026-06-06", "2026-07-05"])
+
+        period_start, period_end = dummy._profit_period_bounds("Calendar Month")
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Calendar Month")
+        filtered = dummy._filtered_profit_records(rows)
+
+        self.assertEqual(period_start.isoformat(), "2026-07-01")
+        self.assertEqual(period_end.isoformat(), "2026-07-05")
+        self.assertEqual([record["date_added"] for record in filtered], ["2026-07-05"])
+
+        self.assertEqual(dummy._canonical_profit_period("Month"), "Calendar Month")
+        self.assertEqual(dummy._canonical_profit_period("rolling month"), "Last 30 Days")
 
     def test_profit_sheet_rows_group_by_person_and_source_sheet(self) -> None:
         class ProfitDummy:
