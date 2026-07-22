@@ -1324,16 +1324,15 @@ class CardPipelineApp(tk.Tk):
         )
         mode.grid(row=0, column=1, sticky="w", padx=(8, 16))
         mode.bind("<<ComboboxSelected>>", lambda _event: self._show_mode())
-        ttk.Button(intake_controls, text="Delete Selected", command=self.delete_selected_intake_rows, style="Soft.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
-        ttk.Button(intake_controls, text="Clear Rows", command=self.clear_rows, style="Soft.TButton").grid(row=0, column=3, sticky="w")
+        ttk.Button(intake_controls, text="Clear Rows", command=self.clear_rows, style="Soft.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
         ttk.Checkbutton(
             intake_controls,
             text="Network Mode",
             variable=self.create_network_mode_var,
             command=self._toggle_create_network_mode,
             style="Panel.TCheckbutton",
-        ).grid(row=0, column=4, sticky="e", padx=(16, 0))
-        intake_controls.columnconfigure(4, weight=1)
+        ).grid(row=0, column=3, sticky="e", padx=(16, 0))
+        intake_controls.columnconfigure(3, weight=1)
         self.network_seller_label = ttk.Label(intake_controls, text="Seller", style="Muted.TLabel")
         self.network_seller_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.seller_terms_seller_combo = ttk.Combobox(intake_controls, textvariable=self.seller_terms_seller_var, width=24)
@@ -1406,7 +1405,6 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(comp_actions, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(comp_actions, text="Add Row", command=self.add_comp_row, style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(comp_actions, text="Lot Price Fill", command=self.open_lot_purchase_fill_popup, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         self.comp_scope_combo = ttk.Combobox(
             comp_options,
@@ -4405,7 +4403,6 @@ class CardPipelineApp(tk.Tk):
         menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(self.comp_tree, row, "comp row"))
         menu.add_separator()
         menu.add_command(label="Explain Assignment", command=lambda target=self.comp_tree: self.explain_selected_workflow_assignment(target))
-        menu.add_command(label="Add Row", command=self.add_comp_row)
         menu.add_command(label="Delete Selected", command=self.delete_selected_comp_rows)
         try:
             menu.tk_popup(event.x_root, event.y_root)
