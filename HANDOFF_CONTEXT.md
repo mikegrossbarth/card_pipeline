@@ -37,6 +37,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Windows now matches Mac row add/delete UX for shared desktop tables: Comp has the inline `+ Add row` sentinel in addition to the toolbar/context action, and Create has the same right-click copy/delete row menu as Mac.
 - Home `Review Sheet` previews now show a highlighted bottom totals row for numerical columns, including real numeric cells and currency-formatted strings, while leaving cert-number strings alone.
 - Lot Price Fill now adds any leftover/unallocated lot balance to the last comp row in the current list, so filled purchase prices tie exactly to the lot total even when source values run short or rounding leaves pennies.
 - Profit `Profit to Sales Ratio` now uses month buckets for `Year`, `YTD`, and `Total` periods, matching the yearly/monthly behavior of `Profit by Company` instead of plotting one point per day.

@@ -435,6 +435,7 @@ INVENTORY_TABLE_COLUMNS = (
 
 ADD_INTAKE_ROW_IID = "__add_intake_row__"
 ADD_REVIEW_ROW_IID = "__add_review_row__"
+ADD_COMP_ROW_IID = "__add_comp_row__"
 
 EDITABLE_COLUMNS = {
     "source",
@@ -1351,6 +1352,7 @@ class CardPipelineApp(tk.Tk):
         self.mode_host = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         self.mode_host.pack(fill=tk.X, pady=(0, 10))
         self.intake_tree = self._build_table(self.intake_tab, editable=True, columns=INTAKE_COLUMNS)
+        self._bind_context_menu(self.intake_tree, self._show_intake_context_menu)
         intake_save = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         intake_save.pack(fill=tk.X, pady=(10, 0))
         ttk.Label(intake_save, text="Working Sheet Title", style="Panel.TLabel").pack(side=tk.LEFT, padx=(0, 8))
@@ -4392,7 +4394,7 @@ class CardPipelineApp(tk.Tk):
         if not hasattr(self, "comp_tree"):
             return "break"
         row_id = self.comp_tree.identify_row(event.y)
-        if not row_id:
+        if not row_id or row_id == ADD_COMP_ROW_IID:
             return "break"
         column_id = self.comp_tree.identify_column(event.x)
         if row_id not in self.comp_tree.selection():
@@ -4405,6 +4407,27 @@ class CardPipelineApp(tk.Tk):
         menu.add_command(label="Explain Assignment", command=lambda target=self.comp_tree: self.explain_selected_workflow_assignment(target))
         menu.add_command(label="Add Row", command=self.add_comp_row)
         menu.add_command(label="Delete Selected", command=self.delete_selected_comp_rows)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    def _show_intake_context_menu(self, event: tk.Event) -> str:
+        if not hasattr(self, "intake_tree"):
+            return "break"
+        row_id = self.intake_tree.identify_row(event.y)
+        if not row_id or row_id == ADD_INTAKE_ROW_IID:
+            return "break"
+        column_id = self.intake_tree.identify_column(event.x)
+        if row_id not in self.intake_tree.selection():
+            self.intake_tree.selection_set(row_id)
+            self.intake_tree.focus(row_id)
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_tree_cell_value(self.intake_tree, row, column, "create cell"))
+        menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(self.intake_tree, row, "create row"))
+        menu.add_separator()
+        menu.add_command(label="Delete Selected", command=self.delete_selected_intake_rows)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -12657,6 +12680,9 @@ class CardPipelineApp(tk.Tk):
         if tree is self.intake_tree and self.input_mode.get() == "Manual Entry":
             add_row_iid = ADD_INTAKE_ROW_IID
             should_show_add_row = True
+        elif tree is self.comp_tree:
+            add_row_iid = ADD_COMP_ROW_IID
+            should_show_add_row = True
         elif self._is_receive_tree(tree) and self.review_mode.get() == "Manual Receive":
             add_row_iid = ADD_REVIEW_ROW_IID
             should_show_add_row = True
@@ -12757,7 +12783,7 @@ class CardPipelineApp(tk.Tk):
         selected_rows = {
             int(iid)
             for iid in tree.selection()
-            if str(iid).isdigit() and str(iid) not in {ADD_INTAKE_ROW_IID, ADD_REVIEW_ROW_IID}
+            if str(iid).isdigit() and str(iid) not in {ADD_INTAKE_ROW_IID, ADD_REVIEW_ROW_IID, ADD_COMP_ROW_IID}
         }
         if not selected_rows:
             return 0
@@ -12827,6 +12853,9 @@ class CardPipelineApp(tk.Tk):
         if tree is self.intake_tree and row_id == ADD_INTAKE_ROW_IID:
             self.add_manual_intake_row()
             return "break"
+        if tree is self.comp_tree and row_id == ADD_COMP_ROW_IID:
+            self.add_comp_row()
+            return "break"
         if self._is_receive_tree(tree) and row_id == ADD_REVIEW_ROW_IID:
             self.add_manual_review_row()
             return "break"
@@ -12856,6 +12885,9 @@ class CardPipelineApp(tk.Tk):
         column_id = tree.identify_column(event.x)
         if tree is self.intake_tree and row_id == ADD_INTAKE_ROW_IID:
             self.add_manual_intake_row()
+            return
+        if tree is self.comp_tree and row_id == ADD_COMP_ROW_IID:
+            self.add_comp_row()
             return
         if self._is_receive_tree(tree) and row_id == ADD_REVIEW_ROW_IID:
             self.add_manual_review_row()
