@@ -2587,7 +2587,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertTrue(info["capped"])
         self.assertEqual(info["allocated"], 2500.0)
 
-    def test_lot_purchase_fill_reports_unallocated_balance_when_values_run_short(self) -> None:
+    def test_lot_purchase_fill_adds_unallocated_balance_to_last_row(self) -> None:
         class Dummy:
             _money_value = app.CardPipelineApp._money_value
             _lot_purchase_base_value = app.CardPipelineApp._lot_purchase_base_value
@@ -2600,9 +2600,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         allocations, info = Dummy()._lot_purchase_allocations(rows, 4000, 50, "Comps Average")
 
-        self.assertEqual(allocations, [500.0, 500.0])
+        self.assertEqual(allocations, [500.0, 3500.0])
         self.assertFalse(info["capped"])
-        self.assertEqual(info["remaining"], 3000.0)
+        self.assertEqual(info["allocated"], 4000.0)
+        self.assertEqual(info["remaining"], 0.0)
+        self.assertEqual(info["unallocated_absorbed"], 3000.0)
 
     def test_unassigned_player_is_recorded_for_unmatched_valued_row(self) -> None:
         class Dummy:
