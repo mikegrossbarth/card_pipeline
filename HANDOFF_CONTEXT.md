@@ -37,6 +37,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Mark Sold dialogs now leave Sale Price blank on open instead of pre-filling the estimated payout/inventory value, so users can type the actual sale price without erasing a recommendation first.
 - Comp table now shows a highlighted bottom `TOTAL` row that sums the visible/current Purchase column, while remaining non-editable and separate from the inline `+ Add row` control.
 - Windows now matches Mac row add/delete UX for shared desktop tables: Comp uses the inline `+ Add row` sentinel instead of a toolbar/context add button, and Create uses the right-click copy/delete row menu instead of a visible delete toolbar button.
 - Home `Review Sheet` previews now show a highlighted bottom totals row for numerical columns, including real numeric cells and currency-formatted strings, while leaving cert-number strings alone.
