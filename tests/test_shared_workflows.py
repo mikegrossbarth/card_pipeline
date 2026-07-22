@@ -5260,6 +5260,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.rows.append(kwargs["values"])
                 return "row-1"
 
+            def __getitem__(self, key):
+                if key == "columns":
+                    return app.INVENTORY_TABLE_COLUMNS
+                raise KeyError(key)
+
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
