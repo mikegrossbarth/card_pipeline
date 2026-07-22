@@ -37,6 +37,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Home `Review Sheet` previews now show a highlighted bottom totals row for numerical columns, including real numeric cells and currency-formatted strings, while leaving cert-number strings alone.
 - Lot Price Fill now adds any leftover/unallocated lot balance to the last comp row in the current list, so filled purchase prices tie exactly to the lot total even when source values run short or rounding leaves pennies.
 - Profit `Profit to Sales Ratio` now uses month buckets for `Year`, `YTD`, and `Total` periods, matching the yearly/monthly behavior of `Profit by Company` instead of plotting one point per day.
 - Windows was audited against recent Mac commits from 2026-07-17 onward. Shared desktop behavior ported here: Profit now matches Mac with separate `Last 30 Days` and `Calendar Month` periods, defaults to `Calendar Month`, preserves legacy `Month` as a calendar-month alias, and Personal L.U.C.A.S moves the hidden/default `person` column to the end of Receive, Inventory, and Profit tables while keeping Team L.U.C.A.S unchanged. Mobile/trade/queue, Instagram, Mac-only CY, and Mac launcher/icon commits were intentionally not ported.
