@@ -37,6 +37,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Profit `Profit to Sales Ratio` now uses month buckets for `Year`, `YTD`, and `Total` periods, matching the yearly/monthly behavior of `Profit by Company` instead of plotting one point per day.
 - Windows was audited against recent Mac commits from 2026-07-17 onward. Shared desktop behavior ported here: Profit now matches Mac with separate `Last 30 Days` and `Calendar Month` periods, defaults to `Calendar Month`, preserves legacy `Month` as a calendar-month alias, and Personal L.U.C.A.S moves the hidden/default `person` column to the end of Receive, Inventory, and Profit tables while keeping Team L.U.C.A.S unchanged. Mobile/trade/queue, Instagram, Mac-only CY, and Mac launcher/icon commits were intentionally not ported.
 - Inventory filter popup now includes `Missing Comps Only` and `Missing CL Value Only`. The old large `No Comps` toolbar button was removed to keep the Inventory action row cleaner; selected missing-value filters match rows missing either selected value, treat blank or zero CL values as missing, still hide sold rows, and are covered by focused tests.
 - Cert normalization now preserves old SGC-style dashed cert numbers such as `2007430-003` across spreadsheet intake, scan/manual receive, inventory matching, and Card Ladder bridge result matching. Bridge comparisons also use a compact fallback so `2007430-003` can match `2007430003` if a browser/OCR path drops the dash.

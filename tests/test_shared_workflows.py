@@ -7409,7 +7409,20 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(ratio_values[0], 0.25)
         self.assertEqual(ratio_values[-1], 0.3)
 
+        year_ratio_rows = [
+            {"assigned_person": "Lucas", "date_added": "2026-01-05", "profit": 50, "sale_price": 100},
+            {"assigned_person": "Lucas", "date_added": "2026-01-20", "profit": 25, "sale_price": 100},
+            {"assigned_person": "Lucas", "date_added": "2026-03-01", "profit": 30, "sale_price": 300},
+        ]
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Year")
+        year_ratio_labels, year_ratio_values = dummy._profit_chart_series(year_ratio_rows)
+        self.assertEqual(year_ratio_labels, [f"2026-{month:02d}" for month in range(1, 13)])
+        self.assertAlmostEqual(year_ratio_values[0], 0.375)
+        self.assertEqual(year_ratio_values[1], 0.0)
+        self.assertAlmostEqual(year_ratio_values[2], 0.1)
+
         dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Daily Trend")
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "5 Days")
         dummy.profit_plot_var = types.SimpleNamespace(get=lambda: "By Sport")
         self.assertEqual(dummy._profit_chart_title(), "Daily Trend by Sport (5 Days)")
         sport_days, sport_lines, percent_mode = dummy._profit_chart_lines(filtered)
