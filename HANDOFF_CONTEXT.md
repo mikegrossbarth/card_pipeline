@@ -37,6 +37,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Comp now exposes a green `Update Best Company/Payouts` button for the currently loaded incoming/working sheet rows, plus right-click `Update Best Company/Payout` for selected line items. These recalculate assignment fields only; users still click `Save Back to Source Sheet` to persist changes.
 - Raw item ID generation now looks at active inventory, live sheets, sold profit history, and activity-log add/sold history before choosing the next ID. This prevents quick Add Card -> Mark Sold loops from reusing the same raw ID and hiding later sales as duplicate profit rows.
 - Mark Sold dialogs now leave Sale Price blank on open instead of pre-filling the estimated payout/inventory value, so users can type the actual sale price without erasing a recommendation first.
 - Comp table now shows a highlighted bottom `TOTAL` row that sums the visible/current Purchase column, while remaining non-editable and separate from the inline `+ Add row` control.
