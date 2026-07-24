@@ -7148,6 +7148,31 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
+    def test_inventory_photo_export_copies_to_desktop(self) -> None:
+        class PhotoExportDummy:
+            _desktop_photo_export_destination = app.CardPipelineApp._desktop_photo_export_destination
+            _export_inventory_photos_to_desktop = app.CardPipelineApp._export_inventory_photos_to_desktop
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source front.jpg"
+            source.write_bytes(b"fake image")
+            desktop = root / "Desktop"
+            dummy = PhotoExportDummy()
+            record = {
+                "card_title": "2024 Test/Card: Bad*Chars PSA 10",
+                "cert_number": "123",
+                "inventory_key": "Kevin|123",
+            }
+            with patch("pathlib.Path.home", return_value=root):
+                exported = dummy._export_inventory_photos_to_desktop(record, [source])
+            self.assertEqual(len(exported), 1)
+            self.assertTrue(exported[0].exists())
+            self.assertEqual(exported[0].read_bytes(), b"fake image")
+            self.assertEqual(exported[0].parent, desktop)
+            self.assertIn("2024-Test-Card-Bad-Chars-PSA-10", exported[0].name)
+            self.assertTrue(source.exists())
+
     def test_manual_inventory_add_accepts_cert_without_grader(self) -> None:
         class ManualAddDummy:
             _money_value = app.CardPipelineApp._money_value
