@@ -519,12 +519,12 @@ INVENTORY_TABLE_COLUMNS = (
     "cy_confidence",
     "company",
     "payout",
+    "delta",
     "paid_with",
     "source",
     "status",
     "photos",
     "notes",
-    "delta",
 )
 
 ADD_INTAKE_ROW_IID = "__add_intake_row__"
