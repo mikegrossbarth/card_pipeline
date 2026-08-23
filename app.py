@@ -11948,27 +11948,35 @@ class CardPipelineApp(tk.Tk):
             self.review_status.set("Select receive or assignment rows to delete.")
 
     def mark_review_received_in_sheets(self) -> None:
+        perf_start = time.perf_counter()
         certs = {scan_to_cert(row.cert_number) for row in self.review_rows if scan_to_cert(row.cert_number)}
         row_refs = {row_ref for row in self.review_rows if not scan_to_cert(row.cert_number) for row_ref in [self._receive_row_ref(row)] if row_ref}
         if not certs and not row_refs:
             messagebox.showinfo("No received cards", "Scan/load certed cards or load/match raw rows in Receive before marking sheets.")
             return
-        paths: list[Path] = []
+        available_paths: list[Path] = []
         errors: list[str] = []
         for directory in (INCOMING_SHEETS_DIR, WORKING_SHEETS_DIR):
             try:
                 directory.mkdir(parents=True, exist_ok=True)
-                paths.extend(sorted(directory.glob("*.xlsx"), key=lambda path: path.name.lower()))
+                available_paths.extend(sorted(directory.glob("*.xlsx"), key=lambda path: path.name.lower()))
             except Exception as error:
                 errors.append(f"{directory}: {error}")
-        if not paths:
+        if not available_paths:
             messagebox.showinfo("No sheets found", "No incoming or working sheets were found to update.")
             return
+        paths = self._receive_mark_target_paths(available_paths, certs, row_refs)
         marked_certs: set[str] = set()
         marked_row_refs: set[tuple[str, str, int]] = set()
         try:
             with shared_lock(CARD_PIPELINE_DIR, "receive-company-sheets", self.lucas_identity):
+                mark_started = time.perf_counter()
                 result = mark_received_in_workbooks(paths, certs, row_refs)
+                record_performance_event(
+                    "receive.mark_workbooks",
+                    mark_started,
+                    f"target_sheets={len(paths)} available_sheets={len(available_paths)} rows={len(certs) + len(row_refs)}",
+                )
                 errors.extend(result.get("errors") or [])
                 rows_marked = int(result.get("rows_marked") or 0)
                 files_updated = int(result.get("files_updated") or 0)
@@ -12016,14 +12024,18 @@ class CardPipelineApp(tk.Tk):
                             for row in inventory_rows
                         ]
                         inventory_rows_added = self.add_inventory_records(inventory_records)
+                move_started = time.perf_counter()
                 moved_received = self._move_fully_received_sheets_to_received(paths)
+                record_performance_event("receive.move_fully_received", move_started, f"target_sheets={len(paths)} moved={len(moved_received)}")
                 if moved_received:
                     self._save_sheet_markers()
         except Exception as error:
             messagebox.showerror("Shared folder busy", str(error))
             self.status_var.set(f"Receive update failed: {error}")
             return
-        self.refresh_incoming_index()
+        self._drop_marked_receive_rows_from_index(marked_certs, marked_row_refs)
+        for sheet_name in moved_received:
+            self._drop_sheet_from_incoming_index(sheet_name)
         self.refresh_working_sheets()
         self.refresh_received_sheets()
         cleared_receive_rows = self._clear_received_rows(marked_certs, marked_row_refs)
@@ -12041,7 +12053,7 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Added {inventory_rows_added} received card(s) to active inventory.")
         elif company_rows_missing_company:
             self.status_var.set(f"{company_rows_missing_company} checked company pile card(s) had no Best Company.")
-        self.refresh_home()
+        self.refresh_home(reconcile_accounted=False, archive_received=False)
         summary_lines = [
             f"Marked rows: {rows_marked}",
             f"Updated sheet files: {files_updated}",
@@ -12080,6 +12092,62 @@ class CardPipelineApp(tk.Tk):
                 "warnings": errors[:8],
             },
         )
+        record_performance_event(
+            "receive.mark_total",
+            perf_start,
+            f"target_sheets={len(paths)} available_sheets={len(available_paths)} marked={rows_marked} moved={len(moved_received)}",
+            force=True,
+        )
+
+    def _receive_mark_target_paths(
+        self,
+        available_paths: list[Path],
+        certs: set[str],
+        row_refs: set[tuple[str, str, int]],
+    ) -> list[Path]:
+        target_names: set[str] = set()
+        has_unresolved_target = False
+        for row in self.review_rows:
+            cert = scan_to_cert(row.cert_number)
+            row_ref = self._receive_row_ref(row) if not cert else None
+            if cert not in certs and row_ref not in row_refs:
+                continue
+            source_name = Path(str(self.review_sheet_sources.get(row.excel_row, "") or "")).name
+            if source_name and source_name.upper() != "NO SHEET FOUND":
+                target_names.add(source_name.lower())
+            else:
+                has_unresolved_target = True
+        if has_unresolved_target or not target_names:
+            return list(available_paths)
+        targets = [path for path in available_paths if path.name.lower() in target_names]
+        return targets or list(available_paths)
+
+    def _drop_marked_receive_rows_from_index(
+        self,
+        marked_certs: set[str],
+        marked_row_refs: set[tuple[str, str, int]],
+    ) -> None:
+        index = getattr(self, "incoming_cert_index", None)
+        if not isinstance(index, dict) or not (marked_certs or marked_row_refs):
+            return
+        normalized_refs = {
+            (str(sheet).strip().lower(), str(tab).strip().lower(), int(row_number))
+            for sheet, tab, row_number in marked_row_refs
+        }
+        kept: dict[str, dict[str, object]] = {}
+        for key, candidate in index.items():
+            candidate_cert = "" if str(key).startswith("raw:") else scan_to_cert(key)
+            candidate_ref = self._receive_row_ref_key(candidate)
+            candidate_ref_parts = candidate_ref.split(":", 3) if candidate_ref else []
+            candidate_row_ref = (
+                (candidate_ref_parts[1], candidate_ref_parts[2], int(candidate_ref_parts[3]))
+                if len(candidate_ref_parts) == 4 and candidate_ref_parts[0] == "raw" and candidate_ref_parts[3].isdigit()
+                else None
+            )
+            if candidate_cert in marked_certs or candidate_row_ref in normalized_refs:
+                continue
+            kept[key] = candidate
+        self.incoming_cert_index = kept
 
     def _apply_recommendations_to_rows(self, rows: list[WorkbookRow], force: bool = False) -> None:
         for row in rows:

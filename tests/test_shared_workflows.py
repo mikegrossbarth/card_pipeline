@@ -3341,6 +3341,33 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.review_rows[0].card_title, "2024 Test Card PSA 10")
         self.assertEqual(dummy.review_sheet_sources[2], "Incoming Lot.xlsx")
 
+    def test_receive_mark_targets_only_matched_source_sheets_and_updates_index(self) -> None:
+        class Dummy:
+            _receive_mark_target_paths = app.CardPipelineApp._receive_mark_target_paths
+            _drop_marked_receive_rows_from_index = app.CardPipelineApp._drop_marked_receive_rows_from_index
+            _receive_row_ref = app.CardPipelineApp._receive_row_ref
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "Matched Lot.xlsx"
+            other = root / "Other Lot.xlsx"
+            source.touch()
+            other.touch()
+            dummy = Dummy()
+            dummy.review_rows = [WorkbookRow(excel_row=2, cert_number="130635989", card_title="Test Card", grader="PSA")]
+            dummy.review_sheet_sources = {2: source.name}
+
+            targets = dummy._receive_mark_target_paths([source, other], {"130635989"}, set())
+            self.assertEqual(targets, [source])
+
+            dummy.incoming_cert_index = {
+                "130635989": {"sheet": source.name},
+                "999999999": {"sheet": other.name},
+            }
+            dummy._drop_marked_receive_rows_from_index({"130635989"}, set())
+            self.assertEqual(set(dummy.incoming_cert_index), {"999999999"})
+
     def test_receive_row_recalculates_assignment_when_sheet_match_has_values_but_no_company(self) -> None:
         class Dummy:
             _append_review_rows = app.CardPipelineApp._append_review_rows
