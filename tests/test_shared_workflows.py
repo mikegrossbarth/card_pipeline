@@ -3554,7 +3554,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.review_rows[0].card_title, "Matched Card PSA 10")
         self.assertFalse(getattr(dummy.review_rows[0], "_needs_receive_index_retry", False))
 
-    def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
+    def test_receive_barcode_queues_stale_match_refresh_without_blocking_scan(self) -> None:
         class Dummy:
             _append_review_rows = app.CardPipelineApp._append_review_rows
             _incoming_match = app.CardPipelineApp._incoming_match
@@ -3597,11 +3597,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         dummy._append_review_rows([{"cert_number": "12345678", "source": "Receive Barcode", "notes": "Received"}])
 
-        self.assertEqual(dummy.refresh_count, 1)
+        self.assertEqual(dummy.refresh_count, 0)
         self.assertTrue(dummy.refreshed)
         self.assertEqual(dummy.review_rows[0].best_company, "Fanatics")
         self.assertEqual(dummy.review_rows[0].estimated_payout, 88.0)
-        self.assertEqual(dummy.review_sheet_sources[2], "Assigned Lot.xlsx")
+        self.assertEqual(dummy.review_sheet_sources[2], "Thin Startup Lot.xlsx")
+        self.assertTrue(getattr(dummy.review_rows[0], "_needs_receive_index_retry", False))
 
     def test_receive_scan_queues_without_reindexing_while_startup_index_loads(self) -> None:
         class Dummy:
@@ -3709,9 +3710,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         dummy._append_review_rows([{"cert_number": "21366909", "source": "Receive Barcode", "notes": "Received"}])
 
-        self.assertEqual(dummy.refresh_count, 1)
+        self.assertEqual(dummy.refresh_count, 0)
         self.assertEqual(dummy.review_rows[0].best_company, "Arena Club")
         self.assertEqual(dummy.review_rows[0].estimated_payout, 369.89)
+        self.assertTrue(getattr(dummy.review_rows[0], "_needs_receive_index_retry", False))
 
     def test_receive_row_recomputes_stale_stored_assignment_values(self) -> None:
         class Dummy:

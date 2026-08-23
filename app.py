@@ -13177,7 +13177,6 @@ class CardPipelineApp(tk.Tk):
         existing = list(self.review_rows)
         start = len(existing) + 2
         added_excel_rows: list[int] = []
-        refreshed_incoming_index = False
         for offset, row in enumerate(rows):
             cert = scan_to_cert(row.get("cert_number"))
             match = self._incoming_match(cert) if cert else self._incoming_raw_match(row)
@@ -13186,10 +13185,6 @@ class CardPipelineApp(tk.Tk):
                 and not str(match.get("best_company") or "").strip()
                 and match.get("estimated_payout") is None
             )
-            if cert and stale_assignment_match and not refreshed_incoming_index and not getattr(self, "startup_sheet_index_loading", False):
-                self.refresh_incoming_index()
-                refreshed_incoming_index = True
-                match = self._incoming_match(cert)
             grader = str(row.get("grader") or match.get("grader") or infer_grader(str(row.get("card_title") or ""))).upper()
             card = str(row.get("card_title") or match.get("card_title") or "").strip()
             category = str(row.get("sport") or row.get("category") or match.get("sport") or match.get("category") or "").strip()
@@ -13201,7 +13196,11 @@ class CardPipelineApp(tk.Tk):
             comp_details = str(row.get("card_ladder_comps") or match.get("card_ladder_comps") or "")
             best_company = str(row.get("best_company") or match.get("best_company") or "").strip()
             estimated_payout = row.get("estimated_payout") if row.get("estimated_payout") is not None else match.get("estimated_payout")
-            missing_index_retry = False
+            missing_index_retry = bool(
+                cert
+                and stale_assignment_match
+                and not getattr(self, "startup_sheet_index_loading", False)
+            )
             if match:
                 sheet_source = str(row.get("sheet_source") or match.get("sheet") or "")
                 status = str(row.get("status") or "Received")
