@@ -30,6 +30,7 @@ import assignment_engine
 import google_sheets_import
 import lucas_diagnostics
 import cardladder_ocr
+import shared_state
 from bridge_server import BridgeState, cert_match_key as bridge_cert_match_key, clean_profile_title as bridge_clean_profile_title, generic_profile_review_reason, keep_urls_match, normalize_result_cert as bridge_normalize_result_cert, parse_value as bridge_parse_value
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, normalize_cert, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_google_sheet_values, read_simple_spreadsheet, write_working_sheet
@@ -382,6 +383,30 @@ class SharedStateTests(unittest.TestCase):
             second.join()
 
             self.assertEqual([event[:2] for event in events], [("A", "enter"), ("A", "exit"), ("B", "enter"), ("B", "exit")])
+
+    def test_shared_lock_recovers_abandoned_local_process_lock(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_path = root / ".locks" / "same-file.lock"
+            lock_path.parent.mkdir()
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "token": "orphaned",
+                        "name": "same-file",
+                        "pid": 999999,
+                        "machine": shared_state.socket.gethostname(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("shared_state.os.kill", side_effect=ProcessLookupError):
+                with shared_lock(root, "same-file", {"display_name": "Tester", "machine": shared_state.socket.gethostname()}):
+                    payload = json.loads(lock_path.read_text(encoding="utf-8"))
+                    self.assertEqual(payload["pid"], os.getpid())
+
+            self.assertFalse(lock_path.exists())
 
     def test_atomic_json_write_and_local_identity(self) -> None:
         with TemporaryDirectory() as tmp:
