@@ -2679,7 +2679,11 @@ class CardPipelineApp(tk.Tk):
     def _raw_item_id_namespace(self) -> str:
         return "MIKEY" if self._is_personal_lucas() else "TEAM"
 
-    def _next_raw_item_id(self, existing_records: list[dict[str, object]] | None = None) -> str:
+    def _next_raw_item_id(
+        self,
+        existing_records: list[dict[str, object]] | None = None,
+        minimum_sequence: int = 0,
+    ) -> str:
         today = datetime.now().strftime("%Y%m%d")
         prefix = f"RAW-{self._raw_item_id_namespace()}-{today}-"
         if existing_records is None:
@@ -2692,7 +2696,7 @@ class CardPipelineApp(tk.Tk):
                     records.extend(history_loader())
                 except Exception:
                     pass
-        max_sequence = 0
+        max_sequence = max(int(minimum_sequence or 0) - 1, 0)
         for record in records:
             item_id = str(record.get("item_id") or "").strip().upper()
             if not item_id.startswith(prefix):
@@ -2767,15 +2771,14 @@ class CardPipelineApp(tk.Tk):
             return 0
 
         existing_records = list(self._load_inventory_ledger())
-        if hasattr(self, "_live_sheet_raw_item_records"):
-            existing_records.extend(self._live_sheet_raw_item_records())
         for row in rows:
             item_id = str(getattr(row, "item_id", "") or "").strip()
             if item_id:
                 existing_records.append({"item_id": item_id})
         added = 0
-        for row in rows_needing_ids:
-            item_id = self._next_raw_item_id(existing_records)
+        timestamp_seed = int(datetime.now().strftime("%H%M%S%f"))
+        for offset, row in enumerate(rows_needing_ids):
+            item_id = self._next_raw_item_id(existing_records, minimum_sequence=timestamp_seed + offset)
             setattr(row, "item_id", item_id)
             existing_records.append({"item_id": item_id})
             added += 1

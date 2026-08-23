@@ -7243,8 +7243,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         added = CreateDummy()._ensure_raw_item_ids_for_rows(rows)
 
         self.assertEqual(added, 2)
-        self.assertEqual(rows[0].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0004")
-        self.assertEqual(rows[1].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0005")
+        prefix = f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-"
+        self.assertTrue(rows[0].item_id.startswith(prefix))
+        self.assertEqual(int(rows[1].item_id.removeprefix(prefix)), int(rows[0].item_id.removeprefix(prefix)) + 1)
         self.assertEqual(rows[2].item_id, "")
 
     def test_certified_create_rows_skip_global_raw_id_scan(self) -> None:
@@ -7290,7 +7291,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         added = dummy._ensure_raw_item_ids_for_rows(rows)
 
         self.assertEqual(added, 1)
-        self.assertEqual(rows[0].item_id, f"RAW-MIKEY-{today}-0001")
+        self.assertTrue(rows[0].item_id.startswith(f"RAW-MIKEY-{today}-"))
         self.assertEqual(rows[0].grader, "")
 
         reloaded = dummy._workbook_rows_from_simple_records(
@@ -7356,7 +7357,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(RawIdDummy()._next_raw_item_id(), f"RAW-MIKEY-{today}-0004")
 
-    def test_create_raw_ids_skip_live_incoming_sheet_ids(self) -> None:
+    def test_create_raw_ids_do_not_scan_live_workbooks(self) -> None:
         class RawIdDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
@@ -7366,15 +7367,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 return []
 
             def _live_sheet_raw_item_records(self):
-                today = datetime.now().strftime("%Y%m%d")
-                return [{"item_id": f"RAW-MIKEY-{today}-0001"}]
+                raise AssertionError("new raw IDs must not scan live workbooks during save")
 
         today = datetime.now().strftime("%Y%m%d")
         row = WorkbookRow(excel_row=2, cert_number="", grader="", card_title="Raw New Card", category="baseball")
 
         RawIdDummy()._ensure_raw_item_ids_for_rows([row])
 
-        self.assertEqual(row.item_id, f"RAW-MIKEY-{today}-0002")
+        self.assertTrue(row.item_id.startswith(f"RAW-MIKEY-{today}-"))
 
     def test_stage_sheet_raw_id_backfill_writes_missing_item_ids(self) -> None:
         class RawIdDummy:
