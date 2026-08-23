@@ -2693,12 +2693,6 @@ class CardPipelineApp(tk.Tk):
             records = self._raw_item_id_existing_records()
         else:
             records = list(existing_records)
-            history_loader = getattr(self, "_raw_item_id_existing_records", None)
-            if callable(history_loader):
-                try:
-                    records.extend(history_loader())
-                except Exception:
-                    pass
         max_sequence = max(int(minimum_sequence or 0) - 1, 0)
         for record in records:
             item_id = str(record.get("item_id") or "").strip().upper()

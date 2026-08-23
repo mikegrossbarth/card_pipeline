@@ -7401,6 +7401,25 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertTrue(row.item_id.startswith(f"RAW-MIKEY-{today}-"))
 
+    def test_create_raw_ids_do_not_reload_global_history_for_each_row(self) -> None:
+        class RawIdDummy:
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
+            _raw_item_id_namespace = lambda self: "MIKEY"
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _raw_item_id_existing_records(self):
+                raise AssertionError("Create save should use its preloaded records")
+
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="", grader="", card_title="Raw One", category="baseball"),
+            WorkbookRow(excel_row=3, cert_number="", grader="", card_title="Raw Two", category="baseball"),
+        ]
+
+        self.assertEqual(RawIdDummy()._ensure_raw_item_ids_for_rows(rows), 2)
+
     def test_stage_sheet_raw_id_backfill_writes_missing_item_ids(self) -> None:
         class RawIdDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
