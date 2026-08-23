@@ -4992,6 +4992,46 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 dummy._prune_home_summary_cache([])
                 self.assertEqual(dummy.home_summary_cache, {})
 
+    def test_home_workbook_summary_cache_persists_between_app_sessions(self) -> None:
+        class HomeSummaryDummy:
+            _load_home_summary_cache = app.CardPipelineApp._load_home_summary_cache
+            _save_home_summary_cache = app.CardPipelineApp._save_home_summary_cache
+
+        old_cache_path = app.HOME_SUMMARY_CACHE_PATH
+        try:
+            with TemporaryDirectory() as tmp:
+                app.HOME_SUMMARY_CACHE_PATH = Path(tmp) / "home_summary_cache.json"
+                first = HomeSummaryDummy()
+                first.home_summary_cache_lock = threading.Lock()
+                first.home_summary_cache = {
+                    "lot-a": {
+                        "mtime_ns": 123,
+                        "size": 456,
+                        "summary": {"name": "Lot A.xlsx", "row_count": 4, "path": Path(tmp) / "Lot A.xlsx"},
+                    }
+                }
+                first._save_home_summary_cache()
+
+                second = HomeSummaryDummy()
+                second.home_summary_cache_lock = threading.Lock()
+                second.home_summary_cache = second._load_home_summary_cache()
+                self.assertEqual(second.home_summary_cache["lot-a"]["summary"], {"name": "Lot A.xlsx", "row_count": 4})
+        finally:
+            app.HOME_SUMMARY_CACHE_PATH = old_cache_path
+
+    def test_google_sheet_cache_freshness_uses_recent_export(self) -> None:
+        class GoogleCacheDummy:
+            _google_sheet_cache_is_fresh = app.CardPipelineApp._google_sheet_cache_is_fresh
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sheet.xlsx"
+            path.write_text("cached", encoding="utf-8")
+            dummy = GoogleCacheDummy()
+            self.assertTrue(dummy._google_sheet_cache_is_fresh(path))
+            old_timestamp = time.time() - app.GOOGLE_SHEET_CACHE_MAX_AGE_SECONDS - 1
+            os.utime(path, (old_timestamp, old_timestamp))
+            self.assertFalse(dummy._google_sheet_cache_is_fresh(path))
+
     def test_accounted_incoming_sheet_reconciles_to_received_without_duplicate_inventory(self) -> None:
         class ReconcileDummy:
             _accounted_source_key = app.CardPipelineApp._accounted_source_key

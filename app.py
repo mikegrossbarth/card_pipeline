@@ -127,6 +127,8 @@ UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
 PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
 PERFORMANCE_LOG_PATH = CARD_PIPELINE_DIR / "lucas_performance.log"
+HOME_SUMMARY_CACHE_PATH = CARD_PIPELINE_DIR / "home_summary_cache.json"
+GOOGLE_SHEET_CACHE_MAX_AGE_SECONDS = 5 * 60
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 MIKEYS_CARDS_LOGO_PATH = ROOT / "assets" / "mikeys_cards_logo.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
@@ -267,7 +269,7 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, ACTIVITY_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, ACTIVITY_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH, HOME_SUMMARY_CACHE_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -285,6 +287,7 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
     SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
     PERFORMANCE_LOG_PATH = CARD_PIPELINE_DIR / "lucas_performance.log"
+    HOME_SUMMARY_CACHE_PATH = CARD_PIPELINE_DIR / "home_summary_cache.json"
 
 
 def set_pipeline_from_working_dir(path: Path) -> None:
@@ -817,8 +820,8 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_kind = tk.StringVar(value="Incoming")
         self.home_sheet_paths: dict[str, dict[str, Path]] = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries: dict[str, dict[str, object]] = {}
-        self.home_summary_cache: dict[str, dict[str, object]] = {}
         self.home_summary_cache_lock = threading.Lock()
+        self.home_summary_cache: dict[str, dict[str, object]] = self._load_home_summary_cache()
         self.home_sheet_markers: dict[str, dict[str, object]] = self._load_sheet_markers()
         self.deleted_sheet_marker_keys: set[str] = set()
         self.home_selected_sheet_key = ""
@@ -7431,6 +7434,39 @@ class CardPipelineApp(tk.Tk):
     def _home_summary_cache_key(self, path: Path) -> str:
         return os.path.normcase(str(path.resolve()))
 
+    def _load_home_summary_cache(self) -> dict[str, dict[str, object]]:
+        try:
+            raw = json.loads(HOME_SUMMARY_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        entries = raw.get("entries") if isinstance(raw, dict) else None
+        if not isinstance(entries, dict):
+            return {}
+        return {
+            str(key): dict(value)
+            for key, value in entries.items()
+            if isinstance(key, str) and isinstance(value, dict) and isinstance(value.get("summary"), dict)
+        }
+
+    def _save_home_summary_cache(self) -> None:
+        with self.home_summary_cache_lock:
+            entries = {
+                key: {
+                    "mtime_ns": value.get("mtime_ns"),
+                    "size": value.get("size"),
+                    "summary": {
+                        summary_key: summary_value
+                        for summary_key, summary_value in dict(value.get("summary") or {}).items()
+                        if summary_key != "path"
+                    },
+                }
+                for key, value in self.home_summary_cache.items()
+            }
+        try:
+            atomic_write_json(HOME_SUMMARY_CACHE_PATH, {"entries": entries})
+        except Exception:
+            return
+
     def _summarize_home_workbook_cached(self, path: Path) -> dict[str, object]:
         stat = path.stat()
         key = self._home_summary_cache_key(path)
@@ -7449,6 +7485,9 @@ class CardPipelineApp(tk.Tk):
             for key in list(self.home_summary_cache):
                 if key not in live_keys:
                     self.home_summary_cache.pop(key, None)
+        save_cache = getattr(self, "_save_home_summary_cache", None)
+        if callable(save_cache):
+            save_cache()
 
     def _accounted_source_key(self, value: object) -> str:
         return Path(str(value or "")).name.strip().lower()
@@ -7577,7 +7616,7 @@ class CardPipelineApp(tk.Tk):
         thread.start()
 
     def _refresh_startup_google_sheet_caches(self) -> dict[str, object]:
-        result = {"refreshed": 0, "errors": []}
+        result = {"refreshed": 0, "cached": 0, "errors": []}
         sources = self._saved_google_sheet_sources()
         if not sources:
             return result
@@ -7591,6 +7630,9 @@ class CardPipelineApp(tk.Tk):
                         continue
                     try:
                         output_path = path_from_source_value(path, ASSIGNMENT_CONFIG_PATH.parent)
+                        if self._google_sheet_cache_is_fresh(output_path):
+                            result["cached"] = int(result["cached"]) + 1
+                            continue
                         export_google_sheet_to_xlsx(url, output_path, interactive=False)
                         result["refreshed"] = int(result["refreshed"]) + 1
                     except Exception as error:
@@ -7598,6 +7640,12 @@ class CardPipelineApp(tk.Tk):
         except Exception as error:
             result["errors"].append(str(error))
         return result
+
+    def _google_sheet_cache_is_fresh(self, path: Path) -> bool:
+        try:
+            return path.is_file() and (time.time() - path.stat().st_mtime) < GOOGLE_SHEET_CACHE_MAX_AGE_SECONDS
+        except OSError:
+            return False
 
     def _refresh_keep_source_registry(self) -> None:
         try:
@@ -7779,7 +7827,7 @@ class CardPipelineApp(tk.Tk):
         record_performance_event(
             "startup.google_sheet_cache",
             google_start,
-            f"refreshed={google_cache_result.get('refreshed') or 0} errors={len(google_cache_result.get('errors') or [])}",
+            f"refreshed={google_cache_result.get('refreshed') or 0} cached={google_cache_result.get('cached') or 0} errors={len(google_cache_result.get('errors') or [])}",
         )
         payload["google_sheet_cache"] = google_cache_result
         errors.extend(google_cache_result.get("errors") or [])
