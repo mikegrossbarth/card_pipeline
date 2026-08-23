@@ -16,6 +16,7 @@ let activeWindowId = null;
 let activeBridgeUrl = BRIDGE_URLS[0];
 let cancelRequested = false;
 const keepSyncAttempts = new Map();
+const profileTitlesById = new Map();
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(BRIDGE_ALARM_NAME, { periodInMinutes: 0.05 });
@@ -355,7 +356,7 @@ async function lookupRowWithRetries(tabId, row) {
   let pageResult = await submitRowWithGrader(tabId, row);
   if (isStalePreviousResultSubmit(pageResult)) {
     await resetSalesHistoryTab(tabId);
-    pageResult = await submitRowWithGrader(tabId, row);
+    pageResult = await submitRowWithGrader(tabId, { ...row, allowStableResultAfterFreshRetry: true });
     if (isStalePreviousResultSubmit(pageResult)) {
       return {
         ...pageResult,
@@ -364,7 +365,8 @@ async function lookupRowWithRetries(tabId, row) {
     }
   }
 
-  if (["error", "invalid_cert"].includes(pageResult?.status)) return pageResult;
+  if (pageResult?.status === "invalid_cert") return pageResult;
+  if (pageResult?.status === "error" && !isRecoverableResultWaitFailure(pageResult)) return pageResult;
   if (pageResult?.status === "no_results") {
     if (pageResult?.ocr?.profileTitle) return {
       ...pageResult,
@@ -414,7 +416,9 @@ async function lookupRowWithRetries(tabId, row) {
 
   const domResult = await captureValueFromDom(tabId, row, pageResult);
   if (["invalid_cert", "no_results"].includes(domResult?.status)) return domResult;
-  if (domResultLooksComplete(domResult)) return settleGenericProfileTitle(tabId, row, pageResult, domResult);
+  if (domResultLooksComplete(domResult)) {
+    return reconcileProfileTitle(await settleGenericProfileTitle(tabId, row, pageResult, domResult));
+  }
   const expectedResultCount = Number(domResult?.ocr?.resultCount);
 
   let lastResult = null;
@@ -422,10 +426,43 @@ async function lookupRowWithRetries(tabId, row) {
     const invalidCheck = await checkInvalidCertToast(tabId, row);
     if (invalidCheck?.status === "invalid_cert") return invalidCheck;
     lastResult = await captureValueWithOcr(tabId, row, { ...pageResult, ocrAttempt: attempt });
-    if (captureResultLooksComplete(lastResult, expectedResultCount)) return lastResult;
+    if (captureResultLooksComplete(lastResult, expectedResultCount)) {
+      return reconcileProfileTitle(await settleGenericProfileTitle(tabId, row, pageResult, lastResult));
+    }
     await delay(OCR_RETRY_MS);
   }
-  return markPartialCapture(mergeCaptureResults(domResult, lastResult), expectedResultCount);
+  return reconcileProfileTitle(markPartialCapture(mergeCaptureResults(domResult, lastResult), expectedResultCount));
+}
+
+function reconcileProfileTitle(result) {
+  const profileId = profileIdFromPageUrl(result?.pageUrl);
+  const title = String(result?.ocr?.profileTitle || "").trim();
+  if (!profileId) return result;
+
+  if (title && !isBareProfileIdTitle(title, profileId)) {
+    profileTitlesById.set(profileId, title);
+    return result;
+  }
+
+  const rememberedTitle = profileTitlesById.get(profileId);
+  if (!rememberedTitle) return result;
+  return {
+    ...result,
+    ocr: {
+      ...(result?.ocr || {}),
+      profileTitle: rememberedTitle,
+      profileTitleSource: "previous verified result for this Card Ladder profile",
+    },
+  };
+}
+
+function profileIdFromPageUrl(pageUrl) {
+  const match = String(pageUrl || "").match(/profileId(?:%3A|:|=)([^&|]+)/i);
+  return match ? decodeURIComponent(match[1]).trim().toLowerCase() : "";
+}
+
+function isBareProfileIdTitle(title, profileId) {
+  return String(title || "").trim().toLowerCase() === String(profileId || "").trim().toLowerCase();
 }
 
 async function settleGenericProfileTitle(tabId, row, pageResult, result) {
@@ -449,6 +486,14 @@ async function settleGenericProfileTitle(tabId, row, pageResult, result) {
 
 function isStalePreviousResultSubmit(result) {
   return result?.status === "error" && /stayed on the previous result page/i.test(String(result?.error || ""));
+}
+
+function isRecoverableResultWaitFailure(result) {
+  const error = String(result?.error || "");
+  const pageUrl = String(result?.pageUrl || "");
+  return result?.status === "error"
+    && /did not load a new matching result after submit/i.test(error)
+    && /profileId(?:%3A|:|=)/i.test(pageUrl);
 }
 
 async function resetSalesHistoryTab(tabId) {

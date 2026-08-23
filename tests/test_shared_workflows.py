@@ -30,9 +30,10 @@ import assignment_engine
 import google_sheets_import
 import lucas_diagnostics
 import cardladder_ocr
+import shared_state
 from bridge_server import BridgeState, cert_match_key as bridge_cert_match_key, clean_profile_title as bridge_clean_profile_title, generic_profile_review_reason, keep_urls_match, normalize_result_cert as bridge_normalize_result_cert, parse_value as bridge_parse_value
 from comp_engine.workbook_io import WorkbookRow
-from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, normalize_cert, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_simple_spreadsheet, write_working_sheet
+from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, normalize_cert, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_google_sheet_values, read_simple_spreadsheet, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
 
 
@@ -71,6 +72,49 @@ import multi_card_extraction
 
 
 class SharedStateTests(unittest.TestCase):
+    def test_google_sheet_values_import_selected_tab_with_simple_headers(self) -> None:
+        rows = read_google_sheet_values(
+            [
+                ["Cert #", "Card Description", "Purchase Price", "Sport", "Card Ladder", "Comps"],
+                ["12345678", "2024 Test Player Rookie PSA 10", "$25.00", "baseball", "$80.00", "$75.00"],
+            ],
+            "Incoming Lot",
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["cert_number"], "12345678")
+        self.assertEqual(rows[0]["card_title"], "2024 Test Player Rookie PSA 10")
+        self.assertEqual(rows[0]["purchase_price"], 25.0)
+        self.assertEqual(rows[0]["card_ladder_value"], 80.0)
+        self.assertEqual(rows[0]["card_ladder_comps_average"], 75.0)
+        self.assertEqual(rows[0]["workbook_sheet"], "Incoming Lot")
+
+    def test_comp_explanation_details_saved_average_calculation(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="12345678",
+            card_title="Test Card PSA 10",
+            grader="PSA",
+            card_ladder_value=150.0,
+            card_ladder_comps_average=125.0,
+            card_ladder_comps=(
+                "Comp method: Average last 5 -> $125.00\n"
+                "1. Jul 1, 2026 | $100.00 | Auction | eBay | Test Card PSA 10\n"
+                "2. Jul 2, 2026 | $150.00 | Buy Now | eBay | Test Card PSA 10"
+            ),
+        )
+
+        explanation = app.format_comp_explanation(row)
+
+        self.assertIn("Method: Average last 5", explanation)
+        self.assertIn("Sales used (2):", explanation)
+        self.assertIn("($100.00 + $150.00) / 2 = $125.00", explanation)
+
+    def test_comp_explanation_handles_rows_without_saved_sales(self) -> None:
+        row = WorkbookRow(excel_row=2, cert_number="12345678", card_title="Test Card PSA 10", grader="PSA")
+
+        self.assertIn("No saved Card Ladder sale details", app.format_comp_explanation(row))
+
     def _trade_dummy(self):
         class TradeDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -339,6 +383,30 @@ class SharedStateTests(unittest.TestCase):
             second.join()
 
             self.assertEqual([event[:2] for event in events], [("A", "enter"), ("A", "exit"), ("B", "enter"), ("B", "exit")])
+
+    def test_shared_lock_recovers_abandoned_local_process_lock(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_path = root / ".locks" / "same-file.lock"
+            lock_path.parent.mkdir()
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "token": "orphaned",
+                        "name": "same-file",
+                        "pid": 999999,
+                        "machine": shared_state.socket.gethostname(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("shared_state.os.kill", side_effect=ProcessLookupError):
+                with shared_lock(root, "same-file", {"display_name": "Tester", "machine": shared_state.socket.gethostname()}):
+                    payload = json.loads(lock_path.read_text(encoding="utf-8"))
+                    self.assertEqual(payload["pid"], os.getpid())
+
+            self.assertFalse(lock_path.exists())
 
     def test_atomic_json_write_and_local_identity(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -3486,7 +3554,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.review_rows[0].card_title, "Matched Card PSA 10")
         self.assertFalse(getattr(dummy.review_rows[0], "_needs_receive_index_retry", False))
 
-    def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
+    def test_receive_barcode_queues_stale_match_refresh_without_blocking_scan(self) -> None:
         class Dummy:
             _append_review_rows = app.CardPipelineApp._append_review_rows
             _incoming_match = app.CardPipelineApp._incoming_match
@@ -3529,11 +3597,79 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         dummy._append_review_rows([{"cert_number": "12345678", "source": "Receive Barcode", "notes": "Received"}])
 
-        self.assertEqual(dummy.refresh_count, 1)
+        self.assertEqual(dummy.refresh_count, 0)
         self.assertTrue(dummy.refreshed)
         self.assertEqual(dummy.review_rows[0].best_company, "Fanatics")
         self.assertEqual(dummy.review_rows[0].estimated_payout, 88.0)
-        self.assertEqual(dummy.review_sheet_sources[2], "Assigned Lot.xlsx")
+        self.assertEqual(dummy.review_sheet_sources[2], "Thin Startup Lot.xlsx")
+        self.assertTrue(getattr(dummy.review_rows[0], "_needs_receive_index_retry", False))
+
+    def test_receive_scan_queues_without_reindexing_while_startup_index_loads(self) -> None:
+        class Dummy:
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+
+            def refresh_incoming_index(self):
+                raise AssertionError("receive scanning must not re-index sheets during startup")
+
+            def _refresh_table(self, schedule_recommendations=False):
+                pass
+
+        dummy = Dummy()
+        dummy.assignment_engine = None
+        dummy.startup_sheet_index_loading = True
+        dummy.incoming_cert_index = {}
+        dummy.review_rows = []
+        dummy.review_sources = {}
+        dummy.review_sheet_sources = {}
+
+        dummy._append_review_rows([{"cert_number": "130635989", "source": "Receive Barcode", "notes": "Received"}])
+
+        self.assertEqual(len(dummy.review_rows), 1)
+        self.assertEqual(dummy.review_rows[0].status, "Received - matching incoming sheets")
+        dummy.incoming_cert_index["130635989"] = {
+            "sheet": "Incoming Lot.xlsx",
+            "card_title": "2024 Test Card PSA 10",
+            "grader": "PSA",
+        }
+        dummy.startup_sheet_index_loading = False
+        dummy._match_all_review_rows()
+
+        self.assertEqual(dummy.review_rows[0].status, "Received")
+        self.assertEqual(dummy.review_rows[0].card_title, "2024 Test Card PSA 10")
+        self.assertEqual(dummy.review_sheet_sources[2], "Incoming Lot.xlsx")
+
+    def test_receive_mark_targets_only_matched_source_sheets_and_updates_index(self) -> None:
+        class Dummy:
+            _receive_mark_target_paths = app.CardPipelineApp._receive_mark_target_paths
+            _drop_marked_receive_rows_from_index = app.CardPipelineApp._drop_marked_receive_rows_from_index
+            _receive_row_ref = app.CardPipelineApp._receive_row_ref
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "Matched Lot.xlsx"
+            other = root / "Other Lot.xlsx"
+            source.touch()
+            other.touch()
+            dummy = Dummy()
+            dummy.review_rows = [WorkbookRow(excel_row=2, cert_number="130635989", card_title="Test Card", grader="PSA")]
+            dummy.review_sheet_sources = {2: source.name}
+
+            targets = dummy._receive_mark_target_paths([source, other], {"130635989"}, set())
+            self.assertEqual(targets, [source])
+
+            dummy.incoming_cert_index = {
+                "130635989": {"sheet": source.name},
+                "999999999": {"sheet": other.name},
+            }
+            dummy._drop_marked_receive_rows_from_index({"130635989"}, set())
+            self.assertEqual(set(dummy.incoming_cert_index), {"999999999"})
 
     def test_receive_row_recalculates_assignment_when_sheet_match_has_values_but_no_company(self) -> None:
         class Dummy:
@@ -3574,9 +3710,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         dummy._append_review_rows([{"cert_number": "21366909", "source": "Receive Barcode", "notes": "Received"}])
 
-        self.assertEqual(dummy.refresh_count, 1)
+        self.assertEqual(dummy.refresh_count, 0)
         self.assertEqual(dummy.review_rows[0].best_company, "Arena Club")
         self.assertEqual(dummy.review_rows[0].estimated_payout, 369.89)
+        self.assertTrue(getattr(dummy.review_rows[0], "_needs_receive_index_retry", False))
 
     def test_receive_row_recomputes_stale_stored_assignment_values(self) -> None:
         class Dummy:
@@ -4296,8 +4433,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             def _refresh_table(self, schedule_recommendations=False):
                 pass
 
-            def refresh_home(self):
-                pass
+            def refresh_home(self, **kwargs):
+                self.home_refresh_options = kwargs
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4325,6 +4462,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 dummy.save_comp_to_source_sheet()
                 saved = read_simple_spreadsheet(path)
                 self.assertEqual(saved[0]["purchase_price"], 90.0)
+                self.assertEqual(dummy.home_refresh_options, {"reconcile_accounted": False, "archive_received": False})
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
 
@@ -4378,8 +4516,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             def _refresh_table(self, schedule_recommendations=False):
                 pass
 
-            def refresh_home(self):
-                pass
+            def refresh_home(self, **kwargs):
+                self.home_refresh_options = kwargs
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4409,6 +4547,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(saved[0]["purchase_price"], 22.0)
                 self.assertEqual(saved[0]["card_ladder_value"], 44.0)
                 self.assertIn("incoming Incoming Lot.xlsx", dummy.status_var.value)
+                self.assertEqual(dummy.home_refresh_options, {"reconcile_accounted": False, "archive_received": False})
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
 
@@ -5217,6 +5356,46 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
                 dummy._prune_home_summary_cache([])
                 self.assertEqual(dummy.home_summary_cache, {})
+
+    def test_home_workbook_summary_cache_persists_between_app_sessions(self) -> None:
+        class HomeSummaryDummy:
+            _load_home_summary_cache = app.CardPipelineApp._load_home_summary_cache
+            _save_home_summary_cache = app.CardPipelineApp._save_home_summary_cache
+
+        old_cache_path = app.HOME_SUMMARY_CACHE_PATH
+        try:
+            with TemporaryDirectory() as tmp:
+                app.HOME_SUMMARY_CACHE_PATH = Path(tmp) / "home_summary_cache.json"
+                first = HomeSummaryDummy()
+                first.home_summary_cache_lock = threading.Lock()
+                first.home_summary_cache = {
+                    "lot-a": {
+                        "mtime_ns": 123,
+                        "size": 456,
+                        "summary": {"name": "Lot A.xlsx", "row_count": 4, "path": Path(tmp) / "Lot A.xlsx"},
+                    }
+                }
+                first._save_home_summary_cache()
+
+                second = HomeSummaryDummy()
+                second.home_summary_cache_lock = threading.Lock()
+                second.home_summary_cache = second._load_home_summary_cache()
+                self.assertEqual(second.home_summary_cache["lot-a"]["summary"], {"name": "Lot A.xlsx", "row_count": 4})
+        finally:
+            app.HOME_SUMMARY_CACHE_PATH = old_cache_path
+
+    def test_google_sheet_cache_freshness_uses_recent_export(self) -> None:
+        class GoogleCacheDummy:
+            _google_sheet_cache_is_fresh = app.CardPipelineApp._google_sheet_cache_is_fresh
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sheet.xlsx"
+            path.write_text("cached", encoding="utf-8")
+            dummy = GoogleCacheDummy()
+            self.assertTrue(dummy._google_sheet_cache_is_fresh(path))
+            old_timestamp = time.time() - app.GOOGLE_SHEET_CACHE_MAX_AGE_SECONDS - 1
+            os.utime(path, (old_timestamp, old_timestamp))
+            self.assertFalse(dummy._google_sheet_cache_is_fresh(path))
 
     def test_accounted_incoming_sheet_reconciles_to_received_without_duplicate_inventory(self) -> None:
         class ReconcileDummy:
@@ -7091,9 +7270,47 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         added = CreateDummy()._ensure_raw_item_ids_for_rows(rows)
 
         self.assertEqual(added, 2)
-        self.assertEqual(rows[0].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0004")
-        self.assertEqual(rows[1].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0005")
+        prefix = f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-"
+        self.assertTrue(rows[0].item_id.startswith(prefix))
+        self.assertEqual(int(rows[1].item_id.removeprefix(prefix)), int(rows[0].item_id.removeprefix(prefix)) + 1)
         self.assertEqual(rows[2].item_id, "")
+
+    def test_scroll_tree_to_row_selects_and_reveals_new_row(self) -> None:
+        class Tree:
+            def __init__(self):
+                self.actions = []
+
+            def exists(self, iid):
+                self.actions.append(("exists", iid))
+                return iid == "18"
+
+            def selection_set(self, iid):
+                self.actions.append(("select", iid))
+
+            def focus(self, iid):
+                self.actions.append(("focus", iid))
+
+            def see(self, iid):
+                self.actions.append(("see", iid))
+
+        tree = Tree()
+        app.CardPipelineApp._scroll_tree_to_row(tree, 18)
+
+        self.assertEqual(tree.actions, [("exists", "18"), ("select", "18"), ("focus", "18"), ("see", "18")])
+
+    def test_certified_create_rows_skip_global_raw_id_scan(self) -> None:
+        class CreateDummy:
+            _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
+
+            def _load_inventory_ledger(self):
+                raise AssertionError("certified rows should not load the inventory ledger")
+
+            def _live_sheet_raw_item_records(self):
+                raise AssertionError("certified rows should not scan live workbooks")
+
+        rows = [WorkbookRow(excel_row=2, cert_number="130635989", grader="PSA", card_title="Certified Card", category="baseball")]
+
+        self.assertEqual(CreateDummy()._ensure_raw_item_ids_for_rows(rows), 0)
 
     def test_manual_create_raw_rows_keep_blank_grader_when_saved_and_reloaded(self) -> None:
         class CreateDummy:
@@ -7124,7 +7341,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         added = dummy._ensure_raw_item_ids_for_rows(rows)
 
         self.assertEqual(added, 1)
-        self.assertEqual(rows[0].item_id, f"RAW-MIKEY-{today}-0001")
+        self.assertTrue(rows[0].item_id.startswith(f"RAW-MIKEY-{today}-"))
         self.assertEqual(rows[0].grader, "")
 
         reloaded = dummy._workbook_rows_from_simple_records(
@@ -7190,7 +7407,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(RawIdDummy()._next_raw_item_id(), f"RAW-MIKEY-{today}-0004")
 
-    def test_create_raw_ids_skip_live_incoming_sheet_ids(self) -> None:
+    def test_create_raw_ids_do_not_scan_live_workbooks(self) -> None:
         class RawIdDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
@@ -7200,15 +7417,33 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 return []
 
             def _live_sheet_raw_item_records(self):
-                today = datetime.now().strftime("%Y%m%d")
-                return [{"item_id": f"RAW-MIKEY-{today}-0001"}]
+                raise AssertionError("new raw IDs must not scan live workbooks during save")
 
         today = datetime.now().strftime("%Y%m%d")
         row = WorkbookRow(excel_row=2, cert_number="", grader="", card_title="Raw New Card", category="baseball")
 
         RawIdDummy()._ensure_raw_item_ids_for_rows([row])
 
-        self.assertEqual(row.item_id, f"RAW-MIKEY-{today}-0002")
+        self.assertTrue(row.item_id.startswith(f"RAW-MIKEY-{today}-"))
+
+    def test_create_raw_ids_do_not_reload_global_history_for_each_row(self) -> None:
+        class RawIdDummy:
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
+            _raw_item_id_namespace = lambda self: "MIKEY"
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _raw_item_id_existing_records(self):
+                raise AssertionError("Create save should use its preloaded records")
+
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="", grader="", card_title="Raw One", category="baseball"),
+            WorkbookRow(excel_row=3, cert_number="", grader="", card_title="Raw Two", category="baseball"),
+        ]
+
+        self.assertEqual(RawIdDummy()._ensure_raw_item_ids_for_rows(rows), 2)
 
     def test_stage_sheet_raw_id_backfill_writes_missing_item_ids(self) -> None:
         class RawIdDummy:

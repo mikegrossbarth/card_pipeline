@@ -261,7 +261,12 @@ async function waitForResultsPage(row = {}, beforeUrl = "", beforeSignature = ""
       const lateInvalidCertReason = invalidCertToastReason() || invalidCertReasonFromText(document.body.innerText || "");
       if (lateInvalidCertReason) return { status: "invalid_cert", reason: lateInvalidCertReason };
       const settledText = document.body.innerText || "";
-      if (!resultPageChanged(beforeUrl, beforeSignature) && !visibleTextMatchesCert(settledText, row.certNumber) && !profileMatchesRequestedRow(row, settledText)) {
+      if (
+        !resultPageChanged(beforeUrl, beforeSignature)
+        && !visibleTextMatchesCert(settledText, row.certNumber)
+        && !profileMatchesRequestedRow(row, settledText)
+        && !shouldAcceptStableResultAfterFreshRetry(row)
+      ) {
         return { status: "stale_result", reason: "Card Ladder stayed on the previous result page after submit." };
       }
       return { status: "results" };
@@ -301,6 +306,14 @@ function profileMatchesRequestedRow(row = {}, text = "") {
   const profileSet = new Set(profileTokens);
   const matches = requestedTokens.filter((token) => profileSet.has(token)).length;
   return matches >= Math.min(4, Math.ceil(requestedTokens.length * 0.45));
+}
+
+function shouldAcceptStableResultAfterFreshRetry(row) {
+  // A blank source title cannot distinguish two slabs that resolve to the
+  // same Card Ladder profile. After a fresh-page retry, accept the loaded
+  // profile instead of falsely rejecting it as the preceding result.
+  const target = row || {};
+  return Boolean(target.allowStableResultAfterFreshRetry) && !String(target.cardTitle || "").trim();
 }
 
 function meaningfulTitleTokens(value) {
@@ -1308,7 +1321,11 @@ function extractResultCount(text) {
 
 function extractProfileFromText(text) {
   const normalized = String(text || "").replace(/\s+/g, " ");
-  const titleStop = `(?=\\s+(?:CL\\s*Value|Card\\s*Ladder\\s*Value|Grade:|Grader:|${COMP_SOURCE_PATTERN_TEXT}|close\\s+\\$|[x×]|help[_\\s-]*outline|Date\\s+Sold|No\\s+sales|No\\s+results|There\\s+are\\s+no\\s+results|Try\\s+searching|$))`;
+  // A visible close icon can look like a standalone "x", but set names also
+  // use X/XY (for example, "Chrome X Cactus Jack").  Let the surrounding
+  // Card Ladder labels establish the boundary; cleanProfileTitle removes a
+  // trailing close icon after that boundary is found.
+  const titleStop = `(?=\\s+(?:CL\\s*Value|Card\\s*Ladder\\s*Value|Grade:|Grader:|${COMP_SOURCE_PATTERN_TEXT}|close\\s+\\$|help[_\\s-]*outline|Date\\s+Sold|No\\s+sales|No\\s+results|There\\s+are\\s+no\\s+results|Try\\s+searching|$))`;
   const gradeGraderProfile = normalized.match(new RegExp(`Grade:\\s*([^,|]+).*?Grader:\\s*([A-Z]+).*?Profile:\\s*(.*?)${titleStop}`, "i"));
   if (gradeGraderProfile) {
     return {
