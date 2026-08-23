@@ -13243,6 +13243,12 @@ class CardPipelineApp(tk.Tk):
                 setattr(workbook_row, "_needs_receive_index_retry", True)
         self.review_rows = existing
         self._refresh_table(schedule_recommendations=schedule_recommendations)
+        if added_excel_rows:
+            latest_row = added_excel_rows[-1]
+            for tree_name in ("receive_tree", "review_tree"):
+                tree = getattr(self, tree_name, None)
+                if tree is not None:
+                    self._scroll_tree_to_row(tree, latest_row)
         retry = getattr(self, "_start_receive_index_retry", None)
         if callable(retry) and any(getattr(row, "_needs_receive_index_retry", False) for row in self.review_rows):
             retry()
@@ -14635,6 +14641,8 @@ class CardPipelineApp(tk.Tk):
         self.intake_rows = existing
         self.apply_create_seller_terms(show_status=False)
         self._refresh_table()
+        if added_excel_rows:
+            self._scroll_tree_to_row(self.intake_tree, added_excel_rows[-1])
         return added_excel_rows
 
     def _apply_recommendations(self) -> None:
@@ -15570,12 +15578,19 @@ class CardPipelineApp(tk.Tk):
             if col in widths:
                 tree.column(col, width=widths[col])
 
-    def _select_excel_row(self, excel_row: int) -> None:
+    @staticmethod
+    def _scroll_tree_to_row(tree: ttk.Treeview, excel_row: int) -> None:
         iid = str(excel_row)
-        if self.intake_tree.exists(iid):
-            self.intake_tree.selection_set(iid)
-            self.intake_tree.focus(iid)
-            self.intake_tree.see(iid)
+        try:
+            if tree.exists(iid):
+                tree.selection_set(iid)
+                tree.focus(iid)
+                tree.see(iid)
+        except tk.TclError:
+            pass
+
+    def _select_excel_row(self, excel_row: int) -> None:
+        self._scroll_tree_to_row(self.intake_tree, excel_row)
 
     def _handle_table_click(self, event):
         tree = event.widget

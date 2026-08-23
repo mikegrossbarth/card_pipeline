@@ -7275,6 +7275,29 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(int(rows[1].item_id.removeprefix(prefix)), int(rows[0].item_id.removeprefix(prefix)) + 1)
         self.assertEqual(rows[2].item_id, "")
 
+    def test_scroll_tree_to_row_selects_and_reveals_new_row(self) -> None:
+        class Tree:
+            def __init__(self):
+                self.actions = []
+
+            def exists(self, iid):
+                self.actions.append(("exists", iid))
+                return iid == "18"
+
+            def selection_set(self, iid):
+                self.actions.append(("select", iid))
+
+            def focus(self, iid):
+                self.actions.append(("focus", iid))
+
+            def see(self, iid):
+                self.actions.append(("see", iid))
+
+        tree = Tree()
+        app.CardPipelineApp._scroll_tree_to_row(tree, 18)
+
+        self.assertEqual(tree.actions, [("exists", "18"), ("select", "18"), ("focus", "18"), ("see", "18")])
+
     def test_certified_create_rows_skip_global_raw_id_scan(self) -> None:
         class CreateDummy:
             _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
