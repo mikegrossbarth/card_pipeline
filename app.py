@@ -7353,7 +7353,7 @@ class CardPipelineApp(tk.Tk):
             colors.get("activebackground"),
         )
 
-    def refresh_home(self, reconcile_accounted: bool = True) -> None:
+    def refresh_home(self, reconcile_accounted: bool = True, archive_received: bool = True) -> None:
         perf_start = time.perf_counter()
         self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries = {}
@@ -7366,12 +7366,13 @@ class CardPipelineApp(tk.Tk):
         conflict_files = self._shared_conflict_files()
         if conflict_files:
             errors.append(f"Shared conflicts: {', '.join(path.name for path in conflict_files[:3])}")
-        try:
-            archived = self._archive_eligible_received_sheets()
-            if archived:
-                archived_count = len(archived)
-        except Exception as error:
-            errors.append(f"Archive: {error}")
+        if archive_received:
+            try:
+                archived = self._archive_eligible_received_sheets()
+                if archived:
+                    archived_count = len(archived)
+            except Exception as error:
+                errors.append(f"Archive: {error}")
         if reconcile_accounted:
             try:
                 reconciliation = self._reconcile_accounted_home_sheets()
@@ -7423,7 +7424,7 @@ class CardPipelineApp(tk.Tk):
         record_performance_event(
             "home.refresh",
             perf_start,
-            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} reconciled={reconciled_count} duplicate_warnings={len(duplicate_warnings)} duplicate_notices={len(duplicate_notices)} reconcile_accounted={reconcile_accounted} errors={len(errors)}",
+            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} reconciled={reconciled_count} duplicate_warnings={len(duplicate_warnings)} duplicate_notices={len(duplicate_notices)} reconcile_accounted={reconcile_accounted} archive_received={archive_received} errors={len(errors)}",
         )
 
     def _home_summary_cache_key(self, path: Path) -> str:
@@ -12471,7 +12472,7 @@ class CardPipelineApp(tk.Tk):
             return
         self.comp_output_saved = True
         self._refresh_table(schedule_recommendations=False)
-        self.refresh_home()
+        self.refresh_home(reconcile_accounted=False, archive_received=False)
         suffix = f" Seller prices updated on {seller_updates} row(s)." if key and seller_updates else ""
         stage_label = f"{stage.lower()} " if stage else ""
         self.status_var.set(f"Saved current comp rows back to {stage_label}{path.name}.{suffix}")
@@ -12546,7 +12547,7 @@ class CardPipelineApp(tk.Tk):
         self.intake_sheet_sources = {}
         self.working_sheet_title.set("")
         self._refresh_table()
-        self.refresh_home()
+        self.refresh_home(reconcile_accounted=False, archive_received=False)
 
     def refresh_pipeline(self) -> None:
         self.refresh_working_sheets()

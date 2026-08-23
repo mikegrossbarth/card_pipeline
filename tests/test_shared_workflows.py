@@ -4028,8 +4028,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             def _refresh_table(self, schedule_recommendations=False):
                 pass
 
-            def refresh_home(self):
-                pass
+            def refresh_home(self, **kwargs):
+                self.home_refresh_options = kwargs
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4057,6 +4057,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 dummy.save_comp_to_source_sheet()
                 saved = read_simple_spreadsheet(path)
                 self.assertEqual(saved[0]["purchase_price"], 90.0)
+                self.assertEqual(dummy.home_refresh_options, {"reconcile_accounted": False, "archive_received": False})
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
 
@@ -4110,8 +4111,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             def _refresh_table(self, schedule_recommendations=False):
                 pass
 
-            def refresh_home(self):
-                pass
+            def refresh_home(self, **kwargs):
+                self.home_refresh_options = kwargs
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4141,6 +4142,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(saved[0]["purchase_price"], 22.0)
                 self.assertEqual(saved[0]["card_ladder_value"], 44.0)
                 self.assertIn("incoming Incoming Lot.xlsx", dummy.status_var.value)
+                self.assertEqual(dummy.home_refresh_options, {"reconcile_accounted": False, "archive_received": False})
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
 
