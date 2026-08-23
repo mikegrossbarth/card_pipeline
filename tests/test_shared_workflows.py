@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import queue
 import os
 import sys
 import threading
@@ -112,6 +114,68 @@ class SharedStateTests(unittest.TestCase):
 
         self.assertIn("No saved Card Ladder sale details", app.format_comp_explanation(row))
 
+    def _trade_dummy(self):
+        class TradeDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = app.CardPipelineApp._raw_item_id_namespace
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _owner_for_profile = app.CardPipelineApp._owner_for_profile
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_identity_keys = app.CardPipelineApp._profit_record_identity_keys
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            record_profit_sales = app.CardPipelineApp.record_profit_sales
+            _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
+            _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
+            _mobile_trade_basis = app.CardPipelineApp._mobile_trade_basis
+            _trade_value_text = app.CardPipelineApp._trade_value_text
+            _mobile_trade_allocations = app.CardPipelineApp._mobile_trade_allocations
+            _mobile_inventory_title_key = app.CardPipelineApp._mobile_inventory_title_key
+            _mobile_inventory_sale_match = app.CardPipelineApp._mobile_inventory_sale_match
+            _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
+            _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            mobile_inventory_search = app.CardPipelineApp.mobile_inventory_search
+            mobile_inventory_trade = app.CardPipelineApp.mobile_inventory_trade
+            _desktop_trade_payload = app.CardPipelineApp._desktop_trade_payload
+
+            lucas_identity = {"display_name": "Test", "machine": "unit"}
+
+            def _is_personal_lucas(self):
+                return False
+
+            def _known_people(self):
+                return ["Mikey", "Kevin Hambone"]
+
+            def _raw_item_id_existing_records(self):
+                return []
+
+            def _live_sheet_raw_item_records(self):
+                return []
+
+            def _load_activity_log(self):
+                return []
+
+            def _enrich_inventory_record_assignment(self, record, force=False):
+                return self._normalize_inventory_record(record)
+
+            def _append_activity(self, *args, **kwargs):
+                return None
+
+            def refresh_profit_tab(self):
+                return None
+
+        return TradeDummy()
+
     def test_card_ladder_money_parsers_understand_k_suffix(self) -> None:
         class MoneyDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -121,6 +185,82 @@ class SharedStateTests(unittest.TestCase):
         self.assertEqual(MoneyDummy()._money_value("$20.27k"), 20270.0)
         self.assertEqual(intake_parse_money("$20.27k"), 20270.0)
         self.assertEqual(MoneyDummy()._money_value("$20.27"), 20.27)
+
+    def test_desktop_trade_payload_matches_trade_shape(self) -> None:
+        dummy = self._trade_dummy()
+        payload = dummy._desktop_trade_payload(
+            [{"inventory_key": "abc", "cert_number": "123", "item_id": "", "card_title": "Card A"}],
+            [{"card_title": "Card B", "trade_value": "100"}],
+            assigned_person="Mikey",
+            trade_date="2026-08-12",
+            cash_paid="10",
+            cash_received="5",
+            notes="desk",
+        )
+        self.assertEqual(payload["assigned_person"], "Mikey")
+        self.assertEqual(payload["outgoing"][0]["inventory_key"], "abc")
+        self.assertEqual(payload["incoming"][0]["trade_value"], "100")
+        self.assertEqual(payload["cash_paid"], "10")
+        self.assertEqual(payload["cash_received"], "5")
+
+    def test_inventory_trade_requires_incoming_trade_values(self) -> None:
+        dummy = self._trade_dummy()
+        result = dummy.mobile_inventory_trade(
+            {
+                "assigned_person": "Mikey",
+                "outgoing": [],
+                "incoming": [{"card_title": "Incoming Raw", "trade_value": ""}],
+            }
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("trade value", result["error"])
+
+    def test_inventory_trade_marks_outgoing_sold_and_adds_incoming(self) -> None:
+        dummy = self._trade_dummy()
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inventory_path = root / "inventory_ledger.json"
+            profit_path = root / "profit_ledger.json"
+            outgoing = dummy._normalize_inventory_record(
+                {
+                    "date_added": "2026-08-01",
+                    "assigned_person": "Mikey",
+                    "sport": "football",
+                    "cert_number": "12345678",
+                    "grader": "PSA",
+                    "card_title": "Outgoing Card PSA 10",
+                    "purchase_price": 100,
+                    "inventory_value": 120,
+                    "source_sheet": "Inventory",
+                    "source": "Unit",
+                    "status": "Active",
+                }
+            )
+            atomic_write_json(inventory_path, [outgoing])
+            atomic_write_json(profit_path, [])
+            with patch.object(app, "CARD_PIPELINE_DIR", root), patch.object(app, "INVENTORY_LEDGER_PATH", inventory_path), patch.object(app, "PROFIT_LEDGER_PATH", profit_path):
+                result = dummy.mobile_inventory_trade(
+                    {
+                        "assigned_person": "Mikey",
+                        "trade_date": "2026-08-12",
+                        "cash_paid": "20",
+                        "cash_received": "0",
+                        "outgoing": [{"inventory_key": outgoing["inventory_key"]}],
+                        "incoming": [{"card_title": "Incoming Card", "trade_value": "120"}],
+                    }
+                )
+                self.assertTrue(result["ok"], result)
+                inventory_rows = dummy._load_inventory_ledger()
+                profit_rows = dummy._load_profit_ledger()
+        self.assertEqual(len(inventory_rows), 1)
+        self.assertEqual(inventory_rows[0]["card_title"], "Incoming Card")
+        self.assertEqual(float(inventory_rows[0]["purchase_price"]), 120.0)
+        self.assertTrue(str(inventory_rows[0]["item_id"]).startswith("RAW-TEAM-"))
+        self.assertEqual(len(profit_rows), 1)
+        self.assertEqual(profit_rows[0]["company"], "Trade")
+        self.assertEqual(float(profit_rows[0]["sale_price"]), 100.0)
+        self.assertEqual(float(profit_rows[0]["profit"]), 0.0)
+        self.assertEqual(profit_rows[0].get("sale_method"), "Trade")
 
     def test_scan_to_cert_preserves_long_psa_cert_numbers(self) -> None:
         self.assertEqual(scan_to_cert("1401017991290"), "1401017991290")
@@ -182,8 +322,9 @@ class SharedStateTests(unittest.TestCase):
             },
         )
         self.assertEqual(row.card_title, "")
-        self.assertIsNone(row.card_ladder_value)
-        self.assertEqual(row.status, "Card Ladder review")
+        self.assertEqual(row.card_ladder_value, 60)
+        self.assertEqual(row.card_ladder_comps_average, 60)
+        self.assertEqual(row.status, "Card Ladder title review")
         self.assertIn("overly broad profile title", row.notes)
 
     def test_google_ssl_context_uses_certifi_when_no_cert_env_is_set(self) -> None:
@@ -261,6 +402,11 @@ class SharedStateTests(unittest.TestCase):
         self.assertTrue(app.is_personal_lucas_profile({"pipeline_root": "G:/My Drive/LUCAS_PERSONAL"}, Path("lucas_settings.json")))
         self.assertTrue(app.is_personal_lucas_profile({"profile": "personal"}, Path("lucas_settings.json")))
         self.assertFalse(app.is_personal_lucas_profile({"pipeline_root": "G:/My Drive/CARD_PIPELINE"}, Path("lucas_settings.json")))
+        self.assertEqual(app.mobile_bridge_port({"profile": "personal"}), 8766)
+        self.assertEqual(app.mobile_bridge_port({"pipeline_root": "G:/My Drive/LUCAS_PERSONAL"}), 8766)
+        self.assertEqual(app.mobile_bridge_port({"pipeline_root": "G:/My Drive/CARD_PIPELINE"}), 8765)
+        with patch.dict(os.environ, {"LUCAS_MOBILE_PORT": "8799"}):
+            self.assertEqual(app.mobile_bridge_port({"profile": "personal"}), 8799)
 
         class PersonalDummy:
             _is_personal_lucas = app.CardPipelineApp._is_personal_lucas
@@ -1150,6 +1296,11 @@ class GoogleSheetCacheTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(cache_path.read_text(encoding="utf-8").strip(), "Football $20-$200 95%")
 
+    def test_bundled_cardladder_helper_version_matches_bridge_expectation(self) -> None:
+        background_js = (ROOT / "cardladder-autocomp" / "extension" / "background.js").read_text(encoding="utf-8")
+
+        self.assertIn(f'CARDLADDER_BACKGROUND_VERSION = "{app.EXPECTED_CARDLADDER_EXTENSION_VERSION}"', background_js)
+
     def test_bridge_poll_keeps_google_keep_sources_private(self) -> None:
         bridge = app.BridgeState()
         bridge.register_keep_note_sources(
@@ -1329,10 +1480,10 @@ class AssignmentEngineTests(unittest.TestCase):
 
         bridge._apply_cardladder_result_to_row(row, result)
 
-        self.assertEqual(row.status, "Card Ladder review")
+        self.assertEqual(row.status, "Card Ladder title review")
         self.assertEqual(row.card_title, "")
-        self.assertIsNone(row.card_ladder_value)
-        self.assertIsNone(row.card_ladder_comps_average)
+        self.assertEqual(row.card_ladder_value, 615)
+        self.assertEqual(row.card_ladder_comps_average, 638.5)
         self.assertIn("overly broad", row.notes)
 
     def test_cardladder_result_fills_blank_sport_from_profile_title(self) -> None:
@@ -2649,9 +2800,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(info["remaining"], 0.0)
         self.assertEqual(info["unallocated_absorbed"], 3000.0)
 
-    def test_comp_total_row_sums_value_columns(self) -> None:
+    def test_value_total_row_sums_create_and_comp_value_columns(self) -> None:
         class Dummy:
-            _comp_purchase_total_row_values = app.CardPipelineApp._comp_purchase_total_row_values
+            _value_total_row_values = app.CardPipelineApp._value_total_row_values
 
         rows = [
             WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="One", existing_value=10, card_ladder_value=15, card_ladder_comps_average=12, cy_value=11, estimated_payout=9),
@@ -2659,7 +2810,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             WorkbookRow(excel_row=4, cert_number="3", grader="PSA", card_title="Three", existing_value=None),
         ]
 
-        values = Dummy()._comp_purchase_total_row_values(
+        values = Dummy()._value_total_row_values(
             ("excel_row", "card_title", "purchase_price", "card_ladder_value", "card_ladder_comps_average", "cy_value", "estimated_payout"),
             rows,
         )
@@ -2807,6 +2958,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         class Dummy:
             refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
+            _incoming_index_paths = app.CardPipelineApp._incoming_index_paths
+            _build_incoming_index_from_paths = app.CardPipelineApp._build_incoming_index_from_paths
             _incoming_match = app.CardPipelineApp._incoming_match
             _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
             _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
@@ -2891,6 +3044,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         class Dummy:
             refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
+            _incoming_index_paths = app.CardPipelineApp._incoming_index_paths
+            _build_incoming_index_from_paths = app.CardPipelineApp._build_incoming_index_from_paths
             _append_review_rows = app.CardPipelineApp._append_review_rows
             _incoming_match = app.CardPipelineApp._incoming_match
             _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
@@ -2960,6 +3115,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         class Dummy:
             refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
+            _incoming_index_paths = app.CardPipelineApp._incoming_index_paths
+            _build_incoming_index_from_paths = app.CardPipelineApp._build_incoming_index_from_paths
             _append_review_rows = app.CardPipelineApp._append_review_rows
             _incoming_match = app.CardPipelineApp._incoming_match
             _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
@@ -3182,6 +3339,44 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.review_sheet_sources[2], "gunnar.xlsx")
         self.assertIn("Matched 1 incoming row", dummy.review_status.value)
 
+    def test_receive_text_search_miss_does_not_refresh_incoming_index(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            add_review_scanned_row = app.CardPipelineApp.add_review_scanned_row
+            _incoming_raw_matches = app.CardPipelineApp._incoming_raw_matches
+            _incoming_index_candidates = app.CardPipelineApp._incoming_index_candidates
+            _normalize_receive_search_text = app.CardPipelineApp._normalize_receive_search_text
+            _incoming_title_matches = app.CardPipelineApp._incoming_title_matches
+
+            def refresh_incoming_index(self):
+                self.refresh_count += 1
+
+            def _arm_review_scanner(self):
+                self.armed = True
+
+        dummy = Dummy()
+        dummy.review_scanning_active = True
+        dummy.review_scan_cert = FieldVar("not in sheets")
+        dummy.review_status = FieldVar()
+        dummy.refresh_count = 0
+        dummy.armed = False
+        dummy.incoming_cert_index = {}
+
+        dummy.add_review_scanned_row()
+
+        self.assertEqual(dummy.refresh_count, 0)
+        self.assertTrue(dummy.armed)
+        self.assertIn("current index", dummy.review_status.value)
+
     def test_receive_autocomplete_labels_and_resolves_selected_match(self) -> None:
         class Dummy:
             _incoming_index_candidates = app.CardPipelineApp._incoming_index_candidates
@@ -3251,6 +3446,88 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(row.estimated_payout, 380)
         self.assertEqual(dummy.review_sheet_sources[2], "gunnar.xlsx")
         self.assertEqual(getattr(row, "_receive_workbook_row"), 2)
+
+    def test_receive_missing_cert_does_not_refresh_incoming_index(self) -> None:
+        class Dummy:
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+
+            def refresh_incoming_index(self):
+                self.refresh_count += 1
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        dummy = Dummy()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("", None, None)
+        )
+        dummy.incoming_cert_index = {}
+        dummy.review_rows = []
+        dummy.review_sources = {}
+        dummy.review_sheet_sources = {}
+        dummy.refresh_count = 0
+        dummy.refreshed = False
+
+        dummy._append_review_rows([{"cert_number": "99999999", "source": "Receive Barcode", "notes": "Received"}])
+
+        self.assertEqual(dummy.refresh_count, 0)
+        self.assertTrue(dummy.refreshed)
+        self.assertEqual(dummy.review_rows[0].status, "Checking incoming index")
+        self.assertEqual(dummy.review_sheet_sources[2], "CHECKING INDEX")
+
+    def test_receive_index_retry_resolves_missing_row_after_background_refresh(self) -> None:
+        class Dummy:
+            _apply_incoming_index_retry = app.CardPipelineApp._apply_incoming_index_retry
+            _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        dummy = Dummy()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("FANATICS", 90.0, 100.0)
+        )
+        row = WorkbookRow(excel_row=2, cert_number="88504251", grader="", card_title="", status="Checking incoming index")
+        setattr(row, "_needs_receive_index_retry", True)
+        dummy.review_rows = [row]
+        dummy.review_sheet_sources = {2: "CHECKING INDEX"}
+        dummy.incoming_cert_index = {}
+        dummy.review_status = types.SimpleNamespace(set=lambda value: setattr(dummy, "status", value))
+        dummy.refreshed = False
+
+        dummy._apply_incoming_index_retry(
+            {
+                "index": {
+                    "88504251": {
+                        "sheet": "Incoming Lot.xlsx",
+                        "workbook_sheet": "Cards",
+                        "workbook_row": 7,
+                        "cert_number": "88504251",
+                        "card_title": "Matched Card PSA 10",
+                        "grader": "PSA",
+                        "best_company": "FANATICS",
+                        "estimated_payout": 90.0,
+                    }
+                },
+                "path_count": 1,
+            }
+        )
+
+        self.assertTrue(dummy.refreshed)
+        self.assertEqual(dummy.review_sheet_sources[2], "Incoming Lot.xlsx")
+        self.assertEqual(dummy.review_rows[0].status, "Received")
+        self.assertEqual(dummy.review_rows[0].card_title, "Matched Card PSA 10")
+        self.assertFalse(getattr(dummy.review_rows[0], "_needs_receive_index_retry", False))
 
     def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
         class Dummy:
@@ -4048,6 +4325,40 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(items[0]["row_count"], 3)
         self.assertEqual(items[0]["payout_balance"], 50.0)
         self.assertEqual(sum(float(item["payout_balance"]) for item in items), 60.0)
+
+    def test_payout_history_includes_manual_paid_adjustment_without_profit_row(self) -> None:
+        class Dummy:
+            _payout_history_items_for_person = app.CardPipelineApp._payout_history_items_for_person
+
+            def _payout_sheet_items(self):
+                return [
+                    {
+                        "key": "Sold|Tyler Hamlin|Open.xlsx",
+                        "person": "Tyler Hamlin",
+                        "name": "Open.xlsx",
+                        "stage": "Sold",
+                        "paid": False,
+                        "row_count": 1,
+                        "net_profit_total": 100,
+                        "payout_balance": 50,
+                    }
+                ]
+
+            home_sheet_markers = {
+                "SoldCard|Tyler Hamlin|manual-tyler-paid-payout-20260815-3000|general sold|2026-08-15|manual paid payout adjustment|tyler hamlin general sold": {
+                    "assigned_person": "Tyler Hamlin",
+                    "paid": True,
+                    "paid_at": "2026-08-15T19:24:32",
+                    "manual_paid_adjustment": True,
+                    "manual_paid_amount": 3000.0,
+                }
+            }
+
+        items = Dummy()._payout_history_items_for_person("Tyler Hamlin")
+
+        self.assertEqual(items[0]["name"], "Total paid at 2026-08-15T19:24:32")
+        self.assertEqual(items[0]["payout_balance"], 3000.0)
+        self.assertEqual(items[1]["name"], "Open.xlsx")
 
     def test_save_payout_marker_blocks_pending_seller_paid(self) -> None:
         class PayoutDummy:
@@ -5273,6 +5584,69 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
 
+    def test_record_profit_sales_keeps_distinct_inventory_sales_with_corrected_cert(self) -> None:
+        class ProfitDummy:
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_identity_keys = app.CardPipelineApp._profit_record_identity_keys
+            _money_value = app.CardPipelineApp._money_value
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
+            record_profit_sales = app.CardPipelineApp.record_profit_sales
+            refresh_profit_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_ledger = app.PROFIT_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            dummy = ProfitDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            try:
+                old_sale = dummy._normalize_profit_record(
+                    {
+                        "assigned_person": "Mikey",
+                        "cert_number": "2668770",
+                        "grader": "SGC",
+                        "card_title": "2019 Topps Chrome 1 Shohei Ohtani SGC 10",
+                        "company": "FANATICS",
+                        "source_sheet": "COMPLETE_GRADED_INVENTORY_ADD_7_7_26.xlsx",
+                        "purchase_price": 120,
+                        "sale_price": 155.31,
+                        "date_added": "2026-08-16",
+                        "status": "Sold from inventory",
+                    }
+                )
+                dummy._save_profit_ledger([old_sale])
+
+                self.assertEqual(
+                    dummy.record_profit_sales(
+                        [
+                            {
+                                "assigned_person": "Mikey",
+                                "cert_number": "2668770",
+                                "grader": "SGC",
+                                "card_title": "2019 Topps Chrome 1 Shohei Ohtani SGC 10",
+                                "company": "FANATICS",
+                                "source_sheet": "COMPLETE_GRADED_INVENTORY_ADD_7_7_26.xlsx",
+                                "inventory_key": "2668770|complete_graded_inventory_add_7_7_26.xlsx|mikey",
+                                "purchase_price": 100,
+                                "sale_price": 190,
+                                "date_added": "2026-08-17",
+                                "status": "Sold from inventory",
+                            }
+                        ]
+                    ),
+                    1,
+                )
+                ledger = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                self.assertEqual(len(ledger), 2)
+                self.assertEqual(sorted(record["sale_price"] for record in ledger), [155.31, 190.0])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.PROFIT_LEDGER_PATH = old_ledger
+
     def test_expense_records_deduct_from_person_profit(self) -> None:
         class ExpenseDummy:
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
@@ -6147,6 +6521,36 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(dummy.inventory_status_var.value, "Updated payouts for 1 visible inventory card(s); changed 1.")
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_inventory_refresh_event_can_skip_enrichment(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            _poll_events = app.CardPipelineApp._poll_events
+
+            def __init__(self):
+                self.events = queue.Queue()
+                self.status_var = FieldVar()
+                self.calls = []
+
+            def refresh_inventory_tab(self, enrich=False):
+                self.calls.append(enrich)
+
+            def after(self, *_args):
+                return "after-id"
+
+        dummy = Dummy()
+        dummy.events.put(("inventory_refresh", {"enrich": False, "message": "Photos linked."}))
+
+        dummy._poll_events()
+
+        self.assertEqual(dummy.calls, [False])
+        self.assertEqual(dummy.status_var.value, "Photos linked.")
 
     def test_comp_assignment_update_actions_refresh_all_or_selected_rows(self) -> None:
         class FieldVar:
@@ -8552,6 +8956,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(overall_days, days)
         self.assertEqual(overall_values, [20, 20.0, 20.0, 20.0, 50.0])
 
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Generated Profit")
+        self.assertEqual(dummy._profit_graph_label(), "Generated Profit")
+        self.assertEqual(dummy._profit_chart_title(), "Generated Profit (5 Days)")
+        generated_days, generated_values = dummy._profit_chart_series(filtered)
+        self.assertEqual(generated_days, days)
+        self.assertEqual(generated_values, daily_values)
+
         dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Profit to Sales Ratio")
         ratio_days, ratio_values = dummy._profit_chart_series(filtered)
         self.assertEqual(ratio_days, days)
@@ -8629,6 +9040,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(month_values[1], 0.0)
         self.assertEqual(month_values[2], 30.0)
         self.assertEqual(dummy._profit_chart_title(), "Daily Trend (Year by Month)")
+
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Generated Profit")
+        generated_month_labels, generated_month_values = dummy._profit_chart_series(year_ratio_rows)
+        self.assertEqual(generated_month_labels, month_labels)
+        self.assertEqual(generated_month_values[0], 75.0)
+        self.assertEqual(generated_month_values[2], 30.0)
+        self.assertEqual(dummy._profit_chart_title(), "Generated Profit (Year by Month)")
 
         dummy.profit_breakdown_var = types.SimpleNamespace(get=lambda: "Day")
         day_labels, day_values = dummy._profit_chart_series(year_ratio_rows)
@@ -8877,6 +9295,140 @@ class PhotoOcrSpeedTests(unittest.TestCase):
         self.assertEqual(row["source"], "Photo: dense.jpg")
         self.assertIn("right", row["notes"])
         self.assertIn("OCR review needed", row["notes"])
+
+    def test_mobile_profit_refund_returns_card_to_inventory(self) -> None:
+        class MobileFinanceDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _mobile_trade_basis = app.CardPipelineApp._mobile_trade_basis
+            _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _mobile_profit_record_matches_payload = app.CardPipelineApp._mobile_profit_record_matches_payload
+            _refund_profit_records_to_inventory = app.CardPipelineApp._refund_profit_records_to_inventory
+            mobile_profit_refund = app.CardPipelineApp.mobile_profit_refund
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _append_activity = lambda self, action, summary, details=None: None
+            _record_mobile_direct_action = lambda self, payload, action_type: None
+            _restore_inventory_photo_files_for_records = lambda self, records: 0
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+            def __init__(self):
+                self.events = queue.Queue()
+                self.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+
+            def _known_people(self):
+                return ["Kevin Hambone", "Mike Seller"]
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            try:
+                dummy = MobileFinanceDummy()
+                dummy._save_profit_ledger(
+                    [
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "company": "Test Sold",
+                            "card_title": "Mobile Refund Card",
+                            "cert_number": "555222",
+                            "purchase_price": 10,
+                            "sale_price": 20,
+                            "date_added": "2026-06-18",
+                        }
+                    ]
+                )
+                ledger_key = dummy._normalize_profit_record(dummy._load_profit_ledger()[0])["ledger_key"]
+
+                refund = dummy.mobile_profit_refund({"ledger_key": ledger_key})
+
+                self.assertTrue(refund["ok"])
+                inventory = dummy._load_inventory_ledger()
+                self.assertEqual(len(inventory), 1)
+                self.assertEqual(inventory[0]["card_title"], "Mobile Refund Card")
+                self.assertEqual(inventory[0]["status"], "Active")
+                self.assertEqual(dummy._load_profit_ledger(), [])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_mobile_card_identify_returns_search_query_from_photo_ocr(self) -> None:
+        class MobilePhotoDummy:
+            _photo_card_to_row = app.CardPipelineApp._photo_card_to_row
+            _photo_card_has_inventory = app.CardPipelineApp._photo_card_has_inventory
+            _load_photo_env = lambda self: None
+            _mobile_image_parts = app.CardPipelineApp._mobile_image_parts
+            _parse_mobile_quick_card_response = app.CardPipelineApp._parse_mobile_quick_card_response
+            _mobile_quick_card_to_row = app.CardPipelineApp._mobile_quick_card_to_row
+            _mobile_single_card_quick_read = app.CardPipelineApp._mobile_single_card_quick_read
+            mobile_card_identify = app.CardPipelineApp.mobile_card_identify
+
+        quick_response = json.dumps(
+            {
+                "grading_company": "PSA",
+                "cert_number": "123456789",
+                "player": "Test Player",
+                "year": "2024",
+                "set": "Prizm",
+                "grade": "10",
+                "confidence": "high",
+            }
+        )
+
+        class FakeModels:
+            def generate_content(self, **_kwargs):
+                return types.SimpleNamespace(text=quick_response)
+
+        class FakeClient:
+            models = FakeModels()
+
+        fake_genai = types.SimpleNamespace(Client=lambda api_key: FakeClient())
+        fake_genai_types = types.SimpleNamespace(
+            Part=types.SimpleNamespace(from_bytes=lambda **kwargs: kwargs),
+            GenerateContentConfig=lambda **kwargs: kwargs,
+            ThinkingConfig=lambda **kwargs: kwargs,
+        )
+        with patch.object(app, "genai", fake_genai), \
+                patch.object(app, "genai_types", fake_genai_types), \
+                patch.object(app, "identify_cards_sync") as fallback_ocr, \
+                patch.dict(app.os.environ, {"GOOGLE_API_KEY": "test-key"}):
+            result = MobilePhotoDummy().mobile_card_identify({"image": "data:image/jpeg;base64,ZmFrZQ=="})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["mode"], "quick")
+        self.assertEqual(result["query"], "123456789")
+        self.assertEqual(result["card"]["grader"], "PSA")
+        self.assertIn("Test Player", result["card"]["card_title"])
+        fallback_ocr.assert_not_called()
+
+    def test_mobile_card_identify_rejects_oversized_photos(self) -> None:
+        class MobilePhotoDummy:
+            _load_photo_env = lambda self: None
+            _mobile_image_parts = app.CardPipelineApp._mobile_image_parts
+            mobile_card_identify = app.CardPipelineApp.mobile_card_identify
+
+        oversized = base64.b64encode(b"x" * (8 * 1024 * 1024 + 1)).decode("ascii")
+        fake_genai = types.SimpleNamespace(Client=lambda api_key: object())
+        with patch.object(app, "genai", fake_genai), \
+                patch.object(app, "identify_cards_sync") as fallback_ocr, \
+                patch.dict(app.os.environ, {"GOOGLE_API_KEY": "test-key"}):
+            result = MobilePhotoDummy().mobile_card_identify({"image": f"data:image/jpeg;base64,{oversized}"})
+
+        self.assertFalse(result["ok"])
+        self.assertIn("too large", result["error"])
+        fallback_ocr.assert_not_called()
 
 
 if __name__ == "__main__":
