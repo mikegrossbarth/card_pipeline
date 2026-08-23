@@ -3301,6 +3301,46 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.review_rows[0].estimated_payout, 88.0)
         self.assertEqual(dummy.review_sheet_sources[2], "Assigned Lot.xlsx")
 
+    def test_receive_scan_queues_without_reindexing_while_startup_index_loads(self) -> None:
+        class Dummy:
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+
+            def refresh_incoming_index(self):
+                raise AssertionError("receive scanning must not re-index sheets during startup")
+
+            def _refresh_table(self, schedule_recommendations=False):
+                pass
+
+        dummy = Dummy()
+        dummy.assignment_engine = None
+        dummy.startup_sheet_index_loading = True
+        dummy.incoming_cert_index = {}
+        dummy.review_rows = []
+        dummy.review_sources = {}
+        dummy.review_sheet_sources = {}
+
+        dummy._append_review_rows([{"cert_number": "130635989", "source": "Receive Barcode", "notes": "Received"}])
+
+        self.assertEqual(len(dummy.review_rows), 1)
+        self.assertEqual(dummy.review_rows[0].status, "Received - matching incoming sheets")
+        dummy.incoming_cert_index["130635989"] = {
+            "sheet": "Incoming Lot.xlsx",
+            "card_title": "2024 Test Card PSA 10",
+            "grader": "PSA",
+        }
+        dummy.startup_sheet_index_loading = False
+        dummy._match_all_review_rows()
+
+        self.assertEqual(dummy.review_rows[0].status, "Received")
+        self.assertEqual(dummy.review_rows[0].card_title, "2024 Test Card PSA 10")
+        self.assertEqual(dummy.review_sheet_sources[2], "Incoming Lot.xlsx")
+
     def test_receive_row_recalculates_assignment_when_sheet_match_has_values_but_no_company(self) -> None:
         class Dummy:
             _append_review_rows = app.CardPipelineApp._append_review_rows

@@ -737,6 +737,7 @@ class CardPipelineApp(tk.Tk):
         self.review_sources: dict[int, str] = {}
         self.review_sheet_sources: dict[int, str] = {}
         self.incoming_cert_index: dict[str, dict[str, object]] = {}
+        self.startup_sheet_index_loading = False
         self.comp_output_saved = True
         self.state = BridgeState()
         self.state.on_update = lambda: self.events.put("comp_refresh")
@@ -7568,6 +7569,9 @@ class CardPipelineApp(tk.Tk):
         return sorted({path for path in found if path.name.lower() != PROFIT_LEDGER_PATH.name.lower() and path.name.lower() != SHEET_MARKERS_PATH.name.lower()})
 
     def _start_startup_refresh(self) -> None:
+        if self.startup_sheet_index_loading:
+            return
+        self.startup_sheet_index_loading = True
         self.status_var.set("Loading sheet lists...")
         thread = threading.Thread(target=self._startup_refresh_worker, daemon=True)
         thread.start()
@@ -7892,6 +7896,7 @@ class CardPipelineApp(tk.Tk):
 
     def _apply_startup_refresh(self, payload: dict[str, object]) -> None:
         perf_start = time.perf_counter()
+        self.startup_sheet_index_loading = False
         self.incoming_sheet_paths = dict(payload.get("incoming_paths") or {})
         self.working_sheet_paths = dict(payload.get("working_paths") or {})
         self._populate_comp_sheet_list()
@@ -11383,12 +11388,12 @@ class CardPipelineApp(tk.Tk):
             matches: list[dict[str, object]] = []
             if raw_input.upper().startswith("RAW-"):
                 matches = self._incoming_raw_matches({"item_id": raw_input})
-                if not matches:
+                if not matches and not getattr(self, "startup_sheet_index_loading", False):
                     self.refresh_incoming_index()
                     matches = self._incoming_raw_matches({"item_id": raw_input})
             elif raw_input:
                 matches = self._incoming_title_matches(raw_input)
-                if not matches:
+                if not matches and not getattr(self, "startup_sheet_index_loading", False):
                     self.refresh_incoming_index()
                     matches = self._incoming_title_matches(raw_input)
             if matches:
@@ -11397,6 +11402,17 @@ class CardPipelineApp(tk.Tk):
                 self.review_scan_cert.set("")
                 label = raw_input if len(raw_input) <= 60 else f"{raw_input[:57]}..."
                 self.review_status.set(f"Matched {len(matches)} incoming row(s) for {label}. Ready for next scan.")
+                self._arm_review_scanner()
+                return
+            if raw_input and getattr(self, "startup_sheet_index_loading", False):
+                pending_row = {"source": "Receive Search", "notes": "Received"}
+                if raw_input.upper().startswith("RAW-"):
+                    pending_row["item_id"] = raw_input
+                else:
+                    pending_row["card_title"] = raw_input
+                self._append_review_rows([pending_row])
+                self.review_scan_cert.set("")
+                self.review_status.set("Received scan queued. It will match when sheet indexing finishes. Ready for next scan.")
                 self._arm_review_scanner()
                 return
             self.review_status.set("No cert, raw ID, or matching incoming card found. Scan or type again.")
@@ -11413,7 +11429,10 @@ class CardPipelineApp(tk.Tk):
             }
         ])
         self.review_scan_cert.set("")
-        self.review_status.set(f"Received {cert}. Ready for next scan.")
+        if getattr(self, "startup_sheet_index_loading", False):
+            self.review_status.set(f"Received {cert}. Matching it when sheet indexing finishes. Ready for next scan.")
+        else:
+            self.review_status.set(f"Received {cert}. Ready for next scan.")
         self._arm_review_scanner()
 
     def add_review_photos(self) -> None:
@@ -11503,7 +11522,12 @@ class CardPipelineApp(tk.Tk):
                 and not str(match.get("best_company") or "").strip()
                 and match.get("estimated_payout") is None
             )
-            if cert and (not match or stale_assignment_match) and not refreshed_incoming_index:
+            if (
+                cert
+                and (not match or stale_assignment_match)
+                and not refreshed_incoming_index
+                and not getattr(self, "startup_sheet_index_loading", False)
+            ):
                 self.refresh_incoming_index()
                 refreshed_incoming_index = True
                 match = self._incoming_match(cert)
@@ -11519,7 +11543,18 @@ class CardPipelineApp(tk.Tk):
             best_company = str(row.get("best_company") or match.get("best_company") or "").strip()
             estimated_payout = row.get("estimated_payout") if row.get("estimated_payout") is not None else match.get("estimated_payout")
             sheet_source = str(row.get("sheet_source") or match.get("sheet") or ("NO SHEET FOUND" if not match else ""))
-            status = str(row.get("status") or ("Received" if match else ("Needs raw match" if not cert else "Received - no incoming match")))
+            status = str(
+                row.get("status")
+                or (
+                    "Received"
+                    if match
+                    else (
+                        "Received - matching incoming sheets"
+                        if getattr(self, "startup_sheet_index_loading", False)
+                        else ("Needs raw match" if not cert else "Received - no incoming match")
+                    )
+                )
+            )
             excel_row = start + offset
             workbook_row = WorkbookRow(
                 excel_row=excel_row,
@@ -11786,7 +11821,7 @@ class CardPipelineApp(tk.Tk):
                     row.estimated_payout = match.get("estimated_payout")
                 self._ensure_receive_row_assignment(row)
                 row.status = "Received"
-            elif row.status == "Received":
+            elif row.status in {"Received", "Received - matching incoming sheets"}:
                 row.status = "Received - no incoming match"
 
     def _ensure_receive_row_assignment(self, row: WorkbookRow) -> None:
