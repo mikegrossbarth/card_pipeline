@@ -4,6 +4,9 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 appDir = fso.GetParentFolderName(WScript.ScriptFullName)
 shell.CurrentDirectory = appDir
 
+Set env = shell.Environment("PROCESS")
+env("LUCAS_ASSIGNMENT_CONFIG_PATH") = appDir & "\assignment_companies.json"
+
 pythonwPath = appDir & "\.venv\Scripts\pythonw.exe"
 pythonPath = appDir & "\.venv\Scripts\python.exe"
 venvConfigPath = appDir & "\.venv\pyvenv.cfg"

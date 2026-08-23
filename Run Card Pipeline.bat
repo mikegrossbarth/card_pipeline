@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+set "LUCAS_ASSIGNMENT_CONFIG_PATH=%~dp0assignment_companies.json"
 
 set "VENV_OK=0"
 if exist ".venv\Scripts\python.exe" (
