@@ -7247,6 +7247,20 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(rows[1].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0005")
         self.assertEqual(rows[2].item_id, "")
 
+    def test_certified_create_rows_skip_global_raw_id_scan(self) -> None:
+        class CreateDummy:
+            _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
+
+            def _load_inventory_ledger(self):
+                raise AssertionError("certified rows should not load the inventory ledger")
+
+            def _live_sheet_raw_item_records(self):
+                raise AssertionError("certified rows should not scan live workbooks")
+
+        rows = [WorkbookRow(excel_row=2, cert_number="130635989", grader="PSA", card_title="Certified Card", category="baseball")]
+
+        self.assertEqual(CreateDummy()._ensure_raw_item_ids_for_rows(rows), 0)
+
     def test_manual_create_raw_rows_keep_blank_grader_when_saved_and_reloaded(self) -> None:
         class CreateDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id

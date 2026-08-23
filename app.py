@@ -2745,14 +2745,7 @@ class CardPipelineApp(tk.Tk):
         return records
 
     def _ensure_raw_item_ids_for_rows(self, rows: list[WorkbookRow]) -> int:
-        existing_records = list(self._load_inventory_ledger())
-        if hasattr(self, "_live_sheet_raw_item_records"):
-            existing_records.extend(self._live_sheet_raw_item_records())
-        for row in rows:
-            item_id = str(getattr(row, "item_id", "") or "").strip()
-            if item_id:
-                existing_records.append({"item_id": item_id})
-        added = 0
+        rows_needing_ids: list[WorkbookRow] = []
         for row in rows:
             cert = str(getattr(row, "cert_number", "") or "").strip()
             item_id = str(getattr(row, "item_id", "") or "").strip()
@@ -2768,8 +2761,20 @@ class CardPipelineApp(tk.Tk):
                     getattr(row, "cy_value", ""),
                 )
             )
-            if cert or item_id or not has_row_data:
-                continue
+            if not cert and not item_id and has_row_data:
+                rows_needing_ids.append(row)
+        if not rows_needing_ids:
+            return 0
+
+        existing_records = list(self._load_inventory_ledger())
+        if hasattr(self, "_live_sheet_raw_item_records"):
+            existing_records.extend(self._live_sheet_raw_item_records())
+        for row in rows:
+            item_id = str(getattr(row, "item_id", "") or "").strip()
+            if item_id:
+                existing_records.append({"item_id": item_id})
+        added = 0
+        for row in rows_needing_ids:
             item_id = self._next_raw_item_id(existing_records)
             setattr(row, "item_id", item_id)
             existing_records.append({"item_id": item_id})
@@ -14239,6 +14244,7 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(f"Saved current comp rows back to {stage_label}{path.name}.{suffix}")
 
     def save_working_sheet(self) -> None:
+        perf_start = time.perf_counter()
         if not self.intake_rows:
             messagebox.showinfo("No create rows", "Scan or load cards in Create before saving a working sheet.")
             return
@@ -14246,6 +14252,7 @@ class CardPipelineApp(tk.Tk):
         if not title:
             messagebox.showinfo("Title required", "Enter a working sheet title first.")
             return
+        saved_row_count = len(self.intake_rows)
         seller = ""
         seller_sheet_type = ""
         seller_term: dict[str, object] | None = None
@@ -14288,8 +14295,12 @@ class CardPipelineApp(tk.Tk):
         try:
             with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
                 path = working_sheet_path(WORKING_SHEETS_DIR, title)
+                raw_id_start = time.perf_counter()
                 raw_ids_added = self._ensure_raw_item_ids_for_rows(self.intake_rows)
+                record_performance_event("create.save.raw_ids", raw_id_start, f"rows={saved_row_count} added={raw_ids_added}")
+                write_start = time.perf_counter()
                 write_working_sheet(path, self.intake_rows, self.intake_sources)
+                record_performance_event("create.save.workbook_write", write_start, f"sheet={path.name} rows={saved_row_count}")
             if seller:
                 self._assign_sheet_to_seller("Working", path.name, seller, seller_sheet_type, seller_term)
         except Exception as error:
@@ -14308,7 +14319,10 @@ class CardPipelineApp(tk.Tk):
         self.intake_sheet_sources = {}
         self.working_sheet_title.set("")
         self._refresh_table()
+        refresh_start = time.perf_counter()
         self.refresh_home(reconcile_accounted=False, archive_received=False)
+        record_performance_event("create.save.home_refresh", refresh_start, f"sheet={path.name}")
+        record_performance_event("create.save.total", perf_start, f"sheet={path.name} rows={saved_row_count} raw_ids={raw_ids_added}", force=True)
 
     def refresh_pipeline(self) -> None:
         self.refresh_working_sheets()
