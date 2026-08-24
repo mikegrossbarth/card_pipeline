@@ -9106,10 +9106,6 @@ class CardPipelineApp(tk.Tk):
                         f"{path.name}: {len(matched)}/{len(sheet_certs)} cert(s) already exist in inventory/company/sold ledgers; {len(missing)} still unaccounted."
                     )
                     continue
-                destination = RECEIVED_SHEETS_DIR / path.name
-                if destination.exists():
-                    result["warnings"].append(f"{path.name}: all rows accounted, but RECEIVED SHEETS already has that file name.")
-                    continue
                 try:
                     mark_result = mark_received_in_workbooks([path], sheet_certs)
                     mark_errors = list(mark_result.get("errors") or [])
@@ -11820,10 +11816,8 @@ class CardPipelineApp(tk.Tk):
         phase_started = time.perf_counter()
         target_dir.mkdir(parents=True, exist_ok=True)
         record_performance_event("home.stage_move.target_mkdir", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
-        destination = target_dir / source.name
         phase_started = time.perf_counter()
-        if destination.exists():
-            raise FileExistsError(f"{target_stage} sheet already exists: {destination.name}")
+        destination = self._unique_stage_destination(target_dir, source.name)
         record_performance_event("home.stage_move.destination_exists", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
 
         cleanup: dict[str, int] = {}
@@ -11846,6 +11840,20 @@ class CardPipelineApp(tk.Tk):
         record_performance_event("home.stage_move.marker_update", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
         record_performance_event("home.stage_move.move_function", perf_start, f"sheet={name} from={source_stage} to={target_stage}", force=True)
         return new_key, cleanup
+
+    def _unique_stage_destination(self, target_dir: Path, filename: str) -> Path:
+        destination = target_dir / filename
+        if not destination.exists():
+            return destination
+        stem = destination.stem
+        suffix = destination.suffix
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for index in range(100):
+            extra = "" if index == 0 else f"_{index + 1}"
+            candidate = target_dir / f"{stem}_{timestamp}{extra}{suffix}"
+            if not candidate.exists():
+                return candidate
+        raise FileExistsError(f"Could not create a unique destination for {filename}")
 
     def _marker_for_stage(self, marker: dict[str, object], stage: str) -> dict[str, object]:
         normalized = dict(marker)

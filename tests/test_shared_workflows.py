@@ -5065,6 +5065,58 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_card_pipeline
 
+    def test_move_to_received_appends_datetime_when_name_exists(self) -> None:
+        class MoveDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
+            _delete_sheet_marker = app.CardPipelineApp._delete_sheet_marker
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            _unique_stage_destination = app.CardPipelineApp._unique_stage_destination
+            _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            working_dir = root / "WORKING SHEETS"
+            received_dir = root / "RECEIVED SHEETS"
+            incoming_dir.mkdir(parents=True)
+            working_dir.mkdir()
+            received_dir.mkdir()
+            existing_received = received_dir / "Lot A.xlsx"
+            source = incoming_dir / "Lot A.xlsx"
+            existing_received.write_text("existing", encoding="utf-8")
+            source.write_text("incoming", encoding="utf-8")
+
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            app.INCOMING_SHEETS_DIR = incoming_dir
+            app.WORKING_SHEETS_DIR = working_dir
+            app.RECEIVED_SHEETS_DIR = received_dir
+            try:
+                dummy = MoveDummy()
+                dummy.home_sheet_markers = {"Incoming|Lot A.xlsx": {"assigned_person": "Lucas"}}
+                dummy.home_sheet_paths = {"Incoming": {"Lot A.xlsx": source}, "Working": {}, "Received": {}}
+                dummy.deleted_sheet_marker_keys = set()
+
+                moved_key, cleanup = dummy._move_home_sheet_to_stage("Incoming|Lot A.xlsx", "Received")
+
+                moved_stage, moved_name = dummy._split_home_sheet_key(moved_key)
+                moved_path = received_dir / moved_name
+                self.assertEqual(cleanup, {})
+                self.assertEqual(moved_stage, "Received")
+                self.assertRegex(moved_name, r"^Lot A_\d{8}_\d{6}\.xlsx$")
+                self.assertEqual(existing_received.read_text(encoding="utf-8"), "existing")
+                self.assertEqual(moved_path.read_text(encoding="utf-8"), "incoming")
+                self.assertFalse(source.exists())
+                self.assertIn(moved_key, dummy.home_sheet_markers)
+                self.assertTrue(dummy.home_sheet_markers[moved_key]["all_received"])
+            finally:
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+
     def test_moving_received_sheet_back_clears_received_profit_and_company_rows(self) -> None:
         class MoveDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
