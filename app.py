@@ -2153,22 +2153,6 @@ class CardPipelineApp(tk.Tk):
             lambda: self._show_inventory_settings_menu(settings_button),
         )
         settings_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.inventory_bulk_toggle = tk.Checkbutton(
-            action_row,
-            text="Bulk Edit",
-            variable=self.inventory_bulk_edit_var,
-            command=self._toggle_inventory_bulk_edit,
-            indicatoron=False,
-            cursor="hand2",
-            relief=tk.FLAT,
-            borderwidth=0,
-            highlightthickness=0,
-            padx=14,
-            pady=7,
-            font=("Segoe UI Semibold", 9),
-        )
-        self.inventory_bulk_toggle.pack(side=tk.LEFT, padx=(14, 0))
-        self._style_inventory_bulk_toggle()
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=10, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_grader_var, self.inventory_year_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var, self.inventory_date_min_var, self.inventory_date_max_var, self.inventory_missing_title_var, self.inventory_missing_comps_var, self.inventory_missing_cl_var, self.inventory_missing_photos_var):
             var.trace_add("write", lambda *_args: self._schedule_inventory_filter_refresh())
@@ -5549,6 +5533,8 @@ class CardPipelineApp(tk.Tk):
             self._set_inventory_bulk_cell(row_id, column)
 
     def _begin_inventory_cell_edit_from_click(self, event: tk.Event) -> str | None:
+        if self.inventory_cell_editor is not None and self.inventory_cell_edit is not None:
+            self._commit_inventory_bulk_edit(0, 0, reopen=False)
         column_id = self.inventory_tree.identify_column(event.x)
         row_id = self.inventory_tree.identify_row(event.y)
         if not row_id or not column_id:
@@ -12077,7 +12063,7 @@ class CardPipelineApp(tk.Tk):
 
     def _build_manual_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
-        ttk.Label(self.review_mode_host, text="Double-click cells in the Receive table to enter certs, raw Item IDs, or adjust matched details.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
+        ttk.Label(self.review_mode_host, text="Click cells in the Receive table to enter certs, raw Item IDs, or adjust matched details.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
 
     def _build_manual_intake_mode(self) -> None:
         self.scanning_station_active = False
@@ -14310,6 +14296,7 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(f"Saved current comp rows back to {stage_label}{path.name}.{suffix}")
 
     def save_working_sheet(self) -> None:
+        self._commit_cell_edit()
         if getattr(self, "working_sheet_save_active", False):
             self.status_var.set("Working sheet save is already in progress.")
             return
@@ -15677,6 +15664,8 @@ class CardPipelineApp(tk.Tk):
         return None
 
     def _begin_editable_table_click(self, event: tk.Event) -> str | None:
+        if self.cell_editor is not None and self.cell_edit is not None:
+            self._commit_cell_edit()
         if self._handle_table_click(event) == "break":
             return "break"
         self._begin_cell_edit(event)
@@ -15737,13 +15726,22 @@ class CardPipelineApp(tk.Tk):
         editor.focus_set()
         self.cell_editor = editor
         self.cell_edit = (tree, row_id, column)
+        if is_receive_card_autocomplete:
+            editor.icursor(tk.END)
+            editor.selection_clear()
+            editor.bind("<KeyRelease>", lambda event, widget=editor: self._on_receive_card_autocomplete_key(event, widget), add="+")
+            editor.bind("<Down>", lambda _event, widget=editor: self._open_receive_card_autocomplete(widget), add="+")
+            editor.bind("<Alt-Down>", lambda _event, widget=editor: self._open_receive_card_autocomplete(widget), add="+")
+            editor.bind("<<ComboboxSelected>>", lambda _event: self._commit_cell_edit(), add="+")
+            editor.after_idle(lambda widget=editor: self._open_receive_card_autocomplete(widget))
         editor.bind("<Return>", lambda _event: self._commit_cell_edit())
         editor.bind("<KP_Enter>", lambda _event: self._commit_cell_edit())
         editor.bind("<Escape>", lambda _event: self._cancel_cell_edit())
-        editor.bind("<FocusOut>", lambda _event: self._commit_cell_edit())
+        editor.bind("<Tab>", lambda _event: self._commit_cell_edit())
         if is_receive_card_autocomplete:
-            editor.bind("<KeyRelease>", lambda event, widget=editor: self._on_receive_card_autocomplete_key(event, widget), add="+")
-            editor.bind("<<ComboboxSelected>>", lambda _event: self._commit_cell_edit(), add="+")
+            editor.bind("<FocusOut>", lambda _event, widget=editor: self._commit_receive_card_autocomplete_focus_out(widget))
+        else:
+            editor.bind("<FocusOut>", lambda _event: self._commit_cell_edit())
 
     def _commit_cell_edit(self) -> None:
         if not self.cell_editor or not self.cell_edit:
@@ -15775,6 +15773,32 @@ class CardPipelineApp(tk.Tk):
             return
         self._refresh_receive_card_autocomplete(editor, editor.get())
 
+    def _open_receive_card_autocomplete(self, editor: ttk.Combobox) -> str:
+        try:
+            self._refresh_receive_card_autocomplete(editor, editor.get())
+            if editor.cget("values"):
+                editor.tk.call("ttk::combobox::Post", editor)
+        except tk.TclError:
+            pass
+        return "break"
+
+    def _receive_card_autocomplete_dropdown_visible(self, editor: ttk.Combobox) -> bool:
+        try:
+            popdown = editor.tk.call("ttk::combobox::PopdownWindow", editor)
+            return bool(int(editor.tk.call("winfo", "viewable", popdown)))
+        except (tk.TclError, ValueError):
+            return False
+
+    def _commit_receive_card_autocomplete_focus_out(self, editor: ttk.Combobox) -> None:
+        def commit_if_still_editing(widget: ttk.Combobox = editor) -> None:
+            if self.cell_editor is not widget:
+                return
+            if self._receive_card_autocomplete_dropdown_visible(widget):
+                return
+            self._commit_cell_edit()
+
+        self.after(150, commit_if_still_editing)
+
     def _apply_receive_match_to_existing_row(self, tree: ttk.Treeview, excel_row: int, match: dict[str, object]) -> None:
         if not self._is_review_row_tree(tree) or not match:
             return
@@ -15784,33 +15808,21 @@ class CardPipelineApp(tk.Tk):
                 continue
             self._attach_receive_match_to_row(row, match)
             row.status = "Received"
-            if match.get("item_id"):
-                row.item_id = str(match.get("item_id") or "")
-            if match.get("cert_number"):
-                row.cert_number = str(match.get("cert_number") or "")
-            if match.get("card_title"):
-                row.card_title = str(match.get("card_title") or "")
-            if match.get("grader"):
-                row.grader = str(match.get("grader") or "")
-            if match.get("sport") or match.get("category"):
-                row.category = str(match.get("sport") or match.get("category") or "")
-            if match.get("purchase_price") is not None:
-                row.existing_value = match.get("purchase_price")
-            if match.get("card_ladder_value") is not None:
-                row.card_ladder_value = match.get("card_ladder_value")
-            if match.get("card_ladder_comps_average") is not None:
-                row.card_ladder_comps_average = match.get("card_ladder_comps_average")
-            if match.get("cy_value") is not None:
-                row.cy_value = match.get("cy_value")
-            if match.get("cy_confidence") is not None:
-                row.cy_confidence = match.get("cy_confidence")
-            if match.get("card_ladder_comps"):
-                row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
-            if match.get("best_company"):
-                row.best_company = str(match.get("best_company") or "")
-            if match.get("estimated_payout") is not None:
-                row.estimated_payout = match.get("estimated_payout")
-            self._ensure_receive_row_assignment(row)
+            row.item_id = str(match.get("item_id") or "")
+            row.cert_number = str(match.get("cert_number") or "")
+            row.card_title = str(match.get("card_title") or "")
+            row.grader = str(match.get("grader") or "")
+            row.category = str(match.get("sport") or match.get("category") or "")
+            row.existing_value = match.get("purchase_price")
+            row.card_ladder_value = match.get("card_ladder_value")
+            row.card_ladder_comps_average = match.get("card_ladder_comps_average")
+            row.cy_value = match.get("cy_value")
+            row.cy_confidence = match.get("cy_confidence")
+            row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
+            row.best_company = str(match.get("best_company") or "")
+            row.estimated_payout = match.get("estimated_payout")
+            if row.cert_number and not row.best_company and row.estimated_payout is None:
+                self._ensure_receive_row_assignment(row)
             self.review_status.set(f"Matched receive row to {match.get('sheet') or 'incoming sheet'}.")
             return
 
@@ -15887,11 +15899,13 @@ class CardPipelineApp(tk.Tk):
                 row.cy_value = self._parse_money_text(clean_value)
             elif column == "cy_confidence":
                 row.cy_confidence = clean_value
+            elif column == "estimated_payout":
+                row.estimated_payout = self._parse_money_text(clean_value)
             row.status = "Ready" if (row.cert_number and row.grader) or row.item_id else "Needs setup"
             if tree is self.intake_tree:
                 if column == "purchase_price":
                     setattr(row, "_seller_terms_base_purchase", row.existing_value)
-                if column in {"purchase_price", "card_ladder_value", "card_ladder_comps_average", "cy_value"}:
+                if column in {"purchase_price", "card_ladder_value", "card_ladder_comps_average", "cy_value", "estimated_payout"}:
                     self.apply_create_seller_terms(show_status=False)
             if self._is_review_row_tree(tree) and (
                 (column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert)
