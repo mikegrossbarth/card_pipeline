@@ -7966,9 +7966,9 @@ class CardPipelineApp(tk.Tk):
                 continue
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=col, sticky="w", padx=(0, 8), pady=(0, 8))
             if field == "assigned_person":
-                person_combo = ttk.Combobox(frame, textvariable=var, width=24)
+                person_combo = ttk.Combobox(frame, textvariable=var, values=self._known_people(), width=24, state="readonly")
+                person_combo.configure(postcommand=lambda widget=person_combo: widget.configure(values=self._known_people()))
                 person_combo.grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
-                self._bind_person_autocomplete(person_combo)
             elif field == "expense_type":
                 ttk.Combobox(frame, textvariable=var, values=EXPENSE_CATEGORY_OPTIONS, width=22, state="readonly").grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
             elif field == "related_type":
