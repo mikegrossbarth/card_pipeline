@@ -2856,11 +2856,11 @@ class CardPipelineApp(tk.Tk):
                         continue
                     headers = self._workbook_header_lookup(sheet)
                     headers, item_id_col = self._ensure_workbook_item_id_column(sheet, headers)
-                    cert_col = next((headers.get(name) for name in ("certificationnumber", "certnumber", "cert", "certification")), None)
-                    card_col = next((headers.get(name) for name in ("carddescription", "card", "cardtitle", "title", "description")), None)
-                    grader_col = next((headers.get(name) for name in ("company", "grader", "gradingcompany")), None)
-                    sport_col = next((headers.get(name) for name in ("sport", "category")), None)
-                    purchase_col = next((headers.get(name) for name in ("purchaseprice", "purchase", "cost", "buyprice")), None)
+                    cert_col = next((headers.get(name) for name in ("certificationnumber", "certnumber", "cert", "certification") if headers.get(name)), None)
+                    card_col = next((headers.get(name) for name in ("carddescription", "card", "cardtitle", "title", "description") if headers.get(name)), None)
+                    grader_col = next((headers.get(name) for name in ("company", "grader", "gradingcompany") if headers.get(name)), None)
+                    sport_col = next((headers.get(name) for name in ("sport", "category") if headers.get(name)), None)
+                    purchase_col = next((headers.get(name) for name in ("purchaseprice", "purchase", "cost", "buyprice") if headers.get(name)), None)
                     for row_index in range(2, sheet.max_row + 1):
                         item_id = str(sheet.cell(row_index, item_id_col).value or "").strip()
                         cert = scan_to_cert(sheet.cell(row_index, cert_col).value if cert_col else "")
@@ -3146,7 +3146,7 @@ class CardPipelineApp(tk.Tk):
             if item_id:
                 keys.add(("", f"item:{item_id}"))
             title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
-            if source_sheet and not cert and title_identity:
+            if source_sheet and not cert and not item_id and title_identity:
                 keys.add((source_sheet, f"title:{title_identity}"))
         for record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
             cert = scan_to_cert(record.get("cert_number"))
@@ -3162,7 +3162,7 @@ class CardPipelineApp(tk.Tk):
                 if item_id:
                     keys.add(("", f"item:{item_id}"))
                 title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
-                if source_sheet and not cert and title_identity:
+                if source_sheet and not cert and not item_id and title_identity:
                     keys.add((source_sheet, f"title:{title_identity}"))
         return keys
 
@@ -3177,6 +3177,10 @@ class CardPipelineApp(tk.Tk):
         assigned_person = str(person or "").strip()
         if not assigned_person or not path.exists():
             return []
+        try:
+            self._ensure_raw_item_ids_in_sheet_paths([path])
+        except Exception:
+            pass
         received_certs = None if stage == "Received" else self._received_certs_in_workbook(path)
         try:
             rows = read_simple_spreadsheet(path)
@@ -3210,7 +3214,7 @@ class CardPipelineApp(tk.Tk):
                 continue
             if ("", row_identity) in accounted_keys:
                 continue
-            if not cert and title_identity and (path.name.lower(), f"title:{title_identity}") in accounted_keys:
+            if not cert and not item_id and title_identity and (path.name.lower(), f"title:{title_identity}") in accounted_keys:
                 continue
             sport = CardPipelineApp._inventory_sport_from_value(self, row.get("sport") or row.get("category"), card_title)
             item_type = "Graded" if cert else "Raw"
@@ -9079,29 +9083,88 @@ class CardPipelineApp(tk.Tk):
         if source_key and cert_key:
             index.setdefault(source_key, set()).add(cert_key)
 
+    def _add_accounted_row_identity(
+        self,
+        index: dict[str, set[str]],
+        source_sheet: object,
+        cert: object = '',
+        item_id: object = '',
+        card_title: object = '',
+    ) -> None:
+        source_key = self._accounted_source_key(source_sheet)
+        if not source_key:
+            return
+        cert_key = scan_to_cert(cert)
+        if cert_key:
+            index.setdefault(source_key, set()).add(cert_key)
+            return
+        item_key = str(item_id or '').strip().lower()
+        if item_key:
+            index.setdefault(source_key, set()).add(f'item:{item_key}')
+            return
+        title_key = self._received_inventory_title_identity(card_title)
+        if title_key:
+            index.setdefault(source_key, set()).add(f'title:{title_key}')
+
     def _accounted_sheet_cert_index(self) -> dict[str, set[str]]:
         index: dict[str, set[str]] = {}
         for record in [self._normalize_inventory_record(row) for row in self._load_inventory_ledger()]:
-            self._add_accounted_cert(index, record.get("source_sheet"), record.get("cert_number"))
+            self._add_accounted_row_identity(index, record.get('source_sheet'), record.get('cert_number'), record.get('item_id'), record.get('card_title'))
         for record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
-            self._add_accounted_cert(index, record.get("source_sheet"), record.get("cert_number"))
-            self._add_accounted_cert(index, record.get("original_source_sheet"), record.get("cert_number"))
+            self._add_accounted_row_identity(index, record.get('source_sheet'), record.get('cert_number'), record.get('item_id'), record.get('card_title'))
+            self._add_accounted_row_identity(index, record.get('original_source_sheet'), record.get('cert_number'), record.get('item_id'), record.get('card_title'))
         for entry in self._load_activity_log():
-            if str(entry.get("action") or "").strip().lower() != "inventory sold":
+            if str(entry.get('action') or '').strip().lower() != 'inventory sold':
                 continue
-            details = entry.get("details") if isinstance(entry.get("details"), dict) else {}
-            inventory_key = str(details.get("inventory_key") or "")
-            parts = inventory_key.split("|")
+            details = entry.get('details') if isinstance(entry.get('details'), dict) else {}
+            inventory_key = str(details.get('inventory_key') or '')
+            parts = inventory_key.split(chr(124))
             if len(parts) >= 2:
                 self._add_accounted_cert(index, parts[1], parts[0])
         return index
 
     def _sheet_cert_set(self, path: Path) -> set[str]:
-        return {
-            scan_to_cert(row.get("cert_number"))
-            for row in read_simple_spreadsheet(path)
-            if scan_to_cert(row.get("cert_number"))
-        }
+        return {identity for identity, _row_ref in self._sheet_accounting_identities(path)}
+
+    def _sheet_accounting_identities(self, path: Path) -> set[tuple[str, object]]:
+        identities: set[tuple[str, object]] = set()
+        for row in read_simple_spreadsheet(path):
+            cert = scan_to_cert(row.get('cert_number'))
+            row_ref = None
+            workbook_sheet = str(row.get('workbook_sheet') or '').strip()
+            try:
+                workbook_row = int(row.get('workbook_row') or 0)
+            except (TypeError, ValueError):
+                workbook_row = 0
+            if workbook_sheet and workbook_row > 0:
+                row_ref = (path.name, workbook_sheet, workbook_row)
+            if cert:
+                identities.add((cert, None))
+                continue
+            item_id = str(row.get('item_id') or '').strip().lower()
+            if item_id:
+                identities.add((f'item:{item_id}', row_ref))
+                continue
+            title_identity = self._received_inventory_title_identity(row.get('card_title'))
+            if title_identity:
+                identities.add((f'title:{title_identity}', row_ref))
+        return identities
+
+    def _sheet_unaccounted_identity_count(self, path: Path) -> int:
+        if not path.exists():
+            return 0
+        sheet_identities = {identity for identity, _row_ref in self._sheet_accounting_identities(path)}
+        if not sheet_identities:
+            return 0
+        accounted = self._accounted_sheet_cert_index().get(self._accounted_source_key(path.name), set())
+        return len(sheet_identities - accounted)
+
+    def _assert_sheet_inventory_accounted_for_received(self, path: Path) -> None:
+        missing_count = self._sheet_unaccounted_identity_count(path)
+        if missing_count:
+            raise RuntimeError(
+                f"Cannot move {path.name} to Received: {missing_count} row(s) are not in inventory, company sheets, or sold ledgers yet."
+            )
 
     def _reconcile_accounted_home_sheets(self) -> dict[str, list[str]]:
         result: dict[str, list[str]] = {"moved": [], "warnings": [], "notices": []}
@@ -9115,27 +9178,30 @@ class CardPipelineApp(tk.Tk):
                 continue
             for path in sorted(directory.glob("*.xlsx"), key=lambda item: item.name.lower()):
                 source_key = self._accounted_source_key(path.name)
-                accounted_certs = accounted.get(source_key, set())
-                if not accounted_certs:
+                accounted_identities = accounted.get(source_key, set())
+                if not accounted_identities:
                     continue
                 try:
-                    sheet_certs = self._sheet_cert_set(path)
+                    sheet_identity_refs = self._sheet_accounting_identities(path)
                 except Exception as error:
                     result["warnings"].append(f"{path.name}: could not inspect duplicate/accounted rows ({error})")
                     continue
-                if not sheet_certs:
+                sheet_identities = {identity for identity, _row_ref in sheet_identity_refs}
+                if not sheet_identities:
                     continue
-                matched = sheet_certs & accounted_certs
+                matched = sheet_identities & accounted_identities
                 if not matched:
                     continue
-                missing = sheet_certs - accounted_certs
+                missing = sheet_identities - accounted_identities
                 if missing:
                     result["notices"].append(
-                        f"{path.name}: {len(matched)}/{len(sheet_certs)} cert(s) already exist in inventory/company/sold ledgers; {len(missing)} still unaccounted."
+                        f"{path.name}: {len(matched)}/{len(sheet_identities)} row(s) already exist in inventory/company/sold ledgers; {len(missing)} still unaccounted."
                     )
                     continue
                 try:
-                    mark_result = mark_received_in_workbooks([path], sheet_certs)
+                    raw_row_refs = {row_ref for identity, row_ref in sheet_identity_refs if identity in matched and row_ref}
+                    certs_to_mark = {identity for identity in sheet_identities if scan_to_cert(identity)}
+                    mark_result = mark_received_in_workbooks([path], certs_to_mark, raw_row_refs)
                     mark_errors = list(mark_result.get("errors") or [])
                     if mark_errors:
                         result["warnings"].append(f"{path.name}: all rows accounted, but receive marks could not be written: {mark_errors[0]}")
@@ -9153,7 +9219,7 @@ class CardPipelineApp(tk.Tk):
                     self._append_activity(
                         "Sheet Reconcile",
                         f"Moved fully accounted sheet {path.name} from {stage} to Received.",
-                        {"sheet": path.name, "from": stage, "to": "Received", "accounted_certs": len(sheet_certs)},
+                        {"sheet": path.name, "from": stage, "to": "Received", "accounted_rows": len(sheet_identities)},
                     )
                     result["moved"].append(path.name)
                 except Exception as error:
@@ -11410,6 +11476,15 @@ class CardPipelineApp(tk.Tk):
             lock_started = time.perf_counter()
             with shared_lock(CARD_PIPELINE_DIR, "sheet-stage-move", self.lucas_identity):
                 move_phases.append(f"lock_wait={time.perf_counter() - lock_started:.3f}s")
+                if target_stage == "Received":
+                    marker = self.home_sheet_markers.get(self.home_selected_sheet_key, {})
+                    person = str(marker.get("assigned_person") or "").strip()
+                    if person:
+                        phase_started = time.perf_counter()
+                        added, candidates = self._sync_received_sheet_inventory_to_ledger(source_stage, path, person)
+                        inventory_rows_added += added
+                        inventory_candidate_rows += candidates
+                        move_phases.append(f"pre_inventory_sync={time.perf_counter() - phase_started:.3f}s")
                 phase_started = time.perf_counter()
                 moved_key, cleanup = self._move_home_sheet_to_stage(self.home_selected_sheet_key, target_stage)
                 move_phases.append(f"move={time.perf_counter() - phase_started:.3f}s")
@@ -11697,6 +11772,13 @@ class CardPipelineApp(tk.Tk):
                     marker["all_received"] = True
                     marker.setdefault("received_at", existing_marker.get("received_at") or datetime.now().isoformat(timespec="seconds"))
                 elif marker["all_received"]:
+                    person = str(marker.get("assigned_person") or "").strip()
+                    if person:
+                        inventory_rows_added, inventory_candidate_rows = self._sync_received_sheet_inventory_to_ledger(
+                            "Received",
+                            self._sheet_path_for_stage(selected_kind, _selected_name),
+                            person,
+                        )
                     moved_key = self._move_sheet_to_received(key)
                     if moved_key:
                         self._delete_sheet_marker(key)
@@ -11836,6 +11918,8 @@ class CardPipelineApp(tk.Tk):
         if not source.exists():
             raise FileNotFoundError(f"{source_stage} sheet not found: {source}")
         record_performance_event("home.stage_move.source_exists", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
+        if target_stage == "Received" and source_stage != "Received":
+            self._assert_sheet_inventory_accounted_for_received(source)
         target_dir = {
             "Incoming": INCOMING_SHEETS_DIR,
             "Working": WORKING_SHEETS_DIR,
@@ -11951,6 +12035,9 @@ class CardPipelineApp(tk.Tk):
                 continue
             old_key = self._home_sheet_key(kind, path.name)
             marker = dict(self.home_sheet_markers.get(old_key, {}))
+            person = str(marker.get("assigned_person") or "").strip()
+            if person:
+                self._sync_received_sheet_inventory_to_ledger(kind, path, person)
             marker["all_received"] = True
             marker.setdefault("received_at", datetime.now().isoformat(timespec="seconds"))
             new_key = self._move_sheet_to_received(old_key)

@@ -5594,8 +5594,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class ReconcileDummy:
             _accounted_source_key = app.CardPipelineApp._accounted_source_key
             _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
+            _add_accounted_row_identity = app.CardPipelineApp._add_accounted_row_identity
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
             _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
             _sheet_cert_set = app.CardPipelineApp._sheet_cert_set
+            _sheet_accounting_identities = app.CardPipelineApp._sheet_accounting_identities
             _reconcile_accounted_home_sheets = app.CardPipelineApp._reconcile_accounted_home_sheets
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
             _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
@@ -5680,8 +5683,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class ReconcileDummy:
             _accounted_source_key = app.CardPipelineApp._accounted_source_key
             _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
+            _add_accounted_row_identity = app.CardPipelineApp._add_accounted_row_identity
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
             _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
             _sheet_cert_set = app.CardPipelineApp._sheet_cert_set
+            _sheet_accounting_identities = app.CardPipelineApp._sheet_accounting_identities
             _reconcile_accounted_home_sheets = app.CardPipelineApp._reconcile_accounted_home_sheets
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -5729,7 +5735,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(result["moved"], [])
                 self.assertEqual(result["warnings"], [])
                 self.assertEqual(len(result["notices"]), 1)
-                self.assertIn("1/2 cert(s) already exist", result["notices"][0])
+                self.assertIn("1/2 row(s) already exist", result["notices"][0])
                 self.assertTrue(sheet_path.exists())
                 self.assertFalse((app.RECEIVED_SHEETS_DIR / "Lot B.xlsx").exists())
             finally:
@@ -5803,6 +5809,338 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
+
+    def test_partial_accounted_raw_sheet_notices_without_moving(self) -> None:
+        class ReconcileDummy:
+            _accounted_source_key = app.CardPipelineApp._accounted_source_key
+            _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
+            _add_accounted_row_identity = app.CardPipelineApp._add_accounted_row_identity
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
+            _sheet_cert_set = app.CardPipelineApp._sheet_cert_set
+            _sheet_accounting_identities = app.CardPipelineApp._sheet_accounting_identities
+            _reconcile_accounted_home_sheets = app.CardPipelineApp._reconcile_accounted_home_sheets
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+
+            def _load_inventory_ledger(self):
+                return self.inventory
+
+            def _load_profit_ledger(self):
+                return []
+
+            def _load_activity_log(self):
+                return []
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            app.CARD_PIPELINE_DIR = root
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.RECEIVED_SHEETS_DIR = root / "RECEIVED SHEETS"
+            app.INCOMING_SHEETS_DIR.mkdir(parents=True)
+            app.WORKING_SHEETS_DIR.mkdir(parents=True)
+            app.RECEIVED_SHEETS_DIR.mkdir(parents=True)
+            try:
+                sheet_path = app.INCOMING_SHEETS_DIR / "drose514_8_21_26.xlsx"
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.title = "Cards"
+                sheet.append(["Item ID", "Cert", "Sport", "Description", "Purchase", "RECEIVED"])
+                sheet.append(["RAW-TEAM-20260824-3014939182", "", "basketball", "2024 Panini One and One Stephen Curry Gold", 3400, "X"])
+                sheet.append(["RAW-TEAM-20260824-EDWARDS", "", "basketball", "2020 Donruss Optic Anthony Edwards Raw", 250, ""])
+                workbook.save(sheet_path)
+
+                dummy = ReconcileDummy()
+                dummy.inventory = [
+                    {
+                        "item_type": "Raw",
+                        "item_id": "RAW-TEAM-20260824-3014939182",
+                        "source_sheet": "drose514_8_21_26.xlsx",
+                        "card_title": "2024 Panini One and One Stephen Curry Gold",
+                        "status": "Active",
+                    }
+                ]
+
+                result = dummy._reconcile_accounted_home_sheets()
+
+                self.assertEqual(result["moved"], [])
+                self.assertEqual(result["warnings"], [])
+                self.assertEqual(len(result["notices"]), 1)
+                self.assertIn("1/2 row(s) already exist", result["notices"][0])
+                self.assertTrue(sheet_path.exists())
+                self.assertFalse((app.RECEIVED_SHEETS_DIR / "drose514_8_21_26.xlsx").exists())
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+
+    def test_move_to_received_blocks_when_raw_row_missing_inventory(self) -> None:
+        class MoveDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
+            _accounted_source_key = app.CardPipelineApp._accounted_source_key
+            _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
+            _add_accounted_row_identity = app.CardPipelineApp._add_accounted_row_identity
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
+            _sheet_accounting_identities = app.CardPipelineApp._sheet_accounting_identities
+            _sheet_unaccounted_identity_count = app.CardPipelineApp._sheet_unaccounted_identity_count
+            _assert_sheet_inventory_accounted_for_received = app.CardPipelineApp._assert_sheet_inventory_accounted_for_received
+            _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _is_personal_lucas = lambda self: False
+
+            def _load_inventory_ledger(self):
+                return self.inventory
+
+            def _load_profit_ledger(self):
+                return []
+
+            def _load_activity_log(self):
+                return []
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.RECEIVED_SHEETS_DIR = root / "RECEIVED SHEETS"
+            app.INCOMING_SHEETS_DIR.mkdir(parents=True)
+            app.WORKING_SHEETS_DIR.mkdir(parents=True)
+            app.RECEIVED_SHEETS_DIR.mkdir(parents=True)
+            try:
+                sheet_path = app.INCOMING_SHEETS_DIR / "drose514_8_21_26.xlsx"
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.title = "Cards"
+                sheet.append(["Item ID", "Cert", "Sport", "Description", "Purchase", "RECEIVED"])
+                sheet.append(["RAW-TEAM-20260824-3014939182", "", "basketball", "2024 Panini One and One Stephen Curry Gold", 3400, "X"])
+                sheet.append(["RAW-TEAM-20260824-EDWARDS", "", "basketball", "2020 Donruss Optic Anthony Edwards Raw", 250, "X"])
+                workbook.save(sheet_path)
+
+                dummy = MoveDummy()
+                dummy.home_sheet_paths = {"Incoming": {sheet_path.name: sheet_path}, "Working": {}, "Received": {}}
+                dummy.received_sheet_paths = {}
+                dummy.home_sheet_markers = {"Incoming|" + sheet_path.name: {"assigned_person": "Mikey"}}
+                dummy.deleted_sheet_marker_keys = set()
+                dummy.inventory = [
+                    {
+                        "item_type": "Raw",
+                        "item_id": "RAW-TEAM-20260824-3014939182",
+                        "source_sheet": sheet_path.name,
+                        "card_title": "2024 Panini One and One Stephen Curry Gold",
+                        "status": "Active",
+                    }
+                ]
+
+                with self.assertRaisesRegex(RuntimeError, "Cannot move drose514_8_21_26.xlsx to Received: 1 row"):
+                    dummy._move_home_sheet_to_stage("Incoming|" + sheet_path.name, "Received")
+
+                self.assertTrue(sheet_path.exists())
+                self.assertFalse((app.RECEIVED_SHEETS_DIR / sheet_path.name).exists())
+            finally:
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+
+    def test_received_raw_candidates_assign_missing_item_ids_before_sync(self) -> None:
+        class CandidateDummy:
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _ensure_raw_item_ids_in_sheet_paths = app.CardPipelineApp._ensure_raw_item_ids_in_sheet_paths
+            _workbook_header_lookup = app.CardPipelineApp._workbook_header_lookup
+            _ensure_workbook_item_id_column = app.CardPipelineApp._ensure_workbook_item_id_column
+            _raw_item_id_existing_records = lambda self: []
+            _raw_item_id_reserved_title_map = app.CardPipelineApp._raw_item_id_reserved_title_map
+            _raw_item_id_namespace = lambda self: "MIKEY"
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _load_profit_ledger(self):
+                return []
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+
+        with TemporaryDirectory() as tmp:
+            sheet_path = Path(tmp) / "drose514_8_24_26.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Item ID", "Cert", "Sport", "Description", "Purchase", "RECEIVED"])
+            sheet.append(["", "", "baseball", "2025 Topps Tier One Albert Pujols/Ichiro Suzuki 1/1 Dual Bat Auto", 1350, "X"])
+            sheet.append(["", "", "basketball", "2024 Panini National Treasures Giannis Antetokounmpo Auto Viewpoint Signatures Gold 5/10", 470, "X"])
+            workbook.save(sheet_path)
+
+            dummy = CandidateDummy()
+            candidates = dummy._received_inventory_candidate_records_for_sheet("Incoming", sheet_path, "Mikey", company_keys=set(), accounted_keys=set())
+
+            self.assertEqual(len(candidates), 2)
+            self.assertTrue(all(str(record["item_id"]).startswith("RAW-MIKEY-") for record in candidates))
+            self.assertEqual(len({record["item_id"] for record in candidates}), 2)
+            rows = app.read_simple_spreadsheet(sheet_path)
+            self.assertTrue(all(str(row.get("item_id") or "").startswith("RAW-MIKEY-") for row in rows))
+
+    def test_received_raw_candidate_keeps_item_id_ahead_of_title_fallback(self) -> None:
+        class CandidateDummy:
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sheet_path = root / "drose514_8_21_26.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Item ID", "Cert", "Sport", "Description", "Purchase", "RECEIVED"])
+            sheet.append(["RAW-MIKEY-20260822-0001", "", "basketball", "2026 Topps Chrome Anthony Edwards Refractor Auto", 600, "X"])
+            workbook.save(sheet_path)
+
+            dummy = CandidateDummy()
+            title_identity = dummy._received_inventory_title_identity("2026 Topps Chrome Anthony Edwards Refractor Auto")
+            candidates = dummy._received_inventory_candidate_records_for_sheet(
+                "Incoming",
+                sheet_path,
+                "Mikey",
+                company_keys=set(),
+                accounted_keys={
+                    (sheet_path.name.lower(), "item:raw-mikey-20260827-0001"),
+                    (sheet_path.name.lower(), f"title:{title_identity}"),
+                },
+            )
+
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0]["item_id"], "RAW-MIKEY-20260822-0001")
+
+    def test_auto_received_move_syncs_raw_inventory_before_guard(self) -> None:
+        class AutoMoveDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
+            _move_sheet_to_received = app.CardPipelineApp._move_sheet_to_received
+            _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+            _move_fully_received_sheets_to_received = app.CardPipelineApp._move_fully_received_sheets_to_received
+            _unique_stage_destination = app.CardPipelineApp._unique_stage_destination
+            _accounted_source_key = app.CardPipelineApp._accounted_source_key
+            _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
+            _add_accounted_row_identity = app.CardPipelineApp._add_accounted_row_identity
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
+            _sheet_accounting_identities = app.CardPipelineApp._sheet_accounting_identities
+            _sheet_unaccounted_identity_count = app.CardPipelineApp._sheet_unaccounted_identity_count
+            _assert_sheet_inventory_accounted_for_received = app.CardPipelineApp._assert_sheet_inventory_accounted_for_received
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _is_personal_lucas = lambda self: False
+
+            def _load_inventory_ledger(self):
+                return self.inventory
+
+            def _load_profit_ledger(self):
+                return []
+
+            def _load_activity_log(self):
+                return []
+
+            def _sync_received_sheet_inventory_to_ledger(self, stage, path, person):
+                self.sync_calls.append((stage, path.name, person))
+                self.inventory.append(
+                    {
+                        "item_type": "Raw",
+                        "item_id": "RAW-TEAM-20260824-EDWARDS",
+                        "source_sheet": path.name,
+                        "card_title": "2020 Donruss Optic Anthony Edwards Raw",
+                        "status": "Active",
+                    }
+                )
+                return 1, 1
+
+            def _delete_sheet_marker(self, key):
+                self.deleted_sheet_marker_keys.add(key)
+                self.home_sheet_markers.pop(key, None)
+
+            def _marker_for_stage(self, marker, stage):
+                marker = dict(marker)
+                if stage == "Received":
+                    marker["all_received"] = True
+                return marker
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.RECEIVED_SHEETS_DIR = root / "RECEIVED SHEETS"
+            app.INCOMING_SHEETS_DIR.mkdir(parents=True)
+            app.WORKING_SHEETS_DIR.mkdir(parents=True)
+            app.RECEIVED_SHEETS_DIR.mkdir(parents=True)
+            try:
+                sheet_path = app.INCOMING_SHEETS_DIR / "drose514_8_21_26.xlsx"
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.title = "Cards"
+                sheet.append(["Item ID", "Cert", "Sport", "Description", "Purchase", "RECEIVED"])
+                sheet.append(["RAW-TEAM-20260824-3014939182", "", "basketball", "2024 Panini One and One Stephen Curry Gold", 3400, "X"])
+                sheet.append(["RAW-TEAM-20260824-EDWARDS", "", "basketball", "2020 Donruss Optic Anthony Edwards Raw", 250, "X"])
+                workbook.save(sheet_path)
+
+                dummy = AutoMoveDummy()
+                dummy.home_sheet_paths = {"Incoming": {sheet_path.name: sheet_path}, "Working": {}, "Received": {}}
+                dummy.received_sheet_paths = {}
+                dummy.home_sheet_markers = {"Incoming|" + sheet_path.name: {"assigned_person": "Mikey"}}
+                dummy.deleted_sheet_marker_keys = set()
+                dummy.sync_calls = []
+                dummy.inventory = [
+                    {
+                        "item_type": "Raw",
+                        "item_id": "RAW-TEAM-20260824-3014939182",
+                        "source_sheet": sheet_path.name,
+                        "card_title": "2024 Panini One and One Stephen Curry Gold",
+                        "status": "Active",
+                    }
+                ]
+
+                moved = dummy._move_fully_received_sheets_to_received([sheet_path])
+
+                self.assertEqual(moved, [sheet_path.name])
+                self.assertEqual(dummy.sync_calls, [("Incoming", sheet_path.name, "Mikey")])
+                self.assertFalse(sheet_path.exists())
+                self.assertTrue((app.RECEIVED_SHEETS_DIR / sheet_path.name).exists())
+                self.assertIn("Received|" + sheet_path.name, dummy.home_sheet_markers)
+            finally:
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
 
     def test_record_profit_sales_keeps_distinct_inventory_sales_with_corrected_cert(self) -> None:
         class ProfitDummy:
