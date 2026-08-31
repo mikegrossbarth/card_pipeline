@@ -1683,7 +1683,10 @@ function bind() {
   $("installHelp").addEventListener("click", () => alert("On iPhone: Share -> Add to Home Screen."));
   setConnectionStatus(navigator.onLine !== false, navigator.onLine === false ? "" : "Ready. Live data loads when desktop LUCAS is reachable.");
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register(`${APP_BASE}/sw.js`, { scope: `${APP_BASE}/` }).catch(() => {});
+    navigator.serviceWorker
+      .register(`${APP_BASE}/sw.js`, { scope: `${APP_BASE}/`, updateViaCache: "none" })
+      .then((registration) => registration.update().catch(() => {}))
+      .catch(() => {});
   }
   updateClearSearchButton("searchInput", "clearSearchInput");
   updateClearSearchButton("profitSearch", "clearProfitSearch");
