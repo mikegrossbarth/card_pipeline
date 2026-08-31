@@ -4473,6 +4473,66 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
 
+    def test_received_marker_tracking_edit_skips_inventory_sync_and_payout_refresh(self) -> None:
+        class StatusVar:
+            def set(self, value):
+                self.value = value
+
+        class MarkerDummy:
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            save_home_sheet_markers = app.CardPipelineApp.save_home_sheet_markers
+            _is_personal_lucas = lambda self: False
+
+            def _retarget_inventory_rows_for_source(self, source_sheet, assigned_person):
+                return 0
+
+            def _retarget_profit_rows_for_source(self, source_sheet, assigned_person):
+                return 0
+
+            def _sync_received_sheet_inventory_to_ledger(self, *_args):
+                raise AssertionError("tracking-only marker edits must not scan received workbooks")
+
+            def _save_sheet_markers(self):
+                self.saved = True
+
+            def _refresh_after_home_marker_save(self, sheet_name, stage, moved=False, source_stage="", refresh_payouts=True):
+                self.refresh_args = {
+                    "sheet_name": sheet_name,
+                    "stage": stage,
+                    "moved": moved,
+                    "source_stage": source_stage,
+                    "refresh_payouts": refresh_payouts,
+                }
+
+        dummy = MarkerDummy()
+        dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+        dummy.home_selected_sheet_key = "Received|Lot.xlsx"
+        dummy.home_sheet_markers = {
+            "Received|Lot.xlsx": {
+                "assigned_person": "John Seller",
+                "all_received": True,
+                "tracking_number": "OLD",
+            }
+        }
+        dummy.deleted_sheet_marker_keys = set()
+        dummy.status_var = StatusVar()
+        dummy.saved = False
+
+        with patch.object(app, "shared_lock", lambda *_args, **_kwargs: __import__("contextlib").nullcontext()):
+            dummy.save_home_sheet_markers(
+                {
+                    "incoming_proper": False,
+                    "tracking_number": "NEW",
+                    "all_received": True,
+                    "assigned_person": "John Seller",
+                }
+            )
+
+        self.assertTrue(dummy.saved)
+        self.assertEqual(dummy.home_sheet_markers["Received|Lot.xlsx"]["tracking_number"], "NEW")
+        self.assertFalse(dummy.refresh_args["refresh_payouts"])
+
     def test_payout_history_filters_person_and_keeps_paid_rows(self) -> None:
         class Dummy:
             _payout_history_items_for_person = app.CardPipelineApp._payout_history_items_for_person
@@ -6235,9 +6295,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_chart_lines = app.CardPipelineApp._profit_chart_lines
             _expense_related_label = app.CardPipelineApp._expense_related_label
             _expense_link_options = app.CardPipelineApp._expense_link_options
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
+            _migrate_sold_card_payout_marker = app.CardPipelineApp._migrate_sold_card_payout_marker
+            _update_profit_sold_record = app.CardPipelineApp._update_profit_sold_record
             _update_profit_expense_record = app.CardPipelineApp._update_profit_expense_record
             _delete_profit_expense_records = app.CardPipelineApp._delete_profit_expense_records
             refresh_profit_tab = lambda self: None
+
+            def _save_sheet_markers(self) -> None:
+                self.saved_sheet_markers = True
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
@@ -6292,6 +6359,59 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 filtered = dummy._filtered_profit_records(ledger)
                 _days, values = dummy._profit_chart_series(filtered)
                 self.assertEqual(sum(values), 25)
+                sale_row = next(record for record in ledger if record.get("record_type") != "expense")
+                old_sale_key = sale_row["ledger_key"]
+                old_payout_key = dummy._sold_card_payout_key("Kevin Hambone", sale_row)
+                dummy.saved_sheet_markers = False
+                dummy.home_sheet_markers = {
+                    old_payout_key: {
+                        "assigned_person": "Kevin Hambone",
+                        "paid": True,
+                        "paid_at": "2026-06-19T12:00:00",
+                    }
+                }
+                edited_sale = dummy._update_profit_sold_record(
+                    sale_row,
+                    {
+                        "date_added": "2026-06-20",
+                        "assigned_person": "Kevin Hambone",
+                        "company": "Corrected Sold",
+                        "card_title": "Corrected Test Card",
+                        "purchase_price": "60",
+                        "sale_price": "125.50",
+                        "source_sheet": "Lot A.xlsx",
+                        "weekly_sheet_name": "Week of 2026-06-20",
+                        "notes": "Corrected sale",
+                    },
+                )
+                self.assertIsNotNone(edited_sale)
+                assert edited_sale is not None
+                self.assertEqual(edited_sale["company"], "Corrected Sold")
+                self.assertEqual(edited_sale["card_title"], "Corrected Test Card")
+                self.assertEqual(edited_sale["purchase_price"], 60.0)
+                self.assertEqual(edited_sale["sale_price"], 125.5)
+                self.assertEqual(edited_sale["profit"], 65.5)
+                self.assertEqual(edited_sale["date_added"], "2026-06-20")
+                self.assertIn(old_sale_key, edited_sale.get("previous_ledger_keys") or [])
+                self.assertNotEqual(edited_sale["ledger_key"], old_sale_key)
+                new_payout_key = dummy._sold_card_payout_key("Kevin Hambone", edited_sale)
+                self.assertNotIn(old_payout_key, dummy.home_sheet_markers)
+                self.assertIn(new_payout_key, dummy.home_sheet_markers)
+                self.assertTrue(dummy.home_sheet_markers[new_payout_key]["paid"])
+                self.assertTrue(dummy.saved_sheet_markers)
+                ledger_after_sale_edit = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                sold_rows = [record for record in ledger_after_sale_edit if record.get("record_type") != "expense"]
+                self.assertEqual(len(sold_rows), 1)
+                self.assertEqual(sold_rows[0]["ledger_key"], edited_sale["ledger_key"])
+                edited_sale_again = dummy._update_profit_sold_record(sale_row, {"sale_price": 130, "notes": "Second sale edit"})
+                self.assertIsNotNone(edited_sale_again)
+                ledger_after_second_sale_edit = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                sold_rows = [record for record in ledger_after_second_sale_edit if record.get("record_type") != "expense"]
+                self.assertEqual(len(sold_rows), 1)
+                self.assertEqual(sold_rows[0]["sale_price"], 130.0)
+                self.assertEqual(sold_rows[0]["profit"], 70.0)
+                self.assertEqual(sold_rows[0]["notes"], "Second sale edit")
+
                 old_expense_key = expense_row["ledger_key"]
                 edited = dummy._update_profit_expense_record(
                     expense_row,
@@ -6359,7 +6479,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 ledger_after_delete = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
                 self.assertEqual(len(ledger_after_delete), 1)
                 self.assertNotEqual(ledger_after_delete[0].get("record_type"), "expense")
-                self.assertEqual(ledger_after_delete[0]["profit"], 50)
+                self.assertEqual(ledger_after_delete[0]["profit"], 70)
                 self.assertEqual(dummy._delete_profit_expense_records([ledger_after_delete[0]]), 0)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
@@ -7194,6 +7314,26 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertTrue(dummy.committed)
         self.assertEqual(dummy.status_var.value, "Working sheet save is already in progress.")
+
+    def test_create_photo_queue_clears_after_working_sheet_save(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class PhotoDummy:
+            _clear_create_photo_queue_after_sheet_save = app.CardPipelineApp._clear_create_photo_queue_after_sheet_save
+
+        dummy = PhotoDummy()
+        dummy.photo_paths = [Path("front.jpg"), Path("back.jpg")]
+        dummy.photo_status = FieldVar()
+
+        dummy._clear_create_photo_queue_after_sheet_save()
+
+        self.assertEqual(dummy.photo_paths, [])
+        self.assertEqual(dummy.photo_status.value, "No photos selected.")
 
     def test_create_manual_cell_edit_saves_estimated_payout_value(self) -> None:
         class CellDummy:
@@ -9850,6 +9990,80 @@ class PhotoOcrSpeedTests(unittest.TestCase):
         self.assertTrue(regions)
         self.assertIn(multi_card_extraction.LABEL_DETECTION_PROMPT, calls)
 
+    def test_identify_cards_uses_whole_photo_read_for_single_slab(self) -> None:
+        callbacks: list[str] = []
+        regions = [
+            {"card_index": 1, "position": "single", "bbox": [80, 40, 900, 980], "detection_confidence": "high"},
+            {"card_index": 2, "position": "label", "bbox": [180, 60, 820, 220], "detection_confidence": "medium"},
+        ]
+        single_card = {
+            "visible_card_count": 1,
+            "is_graded_slab": True,
+            "grading_company": "PSA",
+            "cert_number": "12345678",
+            "player": "Shohei Ohtani",
+            "year": "2024",
+            "set": "Topps Chrome",
+            "card_number": "1",
+            "parallel": "Refractor",
+            "subset": "",
+            "grade": "10",
+            "category": "baseball",
+            "confidence": "high",
+            "label_text": "PSA 12345678 SHOHEI OHTANI",
+        }
+
+        with (
+            patch.object(multi_card_extraction, "_prepare_image", return_value=(b"image", "image/jpeg")),
+            patch.object(multi_card_extraction, "_identify_single_photo_sync", return_value=single_card),
+            patch.object(multi_card_extraction, "_detect_regions_sync", return_value=regions),
+            patch.object(multi_card_extraction, "_decode_image") as decode_image,
+        ):
+            cards = multi_card_extraction.identify_cards_sync(object(), "fake-b64", progress_callback=callbacks.append)
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["cert_number"], "12345678")
+        self.assertEqual(cards[0]["position"], "single")
+        decode_image.assert_not_called()
+        self.assertTrue(any("single-slab" in message for message in callbacks))
+        self.assertTrue(any("whole-photo" in message for message in callbacks))
+
+    def test_identify_cards_keeps_crop_flow_for_multi_slab_photo(self) -> None:
+        regions = [
+            {"card_index": 1, "position": "left", "bbox": [0, 0, 200, 400], "detection_confidence": "high"},
+            {"card_index": 2, "position": "right", "bbox": [220, 0, 420, 400], "detection_confidence": "medium"},
+        ]
+        single_card = {"visible_card_count": 2, "is_graded_slab": True, "confidence": "low"}
+
+        def fake_identify(_client, crop_b64):
+            return {
+                "is_graded_slab": True,
+                "grading_company": "PSA",
+                "cert_number": "111" if crop_b64 == "crop-1" else "222",
+                "player": "Player",
+                "year": "2020",
+                "set": "Test",
+                "card_number": "",
+                "parallel": "",
+                "subset": "",
+                "grade": "10",
+                "category": "baseball",
+                "confidence": "high",
+                "label_text": "label",
+            }
+
+        with (
+            patch.object(multi_card_extraction, "_prepare_image", return_value=(b"image", "image/jpeg")),
+            patch.object(multi_card_extraction, "_identify_single_photo_sync", return_value=single_card),
+            patch.object(multi_card_extraction, "_detect_regions_sync", return_value=regions),
+            patch.object(multi_card_extraction, "_decode_image", return_value=object()),
+            patch.object(multi_card_extraction, "_crop_region_to_base64", side_effect=["crop-1", "crop-2"]),
+            patch.object(multi_card_extraction, "_identify_crop_sync", side_effect=fake_identify),
+        ):
+            cards = multi_card_extraction.identify_cards_sync(object(), "fake-b64")
+
+        self.assertEqual([card["cert_number"] for card in cards], ["111", "222"])
+
     def test_identify_cards_reports_crop_progress_and_preserves_order(self) -> None:
         callbacks: list[str] = []
         regions = [
@@ -9885,7 +10099,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
         self.assertTrue(any("Detected 2 card(s)" in message for message in callbacks))
         self.assertTrue(any("Read 2/2" in message for message in callbacks))
 
-    def test_identify_cards_keeps_detected_slab_when_crop_ocr_fails(self) -> None:
+    def test_identify_cards_drops_blank_detected_slab_when_crop_ocr_fails(self) -> None:
         regions = [
             {"card_index": 1, "position": "left", "bbox": [0, 0, 200, 400], "detection_confidence": "high"},
             {"card_index": 2, "position": "right", "bbox": [220, 0, 420, 400], "detection_confidence": "medium"},
@@ -9917,11 +10131,8 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 patch.object(multi_card_extraction, "_identify_crop_sync", side_effect=fake_identify):
             cards = multi_card_extraction.identify_cards_sync(object(), "fake-b64")
 
-        self.assertEqual(len(cards), 2)
+        self.assertEqual(len(cards), 1)
         self.assertEqual(cards[0]["cert_number"], "111")
-        self.assertEqual(cards[1]["card_index"], 2)
-        self.assertTrue(cards[1]["is_graded_slab"])
-        self.assertIn("label unreadable", cards[1]["error"])
 
     def test_bgs_blank_cert_runs_cert_only_fallback(self) -> None:
         responses = [
@@ -9941,7 +10152,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
         self.assertEqual(card["cert_number"], "0010133787")
         self.assertEqual(card["cert_verified"], "YES")
 
-    def test_photo_table_accepts_detected_slab_without_readable_inventory(self) -> None:
+    def test_photo_table_rejects_blank_detected_slab_placeholder(self) -> None:
         card = {
             "card_index": 2,
             "position": "right",
@@ -9950,11 +10161,17 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             "error": "label unreadable",
         }
 
-        self.assertTrue(app.CardPipelineApp._photo_card_has_inventory(object(), card))
-        row = app.CardPipelineApp._photo_card_to_row(object(), Path("dense.jpg"), card)
-        self.assertEqual(row["source"], "Photo: dense.jpg")
-        self.assertIn("right", row["notes"])
-        self.assertIn("OCR review needed", row["notes"])
+        self.assertFalse(app.CardPipelineApp._photo_card_has_inventory(object(), card))
+
+    def test_photo_table_rejects_generic_ocr_fragment(self) -> None:
+        card = {
+            "card_index": 2,
+            "position": "right",
+            "is_graded_slab": True,
+            "label_text": "ROOKIE",
+        }
+
+        self.assertFalse(app.CardPipelineApp._photo_card_has_inventory(object(), card))
 
     def test_mobile_profit_refund_returns_card_to_inventory(self) -> None:
         class MobileFinanceDummy:
@@ -10093,3 +10310,4 @@ class PhotoOcrSpeedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
