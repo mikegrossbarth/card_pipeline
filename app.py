@@ -136,6 +136,7 @@ SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
 PERFORMANCE_LOG_PATH = CARD_PIPELINE_DIR / "lucas_performance.log"
 HOME_SUMMARY_CACHE_PATH = CARD_PIPELINE_DIR / "home_summary_cache.json"
 GOOGLE_SHEET_CACHE_MAX_AGE_SECONDS = 5 * 60
+MOBILE_PAYOUT_CACHE_SECONDS = 30
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 MIKEYS_CARDS_LOGO_PATH = ROOT / "assets" / "mikeys_cards_logo.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
@@ -838,6 +839,7 @@ class CardPipelineApp(tk.Tk):
         self.lucas_identity = local_identity(SETTINGS_PATH)
         self.app_settings = load_app_settings()
         self.mobile_pin = ensure_mobile_pin(self.app_settings)
+        self.mobile_payouts_cache: dict[str, object] = {}
         self.state = BridgeState()
         self.state.on_update = lambda: self.events.put("comp_refresh")
         self.state.mobile_pin_provider = lambda: self.mobile_pin
@@ -4857,9 +4859,20 @@ class CardPipelineApp(tk.Tk):
                 except Exception:
                     self.home_sheet_summaries.setdefault(key, {"name": path.name, "row_count": 0, "received_count": 0, "purchase_total": 0.0, "all_received": stage == "Received"})
 
+    def _invalidate_mobile_payouts_cache(self) -> None:
+        self.mobile_payouts_cache = {}
+
     def mobile_payouts(self, payload: dict) -> dict:
-        self._refresh_payout_state_from_disk()
         needle = str(payload.get("person") or "").strip().lower()
+        cache_key = needle
+        now = time.monotonic()
+        cached = getattr(self, "mobile_payouts_cache", {}).get(cache_key) if isinstance(getattr(self, "mobile_payouts_cache", None), dict) else None
+        if isinstance(cached, dict) and now - float(cached.get("created_at") or 0.0) < MOBILE_PAYOUT_CACHE_SECONDS:
+            response = copy.deepcopy(cached.get("response") or {})
+            if response:
+                response["cached"] = True
+                return response
+        self._refresh_payout_state_from_disk()
         balances: dict[str, dict[str, float | int]] = {}
         details: list[dict[str, object]] = []
         for item in self._payout_sheet_items():
@@ -4888,7 +4901,10 @@ class CardPipelineApp(tk.Tk):
             for person, values in sorted(balances.items(), key=lambda pair: (-float(pair[1]["balance"]), pair[0].lower()))
         ]
         total_balance = sum(float(item["balance"]) for item in summary)
-        return {"ok": True, "people": self._known_people(), "summary": summary, "details": details, "totals": {"balance": round(total_balance, 2), "balance_display": format_money(total_balance), "sheets": sum(int(item["sheets"]) for item in summary), "cards": sum(int(item["cards"]) for item in summary)}}
+        response = {"ok": True, "people": self._known_people(), "summary": summary, "details": details, "totals": {"balance": round(total_balance, 2), "balance_display": format_money(total_balance), "sheets": sum(int(item["sheets"]) for item in summary), "cards": sum(int(item["cards"]) for item in summary)}}
+        self.mobile_payouts_cache = getattr(self, "mobile_payouts_cache", {}) if isinstance(getattr(self, "mobile_payouts_cache", None), dict) else {}
+        self.mobile_payouts_cache[cache_key] = {"created_at": now, "response": copy.deepcopy(response)}
+        return response
 
     def _mobile_image_parts(self, image: str) -> tuple[str, str, bytes]:
         match = re.match(r"^data:([^;]+);base64,(.*)$", image, re.S)
@@ -10351,6 +10367,9 @@ class CardPipelineApp(tk.Tk):
         }
 
     def refresh_payouts_tab(self) -> None:
+        invalidate_mobile_payouts = getattr(self, "_invalidate_mobile_payouts_cache", None)
+        if callable(invalidate_mobile_payouts):
+            invalidate_mobile_payouts()
         perf_start = time.perf_counter()
         if not hasattr(self, "payout_summary_tree"):
             record_performance_event("payouts.refresh", perf_start, "tree=missing")

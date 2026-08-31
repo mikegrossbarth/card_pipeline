@@ -47,7 +47,10 @@
             <select id="personFilter"></select>
           </label>
           <div class="searchRow">
-            <input id="searchInput" placeholder="Cert number or card description">
+            <div class="searchInputWrap">
+              <input id="searchInput" placeholder="Cert number or card description">
+              <button id="clearSearchInput" class="clearSearchButton hidden" type="button" aria-label="Clear inventory search">x</button>
+            </div>
             <label class="fileButton" for="photoSearchInput">Scan Photo</label>
             <input id="photoSearchInput" class="fileInput" type="file" accept="image/*" capture="environment">
           </div>
@@ -182,7 +185,12 @@
             <label class="personControl">Person<select id="profitPerson"></select></label>
             <label>Period<select id="profitPeriod"></select></label>
             <label>Graph<select id="profitGraph"></select></label>
-            <label>Sold Search<input id="profitSearch" type="search" placeholder="Title or cert"></label>
+            <label>Sold Search
+              <div class="searchInputWrap">
+                <input id="profitSearch" type="search" placeholder="Title or cert">
+                <button id="clearProfitSearch" class="clearSearchButton hidden" type="button" aria-label="Clear profit search">x</button>
+              </div>
+            </label>
           </div>
           <div id="profitCards" class="metricGrid"></div>
           <svg id="profitChart" class="chart" role="img" aria-label="Profit graph"></svg>

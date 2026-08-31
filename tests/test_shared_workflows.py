@@ -263,6 +263,48 @@ class SharedStateTests(unittest.TestCase):
         self.assertEqual(float(profit_rows[0]["profit"]), 0.0)
         self.assertEqual(profit_rows[0].get("sale_method"), "Trade")
 
+    def test_mobile_payouts_uses_short_cache_until_invalidated(self) -> None:
+        class PayoutDummy:
+            mobile_payouts = app.CardPipelineApp.mobile_payouts
+            _invalidate_mobile_payouts_cache = app.CardPipelineApp._invalidate_mobile_payouts_cache
+            mobile_payouts_cache = {}
+            refresh_count = 0
+            balance = 25.0
+
+            def _refresh_payout_state_from_disk(self):
+                self.refresh_count += 1
+
+            def _payout_sheet_items(self):
+                return [
+                    {
+                        "name": "Sheet A.xlsx",
+                        "stage": "Received",
+                        "person": "Lucas",
+                        "row_count": 2,
+                        "received_count": 2,
+                        "payout_balance": self.balance,
+                        "status": "Ready",
+                        "paid": False,
+                        "payable": True,
+                    }
+                ]
+
+            def _known_people(self):
+                return ["Lucas"]
+
+        dummy = PayoutDummy()
+        first = dummy.mobile_payouts({"person": "Lucas"})
+        dummy.balance = 99.0
+        second = dummy.mobile_payouts({"person": "Lucas"})
+        dummy._invalidate_mobile_payouts_cache()
+        third = dummy.mobile_payouts({"person": "Lucas"})
+
+        self.assertEqual(dummy.refresh_count, 2)
+        self.assertFalse(first.get("cached", False))
+        self.assertTrue(second.get("cached"))
+        self.assertEqual(second["totals"]["balance"], 25.0)
+        self.assertEqual(third["totals"]["balance"], 99.0)
+
     def test_scan_to_cert_preserves_long_psa_cert_numbers(self) -> None:
         self.assertEqual(scan_to_cert("1401017991290"), "1401017991290")
         self.assertEqual(scan_to_cert("PSA Cert 1401017991290"), "1401017991290")
@@ -10686,6 +10728,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _append_activity = lambda self, action, summary, details=None: None
             _record_mobile_direct_action = lambda self, payload, action_type: None
             _restore_inventory_photo_files_for_records = lambda self, records: 0
+            _inventory_add_protection_reason = lambda self, record, protected_rows: ""
             _enrich_inventory_record_assignment = lambda self, record: record
             refresh_inventory_tab = lambda self: None
 

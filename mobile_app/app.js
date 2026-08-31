@@ -587,22 +587,30 @@ function renderResults(items) {
   }
   host.innerHTML = items.map((item, index) => `
     <article class="result">
-      <h2>${escapeHtml(item.card_title || item.cert_number || "Untitled card")}</h2>
+      <h2 class="resultTitle">
+        <span>${escapeHtml(item.card_title || item.cert_number || "Untitled card")}</span>
+        ${item.card_title ? `<button class="copyTextButton" data-index="${index}" data-field="card_title" type="button" aria-label="Copy title">Copy</button>` : ""}
+      </h2>
       <div class="meta">
-        <div><strong>Cert</strong>${escapeHtml(item.cert_number || "")}</div>
+        <div><strong>Cert</strong><span class="copyValue">${escapeHtml(item.cert_number || "")}${item.cert_number ? `<button class="copyTextButton" data-index="${index}" data-field="cert_number" type="button" aria-label="Copy cert number">Copy</button>` : ""}</span></div>
         <div><strong>Item ID</strong>${escapeHtml(item.item_id || "")}</div>
         <div><strong>Grader</strong>${escapeHtml(item.grader || "")}</div>
         <div><strong>Paid</strong>${escapeHtml(item.purchase_price_display || money(item.purchase_price, "-"))}</div>
         <div><strong>Value</strong>${escapeHtml(item.inventory_value_display || money(item.inventory_value, "-"))}</div>
-        <div><strong>Company</strong>${escapeHtml(item.best_company || "-")}</div>
-        <div><strong>Payout</strong>${escapeHtml(item.estimated_payout_display || money(item.estimated_payout, "-"))}</div>
         <div><strong>Person</strong>${escapeHtml(item.assigned_person || "-")}</div>
-        <div><strong>Source</strong>${escapeHtml(item.source || item.source_sheet || "-")}</div>
+        <div class="mobileMetaLeft"><strong>Payout</strong>${escapeHtml(item.estimated_payout_display || money(item.estimated_payout, "-"))}</div>
+        <div class="mobileMetaLeft"><strong>Company</strong>${escapeHtml(item.best_company || "-")}</div>
       </div>
       ${renderPhotoStrip(item, index)}
       ${String(item.status || "").toLowerCase() === "active" ? `<div class="resultActions"><button class="secondary sellButton" data-index="${index}" type="button">Mark Sold</button></div>` : ""}
     </article>
   `).join("");
+  document.querySelectorAll(".copyTextButton").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = items[Number(button.dataset.index)] || {};
+      copyMobileText(item[button.dataset.field] || "", button);
+    });
+  });
   document.querySelectorAll(".sellButton").forEach((button) => {
     button.addEventListener("click", () => startSell(items[Number(button.dataset.index)]));
   });
@@ -695,6 +703,49 @@ async function refreshInventorySnapshot(force = false) {
   } finally {
     state.snapshotRefreshInFlight = false;
   }
+}
+
+async function copyMobileText(value, button) {
+  const text = String(value || "").trim();
+  if (!text) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const input = document.createElement("textarea");
+      input.value = text;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      input.remove();
+    }
+    if (button) {
+      const original = button.textContent;
+      button.textContent = "Copied";
+      window.setTimeout(() => { button.textContent = original; }, 900);
+    }
+  } catch (_error) {
+    if (button) button.textContent = "Copy failed";
+  }
+}
+
+function updateClearSearchButton(inputId, buttonId) {
+  const input = $(inputId);
+  const button = $(buttonId);
+  if (!input || !button) return;
+  button.classList.toggle("hidden", !input.value);
+}
+
+function clearSearchInput(inputId, buttonId, callback) {
+  const input = $(inputId);
+  if (!input) return;
+  input.value = "";
+  updateClearSearchButton(inputId, buttonId);
+  input.focus();
+  callback();
 }
 
 function escapeHtml(value) {
@@ -1552,7 +1603,11 @@ function bind() {
       if (button.dataset.view === "sync") renderQueue();
     });
   });
-  $("searchInput").addEventListener("input", () => searchInventory());
+  $("searchInput").addEventListener("input", () => {
+    updateClearSearchButton("searchInput", "clearSearchInput");
+    searchInventory();
+  });
+  $("clearSearchInput").addEventListener("click", () => clearSearchInput("searchInput", "clearSearchInput", searchInventory));
   $("personFilter").addEventListener("change", () => {
     syncPersonInputs($("personFilter").value);
     searchInventory();
@@ -1576,7 +1631,11 @@ function bind() {
   $("profitPerson").addEventListener("change", () => loadProfit());
   $("profitPeriod").addEventListener("change", () => loadProfit());
   $("profitGraph").addEventListener("change", () => loadProfit());
-  $("profitSearch").addEventListener("input", () => loadProfit());
+  $("profitSearch").addEventListener("input", () => {
+    updateClearSearchButton("profitSearch", "clearProfitSearch");
+    loadProfit();
+  });
+  $("clearProfitSearch").addEventListener("click", () => clearSearchInput("profitSearch", "clearProfitSearch", loadProfit));
   $("payoutPerson").addEventListener("change", () => loadPayouts());
   $("syncQueue").addEventListener("click", () => syncQueuedActions());
   $("exportQueue").addEventListener("click", () => exportQueue());
@@ -1626,6 +1685,8 @@ function bind() {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register(`${APP_BASE}/sw.js`, { scope: `${APP_BASE}/` }).catch(() => {});
   }
+  updateClearSearchButton("searchInput", "clearSearchInput");
+  updateClearSearchButton("profitSearch", "clearProfitSearch");
   if (state.pin) {
     verifyMobileProfile().then((profileOk) => {
       if (!profileOk) return;
