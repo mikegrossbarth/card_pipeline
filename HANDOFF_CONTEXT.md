@@ -245,7 +245,7 @@ Assignment can recalculate best company and payout using the configured value so
 
 ### Payouts/Tabs
 
-Tracks active balances by assigned person and can mark matching person sheets paid.
+Tracks active balances by assigned person and can mark matching person sheets paid. The tab now has a Refresh Payouts button that reloads payout markers and sheet summaries from disk before rebuilding the payout rows, so newly sold cards appear without closing and reopening L.U.C.A.S.
 
 ### Profit
 
