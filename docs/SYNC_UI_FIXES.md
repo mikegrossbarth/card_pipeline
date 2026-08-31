@@ -7,6 +7,22 @@
 - Verified stale checklist item: Windows already has `425537c Add eBay connect account model`. Do not keep that item marked pending for Windows.
 - Confirmed scope guard: Windows still intentionally skips Instagram Inventory Sync work, and this audit ignored inventory photo scan performance work.
 
+## Sync Tracker Location - 2026-08-31
+
+- The repo-local Windows `sync UI fixes.md` note is retired. Use this tracked file, `docs/SYNC_UI_FIXES.md`, as the parity source of truth.
+- When a change lands only in Mac or only in Windows, update this file in the repo where the change lands so the other platform's follow-up is visible during the next pull/audit.
+- If an old local note conflicts with this file, treat the old local note as stale unless Michael explicitly says otherwise.
+
+## Payout Refresh Button
+
+- Origin: Windows
+- Implemented on origin: Yes
+- Mirrored to other platform: Mac pending
+- Source commit/repo: `64f69bd Add payout refresh button` and `9c400e0 Document payout refresh button` in `mikegrossbarth/card_pipeline`
+- Target to mirror: Mac LUCAS `mikegrossbarth/card_pipeline_mac`
+- Summary: Payouts/Tabs now has a `Refresh Payouts` button that reloads payout markers and sheet summaries from disk before rebuilding payout rows, so newly sold cards or payout-marker changes show without closing and reopening L.U.C.A.S.
+- Notes / avoid porting: Keep this as a lightweight payout-tab refresh. Do not use it to recalculate unrelated inventory/company assignments.
+
 ## Sold Photo Attach Picker Safety
 
 - Origin: Mac
@@ -32,7 +48,7 @@
 - Origin: Windows
 - Implemented on origin: Yes
 - Mirrored to other platform: Mac pending
-- Source commit/repo: Pending Windows commit in `mikegrossbarth/card_pipeline`
+- Source commit/repo: `7050379 Fix received raw sheet inventory sync` in `mikegrossbarth/card_pipeline`
 - Target to mirror: Mac LUCAS `mikegrossbarth/card_pipeline_mac`
 - Summary: Home receive reconciliation now counts full row identities instead of cert numbers only. A row is accounted by cert when present, raw `Item ID` when present, or normalized card title as a fallback. This prevents a mixed raw sheet like `drose514_8_21_26.xlsx` from being moved to Received just because the Curry Gold row is in inventory while an Edwards Optic raw row is still unaccounted; it should remain partial until every raw/cert row is accounted. Manual/context-menu Received moves and automatic fully-received moves now pre-sync inventory before the hard block checks whether any workbook row is still missing from inventory, company sheets, or sold ledgers.
 - Notes / avoid porting: Do not return `_reconcile_accounted_home_sheets` to cert-only completeness checks. Raw rows must participate in both the partial notice count and the fully received move decision. When a raw row has an `Item ID`, accounting/candidate checks must match that `Item ID` before title fallback; title fallback is only for rows with no cert and no raw `Item ID`, otherwise generated duplicate raw rows can hide the real workbook row. Received raw rows that are missing `Item ID` must have stable IDs written back into the workbook before inventory candidates are created; make sure `_ensure_raw_item_ids_in_sheet_paths` honors later header aliases like `Cert` and `Description`, not only the first alias in each list.
@@ -151,9 +167,10 @@
 
 - Origin: Windows
 - Implemented on origin: Yes
-- Mirrored to other platform: Mac pending
+- Mirrored to other platform: Mac complete
 - Source commit/repo: `34f2b6f Fix inventory sale duplicate matching` in `mikegrossbarth/card_pipeline`
 - Target to mirror: Mac LUCAS `mikegrossbarth/card_pipeline_mac`
+- Mac source commit/repo: Verified present on Mac `main` at `2fe9837 Integrate inventory person selection UI updates`
 - Summary: Sold-from-inventory profit rows now preserve the hidden `inventory_key` and use it as the true de-dupe identity. This prevents a new inventory sale from being swallowed when a user fixes/swaps cert numbers and the corrected cert already exists on an older sold row. Company-sheet recovery still uses the weaker company/source/cert match only to avoid double-counting an inventory sale recovered from weekly company sheets.
 - Notes / avoid porting: Do not return to using only `cert + company + source sheet` as the identity for sold-from-inventory rows. That weak key is only safe for recovery/backfill de-dupe, not fresh inventory sales.
 
@@ -161,9 +178,10 @@
 
 - Origin: Windows
 - Implemented on origin: Yes
-- Mirrored to other platform: Mac pending
-- Source commit/repo: Pending Windows commit in `mikegrossbarth/card_pipeline`
+- Mirrored to other platform: Mac complete
+- Source commit/repo: `e3beebf Let team and personal bridge coexist` in `mikegrossbarth/card_pipeline`
 - Target to mirror: Mac LUCAS `mikegrossbarth/card_pipeline_mac`
+- Mac source commit/repo: Verified present on Mac `main` at `2fe9837 Integrate inventory person selection UI updates`
 - Summary: Windows Team LUCAS keeps default local bridge port `8765`, while Personal/Michael LUCAS defaults to `8766` when no explicit `LUCAS_MOBILE_PORT` or `mobile_port` setting is supplied. The desktop bridge now allows fallback across the helper's known port range, so launching both profiles no longer forces one bridge to fail just because the other profile is open.
 - Notes / avoid porting: Explicit port settings must still win. Do not make both Team and Personal compete for only `8765`; Chrome's helper already polls the known bridge port range.
 
@@ -171,9 +189,10 @@
 
 - Origin: Windows
 - Implemented on origin: Yes
-- Mirrored to other platform: Mac pending
-- Source commit/repo: Pending Windows commit in `mikegrossbarth/card_pipeline`
+- Mirrored to other platform: Mac complete
+- Source commit/repo: `a1c7cb5 Keep manual payout history out of profit` in `mikegrossbarth/card_pipeline`
 - Target to mirror: Mac LUCAS `mikegrossbarth/card_pipeline_mac`
+- Mac source commit/repo: Verified present on Mac `main` at `2fe9837 Integrate inventory person selection UI updates`
 - Summary: Payout history can include explicit manual paid-payout markers using `manual_paid_adjustment` and `manual_paid_amount`, allowing a historical paid amount to show in the payout history popup without creating a fake sale/profit row in `profit_ledger.json`.
 - Notes / avoid porting: Do not model manual historical payouts as sold cards, sale price, or profit. They should affect paid-history display only, not profit totals or generated profit graphs.
 
@@ -182,7 +201,7 @@
 - Origin: Windows/Mac shared
 - Implemented on origin: Yes
 - Mirrored to other platform: Complete
-- Source commit/repo: Pending Windows and Mac commits in `mikegrossbarth/card_pipeline` and `mikegrossbarth/card_pipeline_mac`
+- Source commit/repo: Windows `6f43460 Add create tab totals row` in `mikegrossbarth/card_pipeline`; Mac `16d3e3c Add create tab totals row` in `mikegrossbarth/card_pipeline_mac`
 - Target to mirror: N/A
 - Summary: Create now uses the same value-total row helper as Comp, adding a non-editable bottom `TOTAL` row that sums Purchase, Card Ladder, Comps, CY Estimate, and Est. Payout for visible columns.
 - Notes / avoid porting: Keep this as a display-only tree row. Do not write the totals row into source workbooks or let it participate in row edits/deletes.
@@ -195,4 +214,3 @@
 - Target to mirror: Mac LUCAS `mikegrossbarth/card_pipeline_mac` only if a human explicitly asks for the Mac implementation
 - Summary: Inventory bulk editing is intentionally opt-in again. The visible `Bulk Edit` toggle controls arrow-key cell navigation and Enter/F2 editing. When Bulk Edit is off, normal Inventory editing uses double-click-to-edit cells, preserving the older per-cell edit flow. Person edits remain restricted to known people through a readonly dropdown and validation.
 - Notes / avoid porting: The earlier direct-cell-edit cleanup note is superseded. Do not remove the visible Bulk Edit toggle from Windows.
-
