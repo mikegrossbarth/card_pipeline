@@ -1,3 +1,7 @@
+IMPORTANT WINDOWS NOTE
+
+Windows intentionally skips anything related to Instagram inventory sync. Do not port, implement, validate, or mark Windows as missing for Instagram inventory sync items when reviewing this file. Those items are Mac-only unless a human explicitly says otherwise.
+
 # Sync UI Fixes
 
 This platform-specific copy is superseded.
