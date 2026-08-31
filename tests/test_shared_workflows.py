@@ -3200,6 +3200,59 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 saved.close()
 
+    def test_mark_received_row_ref_reports_cert_found_in_workbook_row(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Mixed Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Cert #", "Grader", "Card", "Purchase"])
+            sheet.append(["63710659", "PSA", "1996 Topps 138 Kobe Bryant PSA 10", 2200])
+            workbook.save(path)
+
+            result = mark_received_in_workbooks([path], set(), {("Mixed Lot.xlsx", "Cards", 2)})
+
+            self.assertEqual(result["rows_marked"], 1)
+            self.assertEqual(result["certs_marked"], {"63710659"})
+            self.assertEqual(result["row_refs_marked"], {("mixed lot.xlsx", "cards", 2)})
+            self.assertEqual(result["row_ref_certs"], {("mixed lot.xlsx", "cards", 2): "63710659"})
+
+    def test_receive_row_ref_hydration_prevents_certed_row_from_becoming_raw_inventory(self) -> None:
+        class Dummy:
+            _receive_row_ref = app.CardPipelineApp._receive_row_ref
+            _hydrate_marked_receive_rows_from_cert_refs = app.CardPipelineApp._hydrate_marked_receive_rows_from_cert_refs
+            _inventory_record_from_row = app.CardPipelineApp._inventory_record_from_row
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _money_value = app.CardPipelineApp._money_value
+
+        dummy = Dummy()
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="",
+            item_id="RAW-TEAM-20260814-0003",
+            grader="PSA",
+            card_title="1996 Topps 138 Kobe Bryant PSA 10",
+            existing_value=2200,
+        )
+        setattr(row, "_receive_sheet", "Mixed Lot.xlsx")
+        setattr(row, "_receive_workbook_sheet", "Cards")
+        setattr(row, "_receive_workbook_row", 2)
+
+        hydrated = dummy._hydrate_marked_receive_rows_from_cert_refs(
+            [row],
+            {("mixed lot.xlsx", "cards", 2): "63710659"},
+        )
+        record = dummy._inventory_record_from_row(row, "Kevin Hambone", source_sheet="Mixed Lot.xlsx", source="Manual")
+
+        self.assertEqual(hydrated, 1)
+        self.assertEqual(row.cert_number, "63710659")
+        self.assertEqual(row.item_id, "")
+        self.assertEqual(record["item_type"], "Graded")
+        self.assertEqual(record["cert_number"], "63710659")
+        self.assertEqual(record["item_id"], "")
+
     def test_receive_index_matches_raw_rows_by_unique_title_and_keeps_row_ref(self) -> None:
         class FieldVar:
             def __init__(self):
@@ -9551,6 +9604,96 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app._verify_cert_only_sync = old_verify
 
+
+    def test_unattached_photo_picker_hides_sold_photo_state_records(self) -> None:
+        class PhotoPickerDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
+            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
+            _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
+            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
+            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
+            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
+            _inventory_unattached_photo_paths = app.CardPipelineApp._inventory_unattached_photo_paths
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            sold_cert_photo = app.INVENTORY_PHOTOS_DIR / "sold-cert.jpg"
+            sold_path_photo = app.INVENTORY_PHOTOS_DIR / "sold-path.jpg"
+            sold_state_photo = app.INVENTORY_PHOTOS_DIR / "already-marked-sold.jpg"
+            available_photo = app.INVENTORY_PHOTOS_DIR / "available.jpg"
+            sold_cert_photo.write_bytes(b"sold cert image")
+            sold_path_photo.write_bytes(b"sold path image")
+            sold_state_photo.write_bytes(b"already marked sold image")
+            available_photo.write_bytes(b"available image")
+            dummy = PhotoPickerDummy()
+            dummy.app_settings = {}
+            dummy._save_inventory_ledger([])
+            dummy._save_profit_ledger([
+                {"cert_number": "65774395", "card_title": "Sold Cert Card", "sale_price": 20},
+                {"cert_number": "44444444", "card_title": "Sold Path Card", "sale_price": 25, "photo_paths": [str(sold_path_photo)]},
+            ])
+            sold_cert_sha = dummy._inventory_photo_file_hash(sold_cert_photo)
+            sold_state_sha = dummy._inventory_photo_file_hash(sold_state_photo)
+            app.INVENTORY_PHOTO_STATE_PATH.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "photos": {
+                            sold_cert_sha: {
+                                "path": str(sold_cert_photo),
+                                "filename": sold_cert_photo.name,
+                                "certs": ["65774395"],
+                                "linked_keys": [],
+                                "status": "no_matching_inventory",
+                            },
+                            sold_state_sha: {
+                                "path": str(sold_state_photo),
+                                "filename": sold_state_photo.name,
+                                "certs": [],
+                                "linked_keys": [],
+                                "status": "sold_inventory",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                self.assertEqual(dummy._inventory_unattached_photo_paths(), [available_photo])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
     def test_inventory_sold_preserves_unshared_photo_file_for_refunds(self) -> None:
 

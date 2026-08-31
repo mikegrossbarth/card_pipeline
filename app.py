@@ -6572,6 +6572,95 @@ class CardPipelineApp(tk.Tk):
         shutil.copy2(source_path, destination)
         return destination
 
+    def _choose_unattached_inventory_photos(self, max_count: int = MAX_INVENTORY_PHOTOS_PER_CARD) -> list[Path]:
+        available = self._inventory_unattached_photo_paths()
+        if not available:
+            messagebox.showinfo("No unattached photos", "No unattached inventory photos are available. Add photos to the Inventory Photo Folder, then scan or try again.")
+            return []
+        popup = tk.Toplevel(self)
+        popup.title("Attach Unattached Inventory Photos")
+        popup.configure(bg="#121212")
+        popup.geometry("860x500")
+        popup.transient(self)
+        popup.grab_set()
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(16, 14))
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+        title = "Unattached Photos" if max_count >= MAX_INVENTORY_PHOTOS_PER_CARD else f"Unattached Photos ({max_count} slot(s) left)"
+        ttk.Label(frame, text=title, style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        search_var = tk.StringVar()
+        search = ttk.Entry(frame, textvariable=search_var)
+        search.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        columns = ("filename", "folder", "modified")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="extended")
+        tree.grid(row=2, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        y_scroll.grid(row=2, column=1, sticky="ns")
+        tree.configure(yscrollcommand=y_scroll.set)
+        headings = {"filename": "File", "folder": "Folder", "modified": "Modified"}
+        widths = {"filename": 320, "folder": 380, "modified": 140}
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            tree.column(column, width=widths[column], anchor="w", stretch=column != "modified")
+        path_by_iid: dict[str, Path] = {}
+        selected_paths: list[Path] = []
+
+        def row_text(path: Path) -> str:
+            return f"{path.name} {path.parent}".lower()
+
+        searchable = [(path, row_text(path)) for path in available]
+
+        def render() -> None:
+            query = search_var.get().strip().lower()
+            tree.delete(*tree.get_children())
+            path_by_iid.clear()
+            for index, (path, text) in enumerate(searchable):
+                if query and query not in text:
+                    continue
+                try:
+                    modified = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %I:%M %p")
+                except Exception:
+                    modified = ""
+                iid = f"photo-{index}"
+                path_by_iid[iid] = path
+                tree.insert("", tk.END, iid=iid, values=(path.name, str(path.parent), modified))
+
+        def attach() -> None:
+            selected_paths[:] = [path_by_iid[iid] for iid in tree.selection() if iid in path_by_iid]
+            if not selected_paths:
+                messagebox.showinfo("Choose photo", "Select one or more unattached photos to attach.")
+                return
+            if len(selected_paths) > max_count:
+                messagebox.showinfo("Too many photos", f"Select up to {max_count} photo(s) for this card.")
+                return
+            popup.destroy()
+
+        def close() -> None:
+            selected_paths.clear()
+            popup.destroy()
+
+        search_var.trace_add("write", lambda *_: render())
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        buttons.columnconfigure(0, weight=1)
+        ttk.Button(buttons, text="Cancel", command=close, style="Soft.TButton").grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Attach Selected", command=attach, style="Primary.TButton").grid(row=0, column=2)
+        tree.bind("<Double-1>", lambda _event: attach())
+        popup.protocol("WM_DELETE_WINDOW", close)
+        render()
+        first = tree.get_children()
+        if first:
+            tree.selection_set(first[0])
+            tree.focus(first[0])
+        search.focus_set()
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(50, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(50, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        self.wait_window(popup)
+        return selected_paths
+
     def attach_photo_to_selected_inventory_row(self) -> None:
         if not hasattr(self, "inventory_tree"):
             return
@@ -6582,13 +6671,12 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Choose one card", "Select one active inventory row to attach photo(s).")
             return
         iid, record = active_selected[0]
-        paths = filedialog.askopenfilenames(
-            title="Attach Inventory Photo",
-            filetypes=[
-                ("Image files", "*.jpg *.jpeg *.png *.webp *.heic *.heif"),
-                ("All files", "*.*"),
-            ],
-        )
+        existing_paths = [str(value or "").strip() for value in (record.get("photo_paths") or []) if str(value or "").strip()]
+        remaining_slots = MAX_INVENTORY_PHOTOS_PER_CARD - len(existing_paths)
+        if remaining_slots <= 0:
+            messagebox.showinfo("Photo limit reached", f"This inventory row already has {MAX_INVENTORY_PHOTOS_PER_CARD} photo(s). Detach one before adding another.")
+            return
+        paths = self._choose_unattached_inventory_photos(max_count=remaining_slots)
         if not paths:
             return
         copied_paths: list[Path] = []
@@ -6601,10 +6689,11 @@ class CardPipelineApp(tk.Tk):
         if not copied_paths:
             self._show_copyable_error("Attach photo failed", "\n".join(errors) or "No photo files were attached.")
             return
-        existing_paths = list(record.get("photo_paths") or [])
         existing_set = set(existing_paths)
         added = 0
         for copied_path in copied_paths:
+            if len(existing_paths) >= MAX_INVENTORY_PHOTOS_PER_CARD:
+                break
             path_text = self._inventory_photo_storage_value(copied_path)
             if path_text not in existing_set:
                 existing_paths.append(path_text)
@@ -13114,6 +13203,158 @@ class CardPipelineApp(tk.Tk):
                 continue
         return images
 
+    def _inventory_photo_used_path_keys(self, records: list[dict[str, object]] | None = None) -> set[str]:
+        rows = records if records is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        used: set[str] = set()
+        for record in rows:
+            for value in record.get("photo_paths") or []:
+                text = str(value or "").strip()
+                if not text:
+                    continue
+                used.add(text)
+                for candidate in self._inventory_photo_path_candidates(text):
+                    used.add(str(candidate))
+                    used.add(candidate.name)
+                    try:
+                        used.add(str(candidate.resolve()))
+                    except Exception:
+                        pass
+        return used
+
+    def _inventory_photo_used_hashes(self, records: list[dict[str, object]] | None = None) -> set[str]:
+        rows = records if records is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        used_hashes: set[str] = set()
+        seen_paths: set[str] = set()
+        for record in rows:
+            for value in record.get("photo_paths") or []:
+                for candidate in self._inventory_photo_path_candidates(value):
+                    if not candidate.exists() or not candidate.is_file():
+                        continue
+                    try:
+                        key = str(candidate.resolve())
+                    except Exception:
+                        key = str(candidate)
+                    if key in seen_paths:
+                        continue
+                    seen_paths.add(key)
+                    try:
+                        used_hashes.add(self._inventory_photo_file_hash(candidate))
+                    except Exception:
+                        continue
+        return used_hashes
+
+    def _inventory_photo_state_used_keys(self) -> tuple[set[str], set[str], set[str]]:
+        state = self._load_inventory_photo_state()
+        photos = state.get("photos") if isinstance(state, dict) else {}
+        if not isinstance(photos, dict):
+            return set(), set(), set()
+        used_names: set[str] = set()
+        used_paths: set[str] = set()
+        used_hashes: set[str] = set()
+        used_statuses = {"linked", "missing_from_album", "archived_from_album", "sold_inventory"}
+        for sha, record in photos.items():
+            if not isinstance(record, dict):
+                continue
+            status = str(record.get("status") or "").strip()
+            linked_keys = [str(key).strip() for key in (record.get("linked_keys") or []) if str(key).strip()]
+            if status not in used_statuses and not linked_keys:
+                continue
+            sha_text = str(sha or "").strip()
+            if sha_text:
+                used_hashes.add(sha_text)
+            for value in (record.get("path"), record.get("relative_path"), record.get("filename"), record.get("archived_path"), record.get("original_path")):
+                text = str(value or "").strip()
+                if not text:
+                    continue
+                used_paths.add(text)
+                try:
+                    path = Path(text).expanduser()
+                    used_names.add(path.name)
+                    used_paths.add(str(path))
+                    if path.exists() and path.is_file():
+                        used_hashes.add(self._inventory_photo_file_hash(path))
+                    try:
+                        used_paths.add(str(path.resolve()))
+                    except Exception:
+                        pass
+                except Exception:
+                    used_names.add(Path(text).name)
+        return used_names, used_paths, used_hashes
+
+    def _sold_inventory_cert_numbers(self) -> set[str]:
+        certs: set[str] = set()
+        for record in self._load_profit_ledger():
+            normalized = self._normalize_profit_record(record)
+            cert = scan_to_cert(normalized.get("cert_number"))
+            if cert:
+                certs.add(cert)
+        return certs
+
+    def _sold_inventory_photo_used_keys(self) -> tuple[set[str], set[str]]:
+        sold_rows = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        return self._inventory_photo_used_path_keys(sold_rows), self._inventory_photo_used_hashes(sold_rows)
+
+    def _inventory_photo_state_matches_sold_cert(self, existing: dict[str, object], sold_certs: set[str] | None = None) -> bool:
+        if not existing:
+            return False
+        sold_certs = sold_certs if sold_certs is not None else self._sold_inventory_cert_numbers()
+        if not sold_certs:
+            return False
+        photo_certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
+        return bool(photo_certs & sold_certs)
+
+    def _inventory_unattached_photo_paths(self) -> list[Path]:
+        used = self._inventory_photo_used_path_keys()
+        used_hashes = self._inventory_photo_used_hashes()
+        state_used_names, state_used_paths, state_used_hashes = self._inventory_photo_state_used_keys()
+        sold_certs = self._sold_inventory_cert_numbers()
+        sold_photo_paths, sold_photo_hashes = self._sold_inventory_photo_used_keys()
+        state = self._load_inventory_photo_state()
+        photos = state.get("photos") if isinstance(state, dict) else {}
+        photos = photos if isinstance(photos, dict) else {}
+        paths: list[Path] = []
+        seen: set[str] = set()
+        for folder in (self._inventory_photo_shared_folder(), self._inventory_photo_source_folder()):
+            for path in self._inventory_photo_paths(folder):
+                if path.name in state_used_names:
+                    continue
+                keys = {str(path)}
+                try:
+                    keys.add(str(path.resolve()))
+                except Exception:
+                    pass
+                storage = self._inventory_photo_storage_value(path)
+                if storage:
+                    keys.add(storage)
+                if keys & used or keys & state_used_paths or keys & sold_photo_paths:
+                    continue
+                unique_key = ""
+                try:
+                    unique_key = self._inventory_photo_file_hash(path)
+                except Exception:
+                    unique_key = ""
+                if unique_key and (unique_key in used_hashes or unique_key in state_used_hashes or unique_key in sold_photo_hashes):
+                    continue
+                existing_state = photos.get(unique_key) if unique_key and isinstance(photos.get(unique_key), dict) else {}
+                if existing_state and self._inventory_photo_state_matches_sold_cert(existing_state, sold_certs):
+                    continue
+                if not unique_key:
+                    unique_key = next(iter(keys))
+                    try:
+                        unique_key = str(path.resolve())
+                    except Exception:
+                        pass
+                try:
+                    resolved_key = str(path.resolve())
+                except Exception:
+                    resolved_key = str(path)
+                if unique_key in seen or resolved_key in seen:
+                    continue
+                seen.add(unique_key)
+                seen.add(resolved_key)
+                paths.append(path)
+        return sorted(paths, key=lambda item: str(item).lower())
+
     def _inventory_photo_base64(self, path: Path) -> str:
         if path.suffix.lower() not in {".heic", ".heif"}:
             return base64.b64encode(path.read_bytes()).decode("utf-8")
@@ -14021,6 +14262,36 @@ class CardPipelineApp(tk.Tk):
         normalized_ref = (row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2]))
         return normalized_ref in marked_row_refs
 
+    def _hydrate_marked_receive_rows_from_cert_refs(
+        self,
+        rows: list[WorkbookRow],
+        row_ref_certs: dict[tuple[str, str, int], str],
+    ) -> int:
+        if not rows or not row_ref_certs:
+            return 0
+        normalized_certs = {
+            (str(sheet_file).strip().lower(), str(sheet_name).strip().lower(), int(row_index)): scan_to_cert(cert)
+            for (sheet_file, sheet_name, row_index), cert in row_ref_certs.items()
+            if scan_to_cert(cert)
+        }
+        hydrated = 0
+        for row in rows:
+            if scan_to_cert(row.cert_number):
+                continue
+            row_ref = self._receive_row_ref(row)
+            if not row_ref:
+                continue
+            cert = normalized_certs.get((row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2])))
+            if not cert:
+                continue
+            row.cert_number = cert
+            row.item_id = ""
+            row.status = "Received"
+            if row.notes in {"Missing cert", "Missing cert or grader"}:
+                row.notes = ""
+            hydrated += 1
+        return hydrated
+
     def _match_all_review_rows(self) -> None:
         for row in self.review_rows:
             match = self._incoming_match(row.cert_number) if scan_to_cert(row.cert_number) else self._incoming_raw_match(
@@ -14169,6 +14440,10 @@ class CardPipelineApp(tk.Tk):
                 files_updated = int(result.get("files_updated") or 0)
                 marked_certs = set(result.get("certs_marked") or set())
                 marked_row_refs = set(result.get("row_refs_marked") or set())
+                row_ref_certs = dict(result.get("row_ref_certs") or {})
+                hydrated_certs = self._hydrate_marked_receive_rows_from_cert_refs(self.review_rows, row_ref_certs)
+                if hydrated_certs:
+                    marked_certs = {scan_to_cert(row.cert_number) for row in self.review_rows if scan_to_cert(row.cert_number)} | marked_certs
                 certs_marked = len(marked_certs)
                 raw_rows_marked = len(marked_row_refs)
                 company_rows_added = 0
