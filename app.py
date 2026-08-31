@@ -2685,6 +2685,125 @@ class CardPipelineApp(tk.Tk):
             for field in ("cert_number", "source_sheet", "assigned_person")
         )
 
+
+    def _inventory_identity_keys(self, record: dict[str, object]) -> set[str]:
+        keys: set[str] = set()
+        cert = scan_to_cert(record.get("cert_number"))
+        if cert:
+            keys.add(f"cert:{cert}")
+        item_id = str(record.get("item_id") or "").strip().lower()
+        if item_id:
+            keys.add(f"item:{item_id}")
+        return keys
+
+    def _sold_inventory_identity_keys(self, record: dict[str, object]) -> set[str]:
+        if str(record.get("record_type") or "").strip().lower() == "expense":
+            return set()
+        if self._money_value(record.get("sale_price")) is None:
+            return set()
+        return self._inventory_identity_keys(record)
+
+    def _active_inventory_rows_excluding_sold_profit(
+        self,
+        rows: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        profit_loader = getattr(self, "_load_profit_ledger", None)
+        if not callable(profit_loader):
+            return rows, []
+        sold_keys: set[str] = set()
+        for raw_record in profit_loader():
+            if isinstance(raw_record, dict):
+                sold_keys.update(self._sold_inventory_identity_keys(raw_record))
+        if not sold_keys:
+            return rows, []
+        kept: list[dict[str, object]] = []
+        removed: list[dict[str, object]] = []
+        for record in rows:
+            keys = self._inventory_identity_keys(record)
+            if keys and keys & sold_keys:
+                removed.append(record)
+            else:
+                kept.append(record)
+        return kept, removed
+
+    def _inventory_add_protection_reason(self, record: dict[str, object], existing_rows: list[dict[str, object]]) -> str:
+        source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+        cert = scan_to_cert(record.get("cert_number"))
+        item_id = str(record.get("item_id") or "").strip().lower()
+        title_identity = self._received_inventory_title_identity(record.get("card_title"))
+        purchase_price = self._money_value(record.get("purchase_price"))
+
+        for existing in existing_rows:
+            if str(existing.get("status") or "Active").strip().lower() != "active":
+                continue
+            existing_source = Path(str(existing.get("source_sheet") or "")).name.strip().lower()
+            if source_sheet and existing_source != source_sheet:
+                continue
+            existing_title = self._received_inventory_title_identity(existing.get("card_title"))
+            if not title_identity or existing_title != title_identity:
+                continue
+            existing_cert = scan_to_cert(existing.get("cert_number"))
+            existing_item_id = str(existing.get("item_id") or "").strip().lower()
+            if not cert and not existing_cert:
+                return "matching raw title already exists in the same source sheet"
+            if (cert and existing_item_id) or (item_id and existing_cert):
+                return "possible raw/cert duplicate in the same source sheet"
+
+        tombstone_loader = getattr(self, "_load_inventory_deleted_tombstones", None)
+        tombstones = tombstone_loader() if callable(tombstone_loader) else []
+        for tombstone in tombstones:
+            if not isinstance(tombstone, dict):
+                continue
+            tombstone_source = Path(str(tombstone.get("source_sheet") or "")).name.strip().lower()
+            tombstone_cert = scan_to_cert(tombstone.get("cert_number"))
+            tombstone_item_id = str(tombstone.get("item_id") or "").strip().lower()
+            tombstone_title = self._received_inventory_title_identity(tombstone.get("card_title"))
+            if cert and tombstone_cert == cert:
+                return "cert was previously deleted from inventory"
+            if item_id and tombstone_item_id == item_id:
+                return "item id was previously deleted from inventory"
+            if title_identity and tombstone_title == title_identity and (not source_sheet or not tombstone_source or tombstone_source == source_sheet):
+                return "matching title was previously deleted from inventory"
+
+        profit_loader = getattr(self, "_load_profit_ledger", None)
+        profit_rows = profit_loader() if callable(profit_loader) else []
+        for raw_profit_record in profit_rows:
+            if not isinstance(raw_profit_record, dict):
+                continue
+            profit_record = raw_profit_record
+            if str(profit_record.get("record_type") or "").strip().lower() == "expense":
+                continue
+            if self._money_value(profit_record.get("sale_price")) is None:
+                continue
+            profit_cert = scan_to_cert(profit_record.get("cert_number"))
+            profit_item_id = str(profit_record.get("item_id") or "").strip().lower()
+            profit_title = self._received_inventory_title_identity(profit_record.get("card_title"))
+            source_values = {
+                Path(str(profit_record.get(field) or "")).name.strip().lower()
+                for field in ("source_sheet", "original_source_sheet")
+            }
+            source_values.discard("")
+            same_cert = bool(cert and profit_cert == cert)
+            same_item = bool(item_id and profit_item_id == item_id)
+            same_title = bool(title_identity and profit_title == title_identity)
+            same_source = bool(source_sheet and source_sheet in source_values)
+            profit_purchase = self._money_value(profit_record.get("purchase_price"))
+            clear_buyback = bool(same_cert and source_sheet and not same_source)
+            if (same_cert or same_item) and not clear_buyback:
+                return "cert or item id was previously sold"
+            if same_title and same_source:
+                return "matching title was previously sold from the same source sheet"
+            if (
+                same_title
+                and not clear_buyback
+                and purchase_price is not None
+                and profit_purchase is not None
+                and abs(purchase_price - profit_purchase) < 0.01
+            ):
+                return "matching title and purchase price were previously sold"
+        return ""
+
+
     def _raw_item_id_namespace(self) -> str:
         return "MIKEY" if self._is_personal_lucas() else "TEAM"
 
@@ -2925,10 +3044,10 @@ class CardPipelineApp(tk.Tk):
         for folder in folders:
             try:
                 folder.mkdir(parents=True, exist_ok=True)
-                paths.extend(sorted(folder.glob("*.xlsx"), key=lambda path: path.name.lower()))
+                available_paths.extend(sorted(folder.glob("*.xlsx"), key=lambda path: path.name.lower()))
             except Exception:
                 continue
-        return self._ensure_raw_item_ids_in_sheet_paths(paths)
+        return self._ensure_raw_item_ids_in_sheet_paths(available_paths)
 
     def _normalize_inventory_record(self, record: dict[str, object]) -> dict[str, object]:
         normalized = dict(record)
@@ -3016,6 +3135,8 @@ class CardPipelineApp(tk.Tk):
             return 0
         ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         by_key = {str(record.get("inventory_key") or ""): record for record in ledger}
+        protected_rows = list(ledger)
+        blocked: list[dict[str, object]] = []
         added = 0
         for record in records:
             if not str(record.get("cert_number") or "").strip() and not str(record.get("item_id") or "").strip():
@@ -3028,14 +3149,28 @@ class CardPipelineApp(tk.Tk):
             key = str(normalized.get("inventory_key") or "")
             if not key:
                 continue
+            reason = self._inventory_add_protection_reason(normalized, protected_rows)
+            if reason:
+                blocked.append({"record": normalized, "reason": reason})
+                continue
             if key not in by_key:
                 ledger.append(normalized)
                 by_key[key] = normalized
+                protected_rows.append(normalized)
                 added += 1
             else:
                 existing = by_key[key]
                 existing.update(normalized)
                 existing["status"] = "Active"
+                protected_rows.append(existing)
+        if blocked:
+            append_activity = getattr(self, "_append_activity", None)
+            if callable(append_activity):
+                append_activity(
+                    "Inventory Add Blocked",
+                    "Blocked {} duplicate or previously removed inventory add(s).".format(len(blocked)),
+                    {"blocked_count": len(blocked), "blocked": blocked},
+                )
         self._save_inventory_ledger(ledger)
         if refresh:
             self.refresh_inventory_tab()
@@ -4909,6 +5044,7 @@ class CardPipelineApp(tk.Tk):
         except OSError:
             return None
 
+
     def _desktop_trade_payload(
         self,
         outgoing_records: list[dict[str, object]],
@@ -6267,6 +6403,13 @@ class CardPipelineApp(tk.Tk):
             self.inventory_tree.focus(row_id)
         records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
         active_records = [record for record in records if record and str(record.get("status") or "").lower() == "active"]
+        clicked_record = self.inventory_tree_records.get(row_id)
+
+        def run_for_clicked_row(command) -> None:
+            self.inventory_tree.selection_set(row_id)
+            self.inventory_tree.focus(row_id)
+            command()
+
         menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
         menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_inventory_cell_value(row, column))
         menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_inventory_row_values(row))
@@ -6276,11 +6419,14 @@ class CardPipelineApp(tk.Tk):
             menu.add_command(label="Explain Assignment", command=self.explain_selected_inventory_assignment)
         if len(active_records) == 1 and len(records) == 1:
             menu.add_command(label="Attach Photo...", command=self.attach_photo_to_selected_inventory_row)
-        if len(records) == 1 and self._inventory_photo_paths_for_record(records[0]):
+        if self._inventory_photo_paths_for_record(clicked_record):
             menu.add_separator()
-            menu.add_command(label="Open Photo", command=self.open_selected_inventory_photo)
-            menu.add_command(label="Export Copy to Desktop", command=self.export_selected_inventory_photos_to_desktop)
-            menu.add_command(label="Open Photo Folder", command=self.open_selected_inventory_photo_folder)
+
+            menu.add_command(label="Open Photo", command=lambda: run_for_clicked_row(self.open_selected_inventory_photo))
+            menu.add_command(label="Export Copy to Desktop", command=lambda: run_for_clicked_row(self.export_selected_inventory_photos_to_desktop))
+            menu.add_command(label="Open Photo Folder", command=lambda: run_for_clicked_row(self.open_selected_inventory_photo_folder))
+            menu.add_command(label="Detach Photo...", command=lambda: run_for_clicked_row(self.detach_photo_from_selected_inventory_row))
+
         if len(active_records) == 1 and len(records) == 1:
             menu.add_command(label="Mark Sold", command=self.mark_selected_inventory_sold)
         if records and all(self._inventory_record_can_move_to_company_sheet(record) for record in records):

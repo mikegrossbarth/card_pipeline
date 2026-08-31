@@ -6554,6 +6554,259 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+
+    def test_add_inventory_records_blocks_sold_or_deleted_received_rows(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _inventory_add_protection_reason = app.CardPipelineApp._inventory_add_protection_reason
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+            def __init__(self):
+                self.activities = []
+
+            def _load_profit_ledger(self):
+                return [
+                    {
+                        "status": "Sold from inventory",
+                        "company": "General Sold",
+                        "source_sheet": "Mikey General Sold",
+                        "original_source_sheet": "Mikey General Sold",
+                        "item_id": "RAW-MIKEY-20260726-0001",
+                        "card_title": "2003 Fleer Showcase Derek Jeter Auto 157/250",
+                        "purchase_price": 175,
+                        "sale_price": 210,
+                    }
+                ]
+
+            def _load_inventory_deleted_tombstones(self):
+                return [
+                    {
+                        "source_sheet": "SGC_INV_ADDS_7_6.xlsx",
+                        "cert_number": "0458621",
+                        "card_title": "2019 TOPPS CHROME SHOHEI OHTANI #1 SGC 10",
+                    }
+                ]
+
+            def _append_activity(self, action, summary, details=None):
+                self.activities.append((action, summary, details))
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                added = dummy.add_inventory_records(
+                    [
+                        {
+                            "assigned_person": "Mikey",
+                            "cert_number": "0458621",
+                            "card_title": "2019 Topps Chrome 1 Shohei Ohtani SGC 10",
+                            "source_sheet": "COMPLETE_GRADED_INVENTORY_ADD_7_7_26.xlsx",
+                            "purchase_price": 100,
+                            "status": "Active",
+                        },
+                        {
+                            "assigned_person": "Mikey",
+                            "item_id": "RAW-MIKEY-20260726-0001",
+                            "card_title": "2003 Fleer Showcase Derek Jeter Auto 157/250",
+                            "source_sheet": "RAW_INVENTORY_ADDITION_7_7_6.xlsx",
+                            "purchase_price": 175,
+                            "status": "Active",
+                        },
+                    ]
+                )
+
+                self.assertEqual(added, 0)
+                self.assertEqual(json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"], [])
+                self.assertEqual(dummy.activities[0][0], "Inventory Add Blocked")
+                self.assertEqual(dummy.activities[0][2]["blocked_count"], 2)
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_add_inventory_records_allows_clear_buyback_from_new_source(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _inventory_add_protection_reason = app.CardPipelineApp._inventory_add_protection_reason
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _load_inventory_deleted_tombstones = lambda self: []
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+            def _load_profit_ledger(self):
+                return [
+                    {
+                        "status": "Sold from inventory",
+                        "source_sheet": "Mikey General Sold",
+                        "original_source_sheet": "national_day_1_graded_entry.xlsx",
+                        "cert_number": "0012219217",
+                        "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5",
+                        "purchase_price": 10150,
+                        "sale_price": 13000,
+                    }
+                ]
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                added = dummy.add_inventory_records(
+                    [
+                        {
+                            "assigned_person": "Mikey",
+                            "cert_number": "0012219217",
+                            "grader": "BGS",
+                            "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5",
+                            "source_sheet": "phillip_works_8_17_26.xlsx",
+                            "purchase_price": 10150,
+                            "status": "Active",
+                        }
+                    ]
+                )
+
+                self.assertEqual(added, 1)
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(ledger[0]["inventory_key"], "0012219217|phillip_works_8_17_26.xlsx|mikey")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_add_inventory_records_blocks_raw_cert_duplicate_same_source_title(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _inventory_add_protection_reason = app.CardPipelineApp._inventory_add_protection_reason
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _load_inventory_deleted_tombstones = lambda self: []
+            _load_profit_ledger = lambda self: []
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                self.assertEqual(
+                    dummy.add_inventory_records(
+                        [
+                            {
+                                "assigned_person": "Mikey",
+                                "item_id": "RAW-MIKEY-20260825-0001",
+                                "card_title": "2018 Bowman 49 Shohei Ohtani Blue PSA 7",
+                                "source_sheet": "richierocca2_8_24_26.xlsx",
+                                "status": "Active",
+                            }
+                        ]
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    dummy.add_inventory_records(
+                        [
+                            {
+                                "assigned_person": "Mikey",
+                                "cert_number": "97182846",
+                                "card_title": "2018 Bowman 49 Shohei Ohtani Blue PSA 7",
+                                "source_sheet": "richierocca2_8_24_26.xlsx",
+                                "status": "Active",
+                            }
+                        ]
+                    ),
+                    0,
+                )
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["item_id"], "RAW-MIKEY-20260825-0001")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_add_inventory_records_blocks_duplicate_raw_title_same_source(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _inventory_add_protection_reason = app.CardPipelineApp._inventory_add_protection_reason
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _load_inventory_deleted_tombstones = lambda self: []
+            _load_profit_ledger = lambda self: []
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = lambda self: "TEAM"
+
+            def __init__(self):
+                self.activities = []
+
+            def _append_activity(self, action, summary, details=None):
+                self.activities.append((action, summary, details))
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                added = dummy.add_inventory_records(
+                    [
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "card_title": "2024 Bowman Chrome Prospect Auto Blue",
+                            "source_sheet": "RAW_RECEIVE_8_28_26.xlsx",
+                            "purchase_price": 40,
+                            "status": "Active",
+                        },
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "card_title": "2024 Bowman Chrome Prospect Auto Blue",
+                            "source_sheet": "RAW_RECEIVE_8_28_26.xlsx",
+                            "purchase_price": 40,
+                            "status": "Active",
+                        },
+                    ]
+                )
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(added, 1)
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["card_title"], "2024 Bowman Chrome Prospect Auto Blue")
+                self.assertTrue(ledger[0]["item_id"].startswith("RAW-TEAM-"))
+                self.assertEqual(dummy.activities[0][0], "Inventory Add Blocked")
+                self.assertEqual(dummy.activities[0][2]["blocked"][0]["reason"], "matching raw title already exists in the same source sheet")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_broad_received_inventory_sync_is_disabled(self) -> None:
+        class InventoryDummy:
+            _sync_received_inventory_to_ledger = app.CardPipelineApp._sync_received_inventory_to_ledger
+
+            def _received_inventory_candidate_records(self):
+                return [{"cert_number": "123", "card_title": "Should Not Add"}]
+
+            def add_inventory_records(self, _records, refresh=False):
+                raise AssertionError("broad sync should not add inventory records")
+
+        self.assertEqual(InventoryDummy()._sync_received_inventory_to_ledger(), (0, 0))
+
+
     def test_inventory_record_from_row_preserves_manual_sport_for_unknown_title(self) -> None:
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -9298,7 +9551,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app._verify_cert_only_sync = old_verify
 
+
     def test_inventory_sold_preserves_unshared_photo_file_for_refunds(self) -> None:
+
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -9309,7 +9564,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
-            _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
             _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
             _append_activity = lambda self, action, summary, details=None: None
 
@@ -9333,11 +9587,106 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             try:
                 self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
                 self.assertTrue(photo.exists())
+
+                self.assertEqual(dummy._load_inventory_ledger(), [])
+
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+
+
+    def test_inventory_photo_export_to_desktop_copies_each_photo_without_overwrite(self) -> None:
+        class PhotoExportDummy:
+            _desktop_photo_export_destination = app.CardPipelineApp._desktop_photo_export_destination
+            _export_inventory_photos_to_desktop = app.CardPipelineApp._export_inventory_photos_to_desktop
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            desktop = root / "Desktop"
+            source_dir = root / "photos"
+            source_dir.mkdir(parents=True)
+            first = source_dir / "front.jpg"
+            second = source_dir / "back.jpg"
+            first.write_bytes(b"front")
+            second.write_bytes(b"back")
+            record = {"card_title": "2001 Pokemon Neo Discovery - 1st Ed. 46/75 Scyther CGC 10"}
+            desktop.mkdir(parents=True)
+            preexisting = desktop / "2001-Pokemon-Neo-Discovery-1st-Ed.-46-75-Scyther-CGC-10-photo-1-front.jpg"
+            preexisting.write_bytes(b"existing")
+            dummy = PhotoExportDummy()
+            with patch.object(app.Path, "home", return_value=root):
+                exported = dummy._export_inventory_photos_to_desktop(record, [first, second])
+            self.assertEqual(len(exported), 2)
+            self.assertEqual(exported[0].name, "2001-Pokemon-Neo-Discovery-1st-Ed.-46-75-Scyther-CGC-10-photo-1-front-2.jpg")
+            self.assertEqual(exported[1].name, "2001-Pokemon-Neo-Discovery-1st-Ed.-46-75-Scyther-CGC-10-photo-2-back.jpg")
+            self.assertEqual(preexisting.read_bytes(), b"existing")
+            self.assertEqual(exported[0].read_bytes(), b"front")
+            self.assertEqual(exported[1].read_bytes(), b"back")
+
+    def test_inventory_sold_archives_matching_source_and_shared_photo_files(self) -> None:
+        class PhotoSoldDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
+            _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
+            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
+            _unique_deleted_archive_path = app.CardPipelineApp._unique_deleted_archive_path
+            _archive_deleted_file = app.CardPipelineApp._archive_deleted_file
+            _purge_expired_deleted_archive = app.CardPipelineApp._purge_expired_deleted_archive
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
+            _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
+            _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
+            _append_activity = lambda self, action, summary, details=None: None
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            old_deleted_archive = app.DELETED_ARCHIVE_DIR
+            old_deleted_photos = app.DELETED_INVENTORY_PHOTOS_DIR
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "LUCAS_PERSONAL" / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.DELETED_ARCHIVE_DIR = Path(tmp) / "DELETED ARCHIVE"
+            app.DELETED_INVENTORY_PHOTOS_DIR = app.DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
+            source_dir = Path(tmp) / "iCloud Source"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            source_dir.mkdir(parents=True)
+            shared_photo = app.INVENTORY_PHOTOS_DIR / "card.jpg"
+            source_photo = source_dir / "card.jpg"
+            shared_photo.write_bytes(b"shared image")
+            source_photo.write_bytes(b"source image")
+            dummy = PhotoSoldDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.app_settings = {"inventory_photo_folder": str(source_dir)}
+            record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "123", "card_title": "Test", "status": "Active", "photo_paths": [str(shared_photo)]})
+            dummy._save_inventory_ledger([record])
+            try:
+                self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
+                self.assertFalse(shared_photo.exists())
+                self.assertFalse(source_photo.exists())
+                archived = sorted(path.name for path in app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card*.jpg"))
+                self.assertEqual(archived, ["card-2.jpg", "card.jpg"])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+                app.DELETED_ARCHIVE_DIR = old_deleted_archive
+                app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
+
 
     def test_inventory_photo_paths_resolve_windows_safe_mac_names(self) -> None:
         class PhotoPathDummy:
