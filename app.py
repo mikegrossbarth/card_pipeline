@@ -2069,8 +2069,9 @@ class CardPipelineApp(tk.Tk):
         self.payout_person_combo.grid(row=0, column=1, sticky="w", padx=(8, 10))
         self._bind_person_autocomplete(self.payout_person_combo, refresh_callback=self.refresh_payouts_tab)
         self.payout_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_payouts_tab(), add="+")
-        controls.columnconfigure(2, weight=1)
-        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ttk.Button(controls, text="Refresh Payouts", command=self.refresh_payouts_from_disk, style="Soft.TButton").grid(row=0, column=2, sticky="w")
+        controls.columnconfigure(3, weight=1)
+        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         payout_split = tk.PanedWindow(
             self.payouts_tab,
@@ -10474,6 +10475,10 @@ class CardPipelineApp(tk.Tk):
             perf_start,
             f"details={detail_count} people={len(balances)} total_net={total_net_profit:.2f} unpaid_net={total_unpaid_net_profit:.2f} expenses={total_expenses:.2f} balance={total_balance:.2f}",
         )
+
+    def refresh_payouts_from_disk(self) -> None:
+        self._refresh_payout_state_from_disk()
+        self.refresh_payouts_tab()
 
     def _payout_sheet_items(self) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
