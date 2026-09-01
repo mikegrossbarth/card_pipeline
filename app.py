@@ -3292,13 +3292,9 @@ class CardPipelineApp(tk.Tk):
                 source_sheet = Path(str(source_value or "")).name.strip().lower()
                 if source_sheet and cert:
                     keys.add((source_sheet, cert))
-                if cert:
-                    keys.add(("", cert))
                 item_id = str(record.get("item_id") or "").strip().lower()
                 if source_sheet and item_id:
                     keys.add((source_sheet, f"item:{item_id}"))
-                if item_id:
-                    keys.add(("", f"item:{item_id}"))
                 title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
                 if source_sheet and not cert and not item_id and title_identity:
                     keys.add((source_sheet, f"title:{title_identity}"))
@@ -3312,8 +3308,8 @@ class CardPipelineApp(tk.Tk):
         company_keys: set[tuple[str, str]] | None = None,
         accounted_keys: set[tuple[str, str]] | None = None,
     ) -> list[dict[str, object]]:
-        assigned_person = str(person or "").strip()
-        if not assigned_person or not path.exists():
+        assigned_person = str(person or "").strip() or "Unassigned"
+        if not path.exists():
             return []
         try:
             self._ensure_raw_item_ids_in_sheet_paths([path])
@@ -11971,13 +11967,12 @@ class CardPipelineApp(tk.Tk):
                 move_phases.append(f"lock_wait={time.perf_counter() - lock_started:.3f}s")
                 if target_stage == "Received":
                     marker = self.home_sheet_markers.get(self.home_selected_sheet_key, {})
-                    person = str(marker.get("assigned_person") or "").strip()
-                    if person:
-                        phase_started = time.perf_counter()
-                        added, candidates = self._sync_received_sheet_inventory_to_ledger(source_stage, path, person)
-                        inventory_rows_added += added
-                        inventory_candidate_rows += candidates
-                        move_phases.append(f"pre_inventory_sync={time.perf_counter() - phase_started:.3f}s")
+                    person = str(marker.get("assigned_person") or "").strip() or "Unassigned"
+                    phase_started = time.perf_counter()
+                    added, candidates = self._sync_received_sheet_inventory_to_ledger(source_stage, path, person)
+                    inventory_rows_added += added
+                    inventory_candidate_rows += candidates
+                    move_phases.append(f"pre_inventory_sync={time.perf_counter() - phase_started:.3f}s")
                 phase_started = time.perf_counter()
                 moved_key, cleanup = self._move_home_sheet_to_stage(self.home_selected_sheet_key, target_stage)
                 move_phases.append(f"move={time.perf_counter() - phase_started:.3f}s")
@@ -11986,14 +11981,16 @@ class CardPipelineApp(tk.Tk):
                 if target_stage == "Received" and moved_key:
                     received_stage, received_name = self._split_home_sheet_key(moved_key)
                     marker = self.home_sheet_markers.get(moved_key, {})
-                    person = str(marker.get("assigned_person") or "").strip()
-                    if received_stage == "Received" and received_name and person:
+                    person = str(marker.get("assigned_person") or "").strip() or "Unassigned"
+                    if received_stage == "Received" and received_name:
                         phase_started = time.perf_counter()
-                        inventory_rows_added, inventory_candidate_rows = self._sync_received_sheet_inventory_to_ledger(
+                        added, candidates = self._sync_received_sheet_inventory_to_ledger(
                             received_stage,
                             self._sheet_path_for_stage(received_stage, received_name),
                             person,
                         )
+                        inventory_rows_added += added
+                        inventory_candidate_rows += candidates
                         move_phases.append(f"inventory_sync={time.perf_counter() - phase_started:.3f}s")
                 phase_started = time.perf_counter()
                 self._save_sheet_markers()
@@ -12426,8 +12423,6 @@ class CardPipelineApp(tk.Tk):
         if not source.exists():
             raise FileNotFoundError(f"{source_stage} sheet not found: {source}")
         record_performance_event("home.stage_move.source_exists", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
-        if target_stage == "Received" and source_stage != "Received":
-            self._assert_sheet_inventory_accounted_for_received(source)
         target_dir = {
             "Incoming": INCOMING_SHEETS_DIR,
             "Working": WORKING_SHEETS_DIR,

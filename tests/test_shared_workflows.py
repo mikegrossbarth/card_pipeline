@@ -6038,7 +6038,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.RECEIVED_SHEETS_DIR = old_received
 
-    def test_move_to_received_blocks_when_raw_row_missing_inventory(self) -> None:
+    def test_move_to_received_allows_rows_to_sync_inventory_after_move(self) -> None:
         class MoveDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
             _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
@@ -6052,6 +6052,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _sheet_unaccounted_identity_count = app.CardPipelineApp._sheet_unaccounted_identity_count
             _assert_sheet_inventory_accounted_for_received = app.CardPipelineApp._assert_sheet_inventory_accounted_for_received
             _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+            _unique_stage_destination = app.CardPipelineApp._unique_stage_destination
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
@@ -6067,6 +6069,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
             def _load_activity_log(self):
                 return []
+
+            def _delete_sheet_marker(self, key):
+                self.deleted_sheet_marker_keys.add(key)
+                self.home_sheet_markers.pop(key, None)
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -6104,15 +6110,62 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                     }
                 ]
 
-                with self.assertRaisesRegex(RuntimeError, "Cannot move drose514_8_21_26.xlsx to Received: 1 row"):
-                    dummy._move_home_sheet_to_stage("Incoming|" + sheet_path.name, "Received")
+                moved_key, cleanup = dummy._move_home_sheet_to_stage("Incoming|" + sheet_path.name, "Received")
 
-                self.assertTrue(sheet_path.exists())
-                self.assertFalse((app.RECEIVED_SHEETS_DIR / sheet_path.name).exists())
+                self.assertEqual(moved_key, "Received|" + sheet_path.name)
+                self.assertEqual(cleanup, {})
+                self.assertFalse(sheet_path.exists())
+                self.assertTrue((app.RECEIVED_SHEETS_DIR / sheet_path.name).exists())
             finally:
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
                 app.RECEIVED_SHEETS_DIR = old_received
+
+    def test_sold_history_does_not_block_buyback_inventory_candidate_from_new_sheet(self) -> None:
+        class CandidateDummy:
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _ensure_raw_item_ids_in_sheet_paths = lambda self, paths: None
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _load_profit_ledger(self):
+                return [
+                    {
+                        "source_sheet": "old_sale_sheet.xlsx",
+                        "cert_number": "152491672",
+                        "card_title": "2018 Topps Allen & Ginter World Talent Shohei Ohtani PSA 10",
+                        "status": "Sold",
+                    }
+                ]
+
+        with TemporaryDirectory() as tmp:
+            sheet_path = Path(tmp) / "new_buyback_sheet.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Cert", "Sport", "Description", "Purchase", "RECEIVED"])
+            sheet.append(["152491672", "baseball", "2018 Topps Allen & Ginter World Talent Shohei Ohtani PSA 10", 430, "X"])
+            workbook.save(sheet_path)
+
+            candidates = CandidateDummy()._received_inventory_candidate_records_for_sheet(
+                "Incoming",
+                sheet_path,
+                "Mikey",
+                company_keys=set(),
+            )
+
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0]["cert_number"], "152491672")
 
     def test_received_raw_candidates_assign_missing_item_ids_before_sync(self) -> None:
         class CandidateDummy:

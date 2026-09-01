@@ -1,5 +1,16 @@
 # Sync UI Fixes
 
+## Received Buyback Inventory Truth
+
+- Origin: Mac
+- Implemented on origin: Yes
+- Mirrored to other platform: Windows complete
+- Source commit/repo: Current Mac receive/accounting behavior in `mikegrossbarth/card_pipeline_mac`
+- Target to mirror: Windows LUCAS `mikegrossbarth/card_pipeline`
+- Windows source commit/repo: This Windows commit in `mikegrossbarth/card_pipeline`
+- Summary: Windows no longer hard-blocks Home moves into `Received` just because every workbook row is not already present in inventory/company/sold ledgers before the move. Move-to-Received can now proceed and let the receive inventory sync make active inventory the source of truth. Sold/profit history still accounts for the original source sheet so old received sheets do not resurrect sold rows, but sold history no longer adds global cert/item blockers that prevent a newly bought-back card on a different source sheet from being added back to active inventory. Sheets without an assigned person can still sync received inventory rows as `Unassigned` so they can be assigned later.
+- Notes / avoid porting: Do not bring back the old pre-move `_assert_sheet_inventory_accounted_for_received` blocker for Incoming/Working -> Received. Do keep source-specific sold-ledger protection so refreshing old received sheets does not re-add cards that were already sold from that same source. Active inventory must be the truth for current holdings, especially sold-and-bought-back cards.
+
 ## Windows Audit - 2026-08-31
 
 - Windows local-only `sync UI fixes.md` was removed from `mikegrossbarth/card_pipeline`; this universal tracker is now the sync source of truth.
