@@ -4152,6 +4152,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _apply_payout_marker_balance_state = app.CardPipelineApp._apply_payout_marker_balance_state
             _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
             _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
             _expense_payout_key = app.CardPipelineApp._expense_payout_key
@@ -5004,6 +5005,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _apply_payout_marker_balance_state = app.CardPipelineApp._apply_payout_marker_balance_state
             _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
             _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
             _expense_payout_key = app.CardPipelineApp._expense_payout_key
@@ -5086,6 +5088,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(sum(float(item["payout_balance"]) for item in expense_items), -15.0)
         self.assertEqual(sum(float(item["payout_balance"]) for item in payout_items), 20.0)
         self.assertTrue(all(item["key"].startswith(("SoldCard|", "SoldExpense|")) for item in payout_items))
+        dummy.home_sheet_markers[sold_items[0]["key"]] = {"assigned_person": "Kevin Hambone", "paid_amount": 10.0}
+        partial_items = dummy._payout_sheet_items()
+        partial_sold = [item for item in partial_items if item["stage"] == "Sold Card"][0]
+        self.assertEqual(partial_sold["payout_total"], 35.0)
+        self.assertEqual(partial_sold["paid_amount"], 10.0)
+        self.assertEqual(partial_sold["payout_balance"], 25.0)
+        self.assertFalse(partial_sold["paid"])
+        self.assertEqual(partial_sold["status"], "Partial")
 
     def test_team_general_sold_blank_paid_marker_does_not_hide_card_payouts(self) -> None:
         class PayoutDummy:
@@ -5101,6 +5111,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _apply_payout_marker_balance_state = app.CardPipelineApp._apply_payout_marker_balance_state
             _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
             _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
             _expense_payout_key = app.CardPipelineApp._expense_payout_key
@@ -5164,6 +5175,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _apply_payout_marker_balance_state = app.CardPipelineApp._apply_payout_marker_balance_state
             _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
             _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
             _expense_payout_key = app.CardPipelineApp._expense_payout_key
@@ -5221,7 +5233,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(len(items), 2)
         paid_items = [item for item in items if item["paid"]]
         open_items = [item for item in items if not item["paid"]]
-        self.assertEqual(paid_items[0]["payout_balance"], 30.0)
+        self.assertEqual(paid_items[0]["payout_total"], 30.0)
+        self.assertEqual(paid_items[0]["paid_amount"], 30.0)
+        self.assertEqual(paid_items[0]["payout_balance"], 0.0)
         self.assertEqual(open_items[0]["payout_balance"], 30.0)
         self.assertEqual(open_items[0]["status"], "Sold")
 
@@ -8965,10 +8979,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
             _home_person_filter = app.CardPipelineApp._home_person_filter
             _home_sheet_matches_person_filter = app.CardPipelineApp._home_sheet_matches_person_filter
+            _home_sheet_matches_search_filter = app.CardPipelineApp._home_sheet_matches_search_filter
             _filtered_home_sheet_names = app.CardPipelineApp._filtered_home_sheet_names
 
         dummy = HomeDummy()
         dummy.home_person_var = Var("Kevin")
+        dummy.home_sheet_search_var = Var("")
         dummy.home_sheet_paths = {
             "Incoming": {
                 "kevin.xlsx": Path("kevin.xlsx"),
@@ -8981,8 +8997,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             "Incoming|james.xlsx": {"assigned_person": "James Copeland"},
             "Incoming|blank.xlsx": {},
         }
+        dummy.home_sheet_summaries = {}
 
         self.assertEqual(dummy._filtered_home_sheet_names("Incoming"), ["kevin.xlsx"])
+        dummy.home_person_var = Var("")
+        dummy.home_sheet_search_var = Var("james")
+        self.assertEqual(dummy._filtered_home_sheet_names("Incoming"), ["james.xlsx"])
 
     def test_create_seller_terms_apply_and_restore_purchase_prices(self) -> None:
         class Var:
@@ -10441,6 +10461,41 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(day_labels[-1], "2026-06-17")
         self.assertEqual(day_values[day_labels.index("2026-01-05")], 50.0)
         self.assertEqual(day_values[day_labels.index("2026-01-20")], 25.0)
+
+    def test_profit_owner_view_shows_house_profit_after_team_share(self) -> None:
+        class ProfitDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _money_value = app.CardPipelineApp._money_value
+            _profit_owner_view_label = app.CardPipelineApp._profit_owner_view_label
+            _profit_rows_for_owner_view = app.CardPipelineApp._profit_rows_for_owner_view
+            _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
+            _team_balance_share_for_person = app.CardPipelineApp._team_balance_share_for_person
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+
+            def _is_personal_lucas(self):
+                return False
+
+            def _seller_terms_seller_names(self):
+                return {"john seller"}
+
+            def _load_seller_terms(self):
+                return [{"seller": "Kevin Hambone", "balance_share": 0.5}]
+
+        dummy = ProfitDummy()
+        dummy.profit_owner_view_var = types.SimpleNamespace(get=lambda: "My Profit")
+        dummy.home_sheet_markers = {}
+        rows = [
+            {"assigned_person": "Kevin Hambone", "source_sheet": "Kevin General Sold", "profit": 100.0},
+            {"assigned_person": "John Seller", "source_sheet": "Seller Buy.xlsx", "profit": 40.0},
+            {"assigned_person": "Unassigned", "source_sheet": "Loose", "profit": 25.0},
+        ]
+
+        adjusted = dummy._profit_rows_for_owner_view(rows)
+
+        self.assertEqual(adjusted[0]["profit"], 50.0)
+        self.assertEqual(adjusted[1]["profit"], 40.0)
+        self.assertEqual(adjusted[2]["profit"], 25.0)
 
     def test_profit_periods_include_calendar_month_and_last_thirty_days(self) -> None:
         class ProfitDummy:

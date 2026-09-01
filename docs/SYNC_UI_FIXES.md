@@ -225,3 +225,14 @@
 - Target to mirror: Mac LUCAS `mikegrossbarth/card_pipeline_mac` only if a human explicitly asks for the Mac implementation
 - Summary: Inventory bulk editing is intentionally opt-in again. The visible `Bulk Edit` toggle controls arrow-key cell navigation and Enter/F2 editing. When Bulk Edit is off, normal Inventory editing uses double-click-to-edit cells, preserving the older per-cell edit flow. Person edits remain restricted to known people through a readonly dropdown and validation.
 - Notes / avoid porting: The earlier direct-cell-edit cleanup note is superseded. Do not remove the visible Bulk Edit toggle from Windows.
+
+## Team Profit View And Partial Payout Payments
+
+- Origin: Windows
+- Implemented on origin: Yes
+- Mirrored to other platform: Mac complete
+- Source commit/repo: Current Windows commit in `mikegrossbarth/card_pipeline`
+- Target to mirror: Mac LUCAS `mikegrossbarth/card_pipeline_mac`
+- Mac source commit/repo: Current Mac commit in `mikegrossbarth/card_pipeline_mac`
+- Summary: Home has a sheet search field under the sort control. Team Profit has a `Full Profit` / `My Profit` view; `My Profit` subtracts team balance-share payouts from per-card team-member profit rows while leaving seller/network payout rows already net. Payouts/Tabs has a `Total` / `Per Sheet` summary view, where `Per Sheet` is seller/network-sheet oriented and not for balance-share team employees. Payout balance rows can now record partial payments through `paid_amount`, show remaining open balance as `Partial`, and still preserve paid-in-full behavior.
+- Notes / avoid porting: Do not revert team-member payout math to sheet-level grouping. Team members stay per profit-ledger item; seller/network payouts can be sheet based. Do not model partial payments as fake profit rows.
